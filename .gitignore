@@ -1,0 +1,25 @@
+# Maven 编译产物
+target/
+*.class
+
+# 日志
+logs/
+*.log
+
+# IDE 文件
+.idea/
+*.iml
+.settings/
+.classpath
+.project
+.vscode/
+
+# 扁平化 POM
+.flattened-pom.xml
+
+# OS 文件
+.DS_Store
+Thumbs.db
+
+# 本地配置（敏感，不入库）
+# application-prod.yml 在 src/main/resources 中有占位版本，真凭据落 部署空间/
