@@ -357,6 +357,13 @@
                 <version>${revision}</version>
             </dependency>
 
+            <!--  题库 + 卷库业务模块（misikt 教师端复刻 V0.1）  -->
+            <dependency>
+                <groupId>org.dromara</groupId>
+                <artifactId>ruoyi-book</artifactId>
+                <version>${revision}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 
