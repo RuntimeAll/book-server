@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  试题筐 Mapper XML（biz_question_basket）。
+
+  5 个定制 SQL：
+    insertIgnore                       — INSERT IGNORE 防重（复合主键命中则忽略）
+    deleteByUserAndQuestion            — 单题物理删
+    deleteAllByUser                    — 清空当前用户全筐
+    countByUser                        — 角标数量
+    selectBasketQuestionsByUser        — JOIN biz_question 拉整套题字段（复用 page 端点 ResultMap 风格）
+
+  字段命名 / DB 映射规则跟 BizQuestionMapper.xml 一致（stem_img_url → stemImg / is_share INT / create_time ms）。
+-->
+<mapper namespace="org.dromara.book.mapper.BizQuestionBasketMapper">
+
+    <!-- queryBasket 复用 page 端点的 ResultMap 风格 — 此处局部定义不 extends，避免跨 mapper.xml 引用 -->
+    <resultMap id="BasketQuestionItemMap" type="org.dromara.book.domain.vo.QuestionItemVo">
+        <id property="id" column="id"/>
+        <result property="questionType" column="question_type"/>
+        <result property="difficult" column="difficult"/>
+        <result property="subjectId" column="subject_id"/>
+        <result property="shortTitle" column="short_title"/>
+        <result property="stemText" column="stem_text"/>
+        <result property="stemImg" column="stem_img_url"/>
+        <result property="freeTag" column="free_tag"/>
+        <result property="correctAnswer" column="correct_answer"/>
+        <result property="score" column="score_val"/>
+        <result property="examYear" column="exam_year"/>
+        <result property="examPaperId" column="exam_paper_id"/>
+        <result property="examPaperName" column="exam_paper_name"/>
+        <result property="isShare" column="is_share"/>
+        <result property="isRepeat" column="is_repeat"/>
+        <result property="repeatQuestionId" column="repeat_question_id"/>
+        <result property="status" column="status"/>
+        <result property="createUser" column="create_user"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time_ms"/>
+        <result property="updateTime" column="update_time_ms"/>
+        <result property="updateBy" column="update_by"/>
+    </resultMap>
+
+    <!--
+      INSERT IGNORE — 复合主键 (user_id, question_id) 命中则忽略（Iron law §1.6）。
+      重复加同题不报错，返 0 影响行数；新增返 1。
+    -->
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO biz_question_basket (user_id, question_id, add_time)
+        VALUES (#{userId}, #{questionId}, NOW())
+    </insert>
+
+    <!--
+      单题物理删（用户态数据可物理删，Iron law §1.6 + §10）。
+    -->
+    <delete id="deleteByUserAndQuestion">
+        DELETE FROM biz_question_basket
+        WHERE user_id = #{userId} AND question_id = #{questionId}
+    </delete>
+
+    <!--
+      清空当前用户全部筐题。
+    -->
+    <delete id="deleteAllByUser">
+        DELETE FROM biz_question_basket
+        WHERE user_id = #{userId}
+    </delete>
+
+    <!--
+      统计当前用户筐题数（角标 — basketNum 端点）。
+    -->
+    <select id="countByUser" resultType="long">
+        SELECT COUNT(*)
+        FROM biz_question_basket
+        WHERE user_id = #{userId}
+    </select>
+
+    <!--
+      JOIN biz_question 拉整套题目字段（仅已发布题 status='1'，按 add_time 倒序）。
+      不返 questionKnowledges — 由 Service 二次批量填充（复用 page 端点策略）。
+    -->
+    <select id="selectBasketQuestionsByUser" resultMap="BasketQuestionItemMap">
+        SELECT
+            q.id,
+            q.question_type,
+            q.difficult,
+            q.subject_id,
+            q.short_title,
+            q.stem_text,
+            q.stem_img_url,
+            q.free_tag,
+            q.correct_answer,
+            0 AS score_val,
+            q.exam_year,
+            q.exam_paper_id,
+            q.exam_paper_name,
+            q.is_share,
+            q.is_repeat,
+            q.repeat_question_id,
+            q.status,
+            q.create_user,
+            q.create_by,
+            UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
+            UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
+            q.update_by
+        FROM biz_question_basket b
+        INNER JOIN biz_question q ON q.id = b.question_id
+        WHERE b.user_id = #{userId}
+          AND q.status = '1'
+        ORDER BY b.add_time DESC
+    </select>
+
+</mapper>
