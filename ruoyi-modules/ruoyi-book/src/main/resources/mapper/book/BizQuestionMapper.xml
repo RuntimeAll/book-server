@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  题目主表 Mapper XML（biz_question）。
+
+  关键映射点（misikt JSON 风格 ↔ DB 列名）：
+    stem_img_url       → stemImg
+    answer_img_url     → answerImg
+    explain_img_url    → explainImg
+    file_bin_url       → fileBin
+    video_url          → videoUrl   (misikt 自己保留 Url 后缀)
+    is_share TINYINT   → isShare INT 0/1
+    create_time / update_time DATETIME → createTime / updateTime BIGINT ms timestamp
+      —— UNIX_TIMESTAMP(t)*1000 直接出 long
+-->
+<mapper namespace="org.dromara.book.mapper.BizQuestionMapper">
+
+    <!-- 列表项 ResultMap（page 用，无详情字段） -->
+    <resultMap id="QuestionItemMap" type="org.dromara.book.domain.vo.QuestionItemVo">
+        <id property="id" column="id"/>
+        <result property="questionType" column="question_type"/>
+        <result property="difficult" column="difficult"/>
+        <result property="subjectId" column="subject_id"/>
+        <result property="shortTitle" column="short_title"/>
+        <result property="stemText" column="stem_text"/>
+        <result property="stemImg" column="stem_img_url"/>
+        <result property="freeTag" column="free_tag"/>
+        <result property="correctAnswer" column="correct_answer"/>
+        <result property="score" column="score_val"/>
+        <result property="examYear" column="exam_year"/>
+        <result property="examPaperId" column="exam_paper_id"/>
+        <result property="examPaperName" column="exam_paper_name"/>
+        <result property="isShare" column="is_share"/>
+        <result property="isRepeat" column="is_repeat"/>
+        <result property="repeatQuestionId" column="repeat_question_id"/>
+        <result property="status" column="status"/>
+        <result property="createUser" column="create_user"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time_ms"/>
+        <result property="updateTime" column="update_time_ms"/>
+        <result property="updateBy" column="update_by"/>
+    </resultMap>
+
+    <!-- 详情 ResultMap（extends QuestionItemMap 加详情字段） -->
+    <resultMap id="QuestionDetailMap" type="org.dromara.book.domain.vo.QuestionDetailVo"
+               extends="QuestionItemMap">
+        <result property="answer" column="correct_answer"/>
+        <result property="answerImg" column="answer_img_url"/>
+        <result property="explainImg" column="explain_img_url"/>
+        <result property="fileBin" column="file_bin_url"/>
+        <result property="videoUrl" column="video_url"/>
+        <result property="optionsJson" column="options_json"/>
+        <result property="scoreStd" column="score_std_json"/>
+    </resultMap>
+
+    <!--
+      列表项基础列（page 用，不含详情字段）
+      score 字段 DB 没单列存（真分值在 biz_paper_question.score），page 阶段固定 0
+    -->
+    <sql id="QuestionItemColumns">
+        q.id,
+        q.question_type,
+        q.difficult,
+        q.subject_id,
+        q.short_title,
+        q.stem_text,
+        q.stem_img_url,
+        q.free_tag,
+        q.correct_answer,
+        0 AS score_val,
+        q.exam_year,
+        q.exam_paper_id,
+        q.exam_paper_name,
+        q.is_share,
+        q.is_repeat,
+        q.repeat_question_id,
+        q.status,
+        q.create_user,
+        q.create_by,
+        UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
+        UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
+        q.update_by
+    </sql>
+
+    <!--
+      分页查询 — 走 MyBatis-Plus 分页插件（@Param(Constants.WRAPPER) 注入 ${ew.customSqlSegment}）。
+
+      ew 由 Service 端 QueryWrapper 构造（含 status='1' / subjectId 前缀 / questionType / difficult /
+      keyWord LIKE / notUsedQuestion / notTaskQuestion / order by）。
+    -->
+    <select id="selectQuestionPage"
+            resultMap="QuestionItemMap">
+        SELECT
+        <include refid="QuestionItemColumns"/>
+        FROM biz_question q
+        ${ew.customSqlSegment}
+    </select>
+
+    <!--
+      单题详情 — 含详情字段（answer/explain/file/video/optionsJson/scoreStd）。
+      不限 status（详情可看草稿/已发/软删；V0.1 实数据全 '1'）。
+    -->
+    <select id="selectQuestionDetailById"
+            parameterType="java.lang.Long"
+            resultMap="QuestionDetailMap">
+        SELECT
+            q.id,
+            q.question_type,
+            q.difficult,
+            q.subject_id,
+            q.short_title,
+            q.stem_text,
+            q.stem_img_url,
+            q.answer_img_url,
+            q.explain_img_url,
+            q.file_bin_url,
+            q.video_url,
+            q.options_json,
+            q.correct_answer,
+            q.score_std_json,
+            q.free_tag,
+            0 AS score_val,
+            q.exam_year,
+            q.exam_paper_id,
+            q.exam_paper_name,
+            q.is_share,
+            q.is_repeat,
+            q.repeat_question_id,
+            q.status,
+            q.create_user,
+            q.create_by,
+            UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
+            UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
+            q.update_by
+        FROM biz_question q
+        WHERE q.id = #{id}
+    </select>
+
+</mapper>
