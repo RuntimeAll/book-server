@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  试卷主表 Mapper XML（biz_paper）。
+
+  V1 落点：
+    - B-10 GET /teacher/paper/source/{id} → 原卷预览（卷头 + 卷下所有题）
+    - selectPaperHeaderById  → 卷头（paperId/paperName/examYear）
+    - selectQuestionsByPaperId → 卷下所有已发布题（JOIN biz_paper_question + biz_question，
+      按 pq.sort 升序，复用 BizQuestionMapper 的字段命名口径）
+
+  关键映射点（与 BizQuestionMapper.xml 保持一致）：
+    stem_img_url     → stemImg
+    answer_img_url   → answerImg
+    explain_img_url  → explainImg
+    file_bin_url     → fileBin
+    video_url        → videoUrl
+    UNIX_TIMESTAMP(t)*1000 → createTime / updateTime BIGINT ms
+
+  新增字段：
+    pq.sort  → sort
+    pq.score → pqScore（biz_paper_question 真分值，DECIMAL）
+
+  注：本 mapper 的 PaperSourceQuestionMap 自包含定义（不跨 namespace extends），
+  避免 MyBatis mapper 文件加载顺序导致 incomplete ResultMap 解析失败。
+-->
+<mapper namespace="org.dromara.book.mapper.BizPaperMapper">
+
+    <!-- 卷头 ResultMap -->
+    <resultMap id="PaperSourceHeaderMap" type="org.dromara.book.domain.vo.PaperSourceVo">
+        <id property="paperId" column="paper_id"/>
+        <result property="paperName" column="paper_name"/>
+        <result property="examYear" column="exam_year"/>
+    </resultMap>
+
+    <!--
+      卷下题元素 ResultMap（自包含定义，列字段与 BizQuestionMapper.xml 的 QuestionDetailMap 对齐 +
+      新增 sort / pqScore 两个 biz_paper_question 字段）
+    -->
+    <resultMap id="PaperSourceQuestionMap" type="org.dromara.book.domain.vo.PaperSourceQuestionVo">
+        <id property="id" column="id"/>
+        <!-- 父类 QuestionItemVo 字段 -->
+        <result property="questionType" column="question_type"/>
+        <result property="difficult" column="difficult"/>
+        <result property="subjectId" column="subject_id"/>
+        <result property="shortTitle" column="short_title"/>
+        <result property="stemText" column="stem_text"/>
+        <result property="stemImg" column="stem_img_url"/>
+        <result property="freeTag" column="free_tag"/>
+        <result property="correctAnswer" column="correct_answer"/>
+        <result property="score" column="score_val"/>
+        <result property="examYear" column="exam_year"/>
+        <result property="examPaperId" column="exam_paper_id"/>
+        <result property="examPaperName" column="exam_paper_name"/>
+        <result property="isShare" column="is_share"/>
+        <result property="isRepeat" column="is_repeat"/>
+        <result property="repeatQuestionId" column="repeat_question_id"/>
+        <result property="status" column="status"/>
+        <result property="createUser" column="create_user"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time_ms"/>
+        <result property="updateTime" column="update_time_ms"/>
+        <result property="updateBy" column="update_by"/>
+        <!-- QuestionDetailVo 详情字段 -->
+        <result property="answer" column="correct_answer"/>
+        <result property="answerImg" column="answer_img_url"/>
+        <result property="explainImg" column="explain_img_url"/>
+        <result property="fileBin" column="file_bin_url"/>
+        <result property="videoUrl" column="video_url"/>
+        <result property="optionsJson" column="options_json"/>
+        <result property="scoreStd" column="score_std_json"/>
+        <!-- 本 VO 新增字段 -->
+        <result property="sort" column="pq_sort"/>
+        <result property="pqScore" column="pq_score"/>
+    </resultMap>
+
+    <!--
+      卷头查询 — 仅返已发布卷（status='1'）。
+      不存在或 status≠'1' 由 MyBatis 自然返 null。
+    -->
+    <select id="selectPaperHeaderById"
+            parameterType="java.lang.Long"
+            resultMap="PaperSourceHeaderMap">
+        SELECT
+            p.id        AS paper_id,
+            p.name      AS paper_name,
+            p.exam_year AS exam_year
+        FROM biz_paper p
+        WHERE p.id = #{paperId}
+          AND p.status = '1'
+    </select>
+
+    <!--
+      卷下题列表 — JOIN biz_paper_question + biz_question。
+      过滤 q.status='1' 已发布题；按 pq.sort 升序。
+      字段口径与 BizQuestionMapper.xml 完全一致（含 score_val 占位 0）。
+    -->
+    <select id="selectQuestionsByPaperId"
+            parameterType="java.lang.Long"
+            resultMap="PaperSourceQuestionMap">
+        SELECT
+            q.id,
+            q.question_type,
+            q.difficult,
+            q.subject_id,
+            q.short_title,
+            q.stem_text,
+            q.stem_img_url,
+            q.answer_img_url,
+            q.explain_img_url,
+            q.file_bin_url,
+            q.video_url,
+            q.options_json,
+            q.correct_answer,
+            q.score_std_json,
+            q.free_tag,
+            0 AS score_val,
+            q.exam_year,
+            q.exam_paper_id,
+            q.exam_paper_name,
+            q.is_share,
+            q.is_repeat,
+            q.repeat_question_id,
+            q.status,
+            q.create_user,
+            q.create_by,
+            UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
+            UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
+            q.update_by,
+            pq.sort  AS pq_sort,
+            pq.score AS pq_score
+        FROM biz_paper_question pq
+        JOIN biz_question q ON q.id = pq.question_id
+        WHERE pq.paper_id = #{paperId}
+          AND q.status = '1'
+        ORDER BY pq.sort ASC
+    </select>
+
+</mapper>
