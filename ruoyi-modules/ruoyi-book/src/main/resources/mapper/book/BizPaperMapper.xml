@@ -137,4 +137,58 @@
         ORDER BY pq.sort ASC
     </select>
 
+    <!--
+      D 卡卷库视觉级还原 — 试卷分页列表 ResultMap。
+      字段类型口径严格按 misikt 真响应（A6-paper-page.json）：
+        score   DECIMAL(6,2)  → Integer（CAST AS SIGNED 去小数）
+        hg_score DECIMAL(6,2) → Integer
+        status  CHAR(1) '1'   → Integer 1
+        create_by VARCHAR(64) → Integer (CAST AS SIGNED)
+        create_time DATETIME  → Date（@JsonFormat YYYY-MM-DD 序列化）
+        finish_time           → 不存在该列，VO 恒 null
+    -->
+    <resultMap id="PaperListItemMap" type="org.dromara.book.domain.vo.PaperListItemVo">
+        <id property="id" column="id"/>
+        <result property="name" column="name"/>
+        <result property="questionCount" column="question_count"/>
+        <result property="score" column="score_int"/>
+        <result property="suggestTime" column="suggest_time"/>
+        <result property="createTime" column="create_time"/>
+        <!-- finishTime 不映射，VO 默认 null（DB 无此列） -->
+        <result property="hgScore" column="hg_score_int"/>
+        <result property="createUser" column="create_user_int"/>
+        <result property="directoryName" column="directory_name"/>
+        <result property="subjectId" column="subject_id"/>
+        <result property="paperType" column="paper_type"/>
+        <result property="frameTextContentId" column="frame_text_content_id"/>
+        <result property="status" column="status_int"/>
+        <result property="sort" column="sort"/>
+    </resultMap>
+
+    <!--
+      D 卡卷库视觉级还原 — 试卷分页查询（POST /teacher/exam/paper/page）。
+      走 MyBatis-Plus 分页插件 + Wrapper（${ew.customSqlSegment} 注入 WHERE+ORDER BY）。
+      score / hg_score / status / create_by 强制 CAST 成 Integer 对齐 misikt 真响应口径。
+    -->
+    <select id="selectPaperListPage"
+            resultMap="PaperListItemMap">
+        SELECT
+            p.id,
+            p.name,
+            p.question_count,
+            CAST(p.score AS SIGNED) AS score_int,
+            p.suggest_time,
+            p.create_time,
+            CAST(p.hg_score AS SIGNED) AS hg_score_int,
+            CAST(p.create_by AS SIGNED) AS create_user_int,
+            p.directory_name,
+            p.subject_id,
+            p.paper_type,
+            p.frame_text_content_id,
+            CAST(p.status AS SIGNED) AS status_int,
+            p.sort
+        FROM biz_paper p
+        ${ew.customSqlSegment}
+    </select>
+
 </mapper>

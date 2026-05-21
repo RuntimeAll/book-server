@@ -11,8 +11,11 @@ import java.util.List;
 /**
  * 试卷主表 Mapper（biz_paper）。
  *
- * <p>本 mapper 不绑 BaseMapperPlus（无 entity 类）— 承担 B-10 端点的两个查询：
- * 卷头信息 + 卷下题列表（JOIN biz_paper_question + biz_question）。
+ * <p>本 mapper 不绑 BaseMapperPlus（无 entity 类）— 承担:
+ * <ul>
+ *   <li>V1 B-10: 卷头 + 卷下题（JOIN biz_paper_question + biz_question）</li>
+ *   <li>D 卡 V0.5: 分页查询试卷列表（POST /teacher/exam/paper/page）</li>
+ * </ul>
  *
  * <p>🔴 必须 {@code @InterceptorIgnore(tenantLine = "true")} — biz_paper / biz_paper_question /
  * biz_question 业务表无 tenant_id 列，否则多租户拦截器拼 {@code AND tenant_id = ?} 撞
@@ -45,4 +48,20 @@ public interface BizPaperMapper {
      * @return 卷下所有已发布题（可能为空 list）
      */
     List<PaperSourceQuestionVo> selectQuestionsByPaperId(@Param("paperId") Long paperId);
+
+    /**
+     * D 卡卷库视觉级还原 — 分页查询试卷列表（POST /teacher/exam/paper/page）。
+     *
+     * <p>走 MyBatis-Plus 分页插件（@Param(Constants.WRAPPER) 注入 ${ew.customSqlSegment}）。
+     * 字段类型按 misikt 真响应口径 CAST：score / hgScore DECIMAL → Integer，
+     * status CHAR(1) → Integer，create_by VARCHAR → Integer，create_time DATETIME 透传 Date。
+     *
+     * @param page    MyBatis-Plus 分页对象
+     * @param wrapper Wrapper 注入 WHERE 条件（name LIKE / subject_id 前缀 / status / orderBy）
+     * @return 分页结果（records 是 PaperListItemVo）
+     */
+    com.baomidou.mybatisplus.core.metadata.IPage<org.dromara.book.domain.vo.PaperListItemVo> selectPaperListPage(
+        com.baomidou.mybatisplus.core.metadata.IPage<org.dromara.book.domain.vo.PaperListItemVo> page,
+        @Param(com.baomidou.mybatisplus.core.toolkit.Constants.WRAPPER)
+        com.baomidou.mybatisplus.core.conditions.Wrapper<org.dromara.book.domain.vo.PaperListItemVo> wrapper);
 }

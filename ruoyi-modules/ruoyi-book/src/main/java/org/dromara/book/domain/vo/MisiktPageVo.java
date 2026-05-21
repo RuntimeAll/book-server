@@ -1,6 +1,8 @@
 package org.dromara.book.domain.vo;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import lombok.Data;
 
 import java.io.Serial;
@@ -21,11 +23,17 @@ import java.util.List;
  * @author backend-dev
  */
 @Data
+@JsonPropertyOrder({
+    "total", "list", "pageNum", "pageSize", "size", "startRow", "endRow", "pages",
+    "prePage", "nextPage", "isFirstPage", "isLastPage", "hasPreviousPage", "hasNextPage",
+    "navigatePages", "navigatepageNums", "navigateFirstPage", "navigateLastPage"
+})
 public class MisiktPageVo<T> implements Serializable {
 
     @Serial
     private static final long serialVersionUID = 1L;
 
+    // 字段声明顺序 = 序列化输出顺序（按 misikt 真响应 A6-paper-page.json 字节级对齐）
     private long total;
     private List<T> list;
     private long pageNum;
@@ -36,14 +44,21 @@ public class MisiktPageVo<T> implements Serializable {
     private long pages;
     private long prePage;
     private long nextPage;
-    private boolean isFirstPage;
-    private boolean isLastPage;
+    /** boolean 字段命名 firstPage (no `is` prefix) — Lombok 给 boolean 加 `is` 前缀 getter；
+     *  Jackson 默认会 strip `is` 序列化为 firstPage（misikt 期望 isFirstPage）。
+     *  方案：字段名 firstPage + @JsonProperty 显式重命名输出 → 单一 key `isFirstPage`。 */
+    @JsonProperty("isFirstPage")
+    private boolean firstPage;
+    @JsonProperty("isLastPage")
+    private boolean lastPage;
     private boolean hasPreviousPage;
     private boolean hasNextPage;
     private int navigatePages;
     private List<Long> navigatepageNums;
     private long navigateFirstPage;
     private long navigateLastPage;
+
+    // 字段顺序锁定（防 reflection 乱序 + 字节级对齐 misikt 真响应顺序）
 
     /**
      * 从 MyBatis-Plus IPage 转 misikt 风格分页 VO。
