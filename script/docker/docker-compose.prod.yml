@@ -1,0 +1,71 @@
+# ================================================================
+# book-server prod docker-compose（2026-05-21 deployer v3 新建）
+#
+# 用法（ECS 上）：
+#   1. scp D:\workplace\book-ai\password\.env.prod root@<ECS>:/opt/book-ai/.env.prod
+#   2. scp 本文件到 /opt/book-ai/docker-compose.prod.yml
+#   3. ECS 上：cd /opt/book-ai && docker compose --env-file .env.prod -f docker-compose.prod.yml up -d book-server
+#   4. smoke: curl http://localhost:8080/actuator/health  (期望 {"status":"UP"})
+#
+# 说明：
+#   - 网络走 host 模式（跟 errorbook 老 nginx / redis 同 ECS 复用方便）
+#   - Redis 不在本 compose 里 — 视 §4.2 探查结果再决定走 A（复用 errorbook 老 redis）还是 B（独立起新容器）
+#   - nginx 不在本 compose 里 — book-server 跑容器 + book-ui 静态托管在 ECS 上的 nginx（可能复用 errorbook 老 nginx，加一个 server block）
+# ================================================================
+
+services:
+  book-server:
+    image: ${ACR_IMAGE}:${IMAGE_TAG}
+    container_name: book-server
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
+      # Port 错开 errorbook 已占 8080
+      SERVER_PORT: ${SERVER_PORT}
+      SNAIL_PORT: ${SNAIL_PORT}
+      # DB
+      BOOK_DB_HOST: ${BOOK_DB_HOST}
+      BOOK_DB_PORT: ${BOOK_DB_PORT}
+      BOOK_DB_NAME: ${BOOK_DB_NAME}
+      BOOK_DB_USER: ${BOOK_DB_USER}
+      BOOK_DB_PASSWORD: ${BOOK_DB_PASSWORD}
+      # Redis
+      BOOK_REDIS_HOST: ${BOOK_REDIS_HOST}
+      BOOK_REDIS_PORT: ${BOOK_REDIS_PORT}
+      BOOK_REDIS_PASSWORD: ${BOOK_REDIS_PASSWORD}
+      # 透传其他（application.yml 通过 ${ENV} 占位读 — 当前没用到，预留）
+      DRUID_ADMIN_USER: ${DRUID_ADMIN_USER}
+      DRUID_ADMIN_PASSWORD: ${DRUID_ADMIN_PASSWORD}
+      DRUID_ALLOW_IPS: ${DRUID_ALLOW_IPS}
+      TOKEN_SECRET: ${TOKEN_SECRET}
+      ALIYUN_ACCESS_KEY_ID: ${ALIYUN_ACCESS_KEY_ID}
+      ALIYUN_ACCESS_KEY_SECRET: ${ALIYUN_ACCESS_KEY_SECRET}
+      BAILIAN_API_KEY: ${BAILIAN_API_KEY}
+      WECHAT_APP_ID: ${WECHAT_APP_ID}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET}
+      # JVM 调优 — ECS 共享只 3.5GB 内存（errorbook 占 1.5G），关 ZGC 用 G1GC + 限 heap 768m
+      # 撞过 host OOM killer（dmesg 显示 ZGC shmem-rss 2.8GB + total-vm 111GB），ZGC 不适合小内存机器
+      # api-decrypt + captcha 关掉 — book-ui FE 没实现 RuoYi 加密 / 验证码字段，必须关才能登录
+      # 沉到底层：dev 已关（application-dev.yml），prod 跟 dev 对齐
+      JAVA_OPTS: "-Xms256m -Xmx768m -XX:-UseZGC -XX:+UseG1GC -XX:MaxMetaspaceSize=256m -Dapi-decrypt.enabled=false -Dcaptcha.enable=false"
+    mem_limit: 1200m
+    mem_reservation: 800m
+    volumes:
+      - /opt/book-ai/logs:/ruoyi/server/logs
+      - /opt/book-ai/temp:/ruoyi/server/temp
+
+  # 可选 — 走 §4.2 走法 B 时启用（独立 docker redis，跟 errorbook 物理隔离）
+  # 启用方法：docker compose --env-file .env.prod -f docker-compose.prod.yml --profile redis up -d
+  redis:
+    image: redis:7.2.8
+    container_name: book-redis
+    restart: unless-stopped
+    profiles: ["redis"]
+    network_mode: host
+    command: ["redis-server", "--port", "6380", "--appendonly", "yes"]
+    volumes:
+      - /opt/book-ai/redis/data:/data
+    environment:
+      TZ: Asia/Shanghai
