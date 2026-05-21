@@ -1,5 +1,6 @@
 package org.dromara.book.mapper;
 
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
@@ -13,10 +14,12 @@ import java.util.List;
  * 题目-知识点 Mapper（biz_question_knowledge）。
  *
  * <p>用于按 question_id 批量回填 questionKnowledges / questionStdKnowledges。
+ * biz_question_knowledge 表无 tenant_id 字段，关 MyBatis-Plus 多租户拦截器自动注入。
  *
  * @author backend-dev
  */
 @Mapper
+@InterceptorIgnore(tenantLine = "true")
 public interface BizQuestionKnowledgeMapper extends BaseMapperPlus<BizQuestionKnowledge, BizQuestionKnowledge> {
 
     /**

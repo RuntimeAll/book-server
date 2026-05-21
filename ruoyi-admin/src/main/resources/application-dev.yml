@@ -28,6 +28,14 @@ snail-job:
   # 客户端ip指定
   host:
 
+--- # api 接口加密 dev 期临时关闭（V0.1 联调验收用，验收后还原）
+api-decrypt:
+  enabled: false
+
+--- # captcha 验证码 dev 期临时关闭（V0.1 联调验收用，无人工交互的 curl 自验需要）
+captcha:
+  enable: false
+
 --- # 数据源配置
 spring:
   datasource:

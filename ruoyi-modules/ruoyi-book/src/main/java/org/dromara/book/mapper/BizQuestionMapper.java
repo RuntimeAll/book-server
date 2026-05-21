@@ -1,5 +1,6 @@
 package org.dromara.book.mapper;
 
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Constants;
@@ -13,10 +14,12 @@ import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
  * 题目主表 Mapper（biz_question）。
  *
  * <p>page 走 mapper.xml 自定义 SQL — 走 misikt 字段命名（stemImg 等），过滤条件由 Wrapper 注入。
+ * biz_question 表无 tenant_id 字段，关 MyBatis-Plus 多租户拦截器自动注入。
  *
  * @author backend-dev
  */
 @Mapper
+@InterceptorIgnore(tenantLine = "true")
 public interface BizQuestionMapper extends BaseMapperPlus<BizQuestion, BizQuestion> {
 
     /**

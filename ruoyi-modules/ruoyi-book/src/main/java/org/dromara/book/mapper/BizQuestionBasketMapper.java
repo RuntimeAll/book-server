@@ -1,5 +1,6 @@
 package org.dromara.book.mapper;
 
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.dromara.book.domain.entity.BizQuestionBasket;
@@ -23,6 +24,7 @@ import java.util.List;
  * @author backend-dev
  */
 @Mapper
+@InterceptorIgnore(tenantLine = "true")
 public interface BizQuestionBasketMapper extends BaseMapperPlus<BizQuestionBasket, BizQuestionBasket> {
 
     /**
