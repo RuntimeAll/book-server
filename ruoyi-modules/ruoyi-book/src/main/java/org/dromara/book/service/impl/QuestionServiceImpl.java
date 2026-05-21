@@ -166,8 +166,20 @@ public class QuestionServiceImpl implements IQuestionService {
         w.eq("status", "1");
 
         if (bo.getSubjectId() != null && !bo.getSubjectId().isEmpty() && !"0".equals(bo.getSubjectId())) {
-            // 章节按前缀匹配：传 '3071' 命中 '3071*' 全部后代（biz_subject id 每 3 位一层）
-            w.likeRight("subject_id", bo.getSubjectId());
+            // ⚠️ BUG-2 真修（2026-05-21）：题↔章节关联走 biz_question_knowledge.knowledge_id，
+            // 不要走 biz_question.subject_id（那是卷库分类编码，跟 biz_subject id 体系不一致）。
+            // 见 数据建模/07-补充资料/W-6-章节树数据复刻方案-2026-05-21.md §4.1。
+            //
+            // SQL 注入防护：biz_subject.id 是数字串（4-15 位），强校验 ^\d+$ 拒非法输入。
+            String sid = bo.getSubjectId();
+            if (!sid.matches("^\\d+$")) {
+                // 非法 subjectId 直接返空集（不报错，misikt 真站也吞）
+                w.apply("1=0");
+            } else {
+                w.inSql("id",
+                    "SELECT DISTINCT question_id FROM biz_question_knowledge "
+                        + "WHERE knowledge_id LIKE '" + sid + "%'");
+            }
         }
         if (bo.getQuestionType() != null) {
             w.eq("question_type", bo.getQuestionType());
