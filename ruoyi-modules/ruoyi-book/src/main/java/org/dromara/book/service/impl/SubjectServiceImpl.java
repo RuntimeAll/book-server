@@ -63,12 +63,35 @@ public class SubjectServiceImpl implements ISubjectService {
         return roots;
     }
 
+    /**
+     * BUG-1 修复（V1 PRD §2.4 D-2 调整）：DB 中 363 行 name 是"节点 XXXX"占位字符串
+     * （ETL 数据问题，level=2 教材 46 行 + level=3 章 267 行 + 其他 50 行），SQL 层 COALESCE
+     * 抓不到（不是 NULL）。BE service 层按 level 兜底前缀（教材 / 章节 / 节 …），保观感。
+     */
+    private String resolveDisplayName(BizSubject e) {
+        String name = e.getName();
+        if (name == null || !name.matches("^节点 \\d+$")) {
+            return name;
+        }
+        Integer level = e.getLevel();
+        String prefix = level == null ? "节点 " : switch (level) {
+            case 1 -> "学科 ";
+            case 2 -> "教材 ";
+            case 3 -> "章节 ";
+            case 4 -> "节 ";
+            case 5 -> "知识点 ";
+            default -> "节点 ";
+        };
+        return prefix + e.getId();
+    }
+
     private SubjectNodeVo toVo(BizSubject e) {
         SubjectNodeVo vo = new SubjectNodeVo();
         vo.setId(e.getId());
         vo.setParentId(e.getParentId());
-        vo.setName(e.getName());
-        vo.setTitle(e.getName());           // 兼容字段，FE TS interface 用 title
+        String displayName = resolveDisplayName(e);
+        vo.setName(displayName);
+        vo.setTitle(displayName);           // 兼容字段，FE TS interface 用 title
         vo.setLevel(e.getLevel());
         vo.setSort(e.getSort());
         vo.setKnowledgeImg(e.getKnowledgeImg());

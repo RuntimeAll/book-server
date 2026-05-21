@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  试卷-题目关联 Mapper XML（biz_paper_question）。
+
+  V1 落点：
+    - B-6 GET /teacher/qd/papers/{id} → 题在哪些卷
+    - JOIN biz_paper 取 name / exam_year
+    - status='1' 过滤已发布卷（草稿/软删隐式过滤）
+    - 按 p.create_time 倒序（misikt 推断：新卷优先）
+-->
+<mapper namespace="org.dromara.book.mapper.BizPaperQuestionMapper">
+
+    <resultMap id="QuestionPaperMap" type="org.dromara.book.domain.vo.QuestionPaperVo">
+        <result property="examPaperId"   column="exam_paper_id"/>
+        <result property="examPaperName" column="exam_paper_name"/>
+        <result property="examYear"      column="exam_year"/>
+        <result property="sort"          column="sort"/>
+    </resultMap>
+
+    <select id="selectPapersByQuestionId" resultMap="QuestionPaperMap">
+        SELECT
+            pq.paper_id   AS exam_paper_id,
+            p.name        AS exam_paper_name,
+            p.exam_year   AS exam_year,
+            pq.sort       AS sort
+        FROM biz_paper_question pq
+        JOIN biz_paper p ON p.id = pq.paper_id
+        WHERE pq.question_id = #{questionId}
+          AND p.status = '1'
+        ORDER BY p.create_time DESC, pq.sort ASC
+    </select>
+
+</mapper>
