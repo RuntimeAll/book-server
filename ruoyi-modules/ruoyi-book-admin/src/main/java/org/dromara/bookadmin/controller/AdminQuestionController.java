@@ -3,14 +3,18 @@ package org.dromara.bookadmin.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
+import org.dromara.book.domain.vo.SubjectNodeVo;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.domain.R;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * book-admin 后台题目管理 Controller（H1 卡 段② BE 波 2 — 独立模块化重构）。
@@ -51,5 +55,22 @@ public class AdminQuestionController {
             bo = new QuestionPageBo();
         }
         return R.ok(adminQuestionService.adminPage(bo));
+    }
+
+    /**
+     * POST /admin/question/lazyTree — 章节-知识点树（admin 通道，独立 service 自查 Mapper）。
+     *
+     * <p>V0.1 简化（与教师端 /teacher/question/lazyTree 等效）：忽略 parentId 一次返整树；
+     * 表只 ~2k 行性能 OK。FE 在 list.vue 章节面板 + edit.vue 知识点选择器复用同端点。
+     *
+     * <p>响应 envelope：RuoYi 标准 {@code {code:200, msg:"操作成功", data:[嵌套树]}}。
+     */
+    @SaCheckPermission("admin:question:list")
+    @PostMapping("/lazyTree")
+    public R<List<SubjectNodeVo>> lazyTree(@RequestBody(required = false) SubjectLazyTreeBo bo) {
+        if (bo == null) {
+            bo = new SubjectLazyTreeBo();
+        }
+        return R.ok(adminQuestionService.adminLazyTree(bo));
     }
 }

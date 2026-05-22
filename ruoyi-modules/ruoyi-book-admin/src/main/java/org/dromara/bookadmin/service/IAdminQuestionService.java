@@ -1,8 +1,12 @@
 package org.dromara.bookadmin.service;
 
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
+import org.dromara.book.domain.vo.SubjectNodeVo;
+
+import java.util.List;
 
 /**
  * admin 题目 Service 接口（H1 卡 V-6 — 写操作统一事务入口）。
@@ -36,6 +40,21 @@ public interface IAdminQuestionService {
      * @return misikt 风格分页 VO
      */
     MisiktPageVo<QuestionItemVo> adminPage(QuestionPageBo bo);
+
+    /**
+     * 章节-知识点树懒加载（admin 通道，方法内部走 {@code BizSubjectMapper} 自查，
+     * <strong>不</strong>调教师端 {@code ISubjectService.lazyTree}）。
+     *
+     * <p>V0.1 简化（与教师端等效）：一次性 SELECT * FROM biz_subject + 内存建树，
+     * 忽略 {@code bo.parentId} 永远返整树（misikt 抓包真实行为）。
+     *
+     * <p>BUG-1 数据修复保留：DB 仍有少量 "节点 XXXX" 占位名（W-6 已大幅清洗，
+     * 但兜底逻辑保留以防新增数据漏网），admin 端按 level 兜底前缀。
+     *
+     * @param bo 懒加载入参（parentId 当前忽略）
+     * @return 嵌套树（学段 → 学科 → 教材 → 章节 → 知识点）
+     */
+    List<SubjectNodeVo> adminLazyTree(SubjectLazyTreeBo bo);
 
     // 下波 V-1~V-4 在此补方法
 

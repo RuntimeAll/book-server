@@ -5,14 +5,18 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.entity.BizQuestion;
+import org.dromara.book.domain.entity.BizSubject;
 import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
+import org.dromara.book.domain.vo.SubjectNodeVo;
 import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
+import org.dromara.book.mapper.BizSubjectMapper;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
@@ -20,6 +24,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +61,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final BizQuestionMapper bizQuestionMapper;
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
     private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
+    private final BizSubjectMapper bizSubjectMapper;
 
     /** misikt 默认每页 10，pageIndex 兜底 1（与教师端一致）。 */
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -135,6 +141,103 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         // favorite 表也有 create_time / id 列 → orderBy 必须加 q. 前缀避免 ambiguous。
         w.orderByDesc("q.create_time").orderByDesc("q.id");
         return w;
+    }
+
+    @Override
+    public List<SubjectNodeVo> adminLazyTree(SubjectLazyTreeBo bo) {
+        // V0.1 忽略 bo.parentId（与教师端 SubjectServiceImpl 等效，misikt 真实行为也是一次返整树）
+        List<BizSubject> all = bizSubjectMapper.selectList(null);
+        if (all == null || all.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        // 1. 实体 → VO
+        Map<String, SubjectNodeVo> idMap = new HashMap<>(all.size() * 2);
+        for (BizSubject e : all) {
+            idMap.put(e.getId(), toSubjectVo(e));
+        }
+
+        // 2. 串父子关系；parent 不在结果集中的视为顶层
+        List<SubjectNodeVo> roots = new ArrayList<>();
+        for (BizSubject e : all) {
+            SubjectNodeVo node = idMap.get(e.getId());
+            SubjectNodeVo parent = e.getParentId() == null ? null : idMap.get(e.getParentId());
+            if (parent == null) {
+                roots.add(node);
+            } else {
+                if (parent.getChildren() == null) {
+                    parent.setChildren(new ArrayList<>());
+                }
+                parent.getChildren().add(node);
+            }
+        }
+
+        // 3. sort 排序 + hasChildren 标记
+        sortSubjectRecursive(roots);
+        markSubjectHasChildren(roots);
+
+        return roots;
+    }
+
+    /**
+     * BUG-1 兜底（W-6 数据已大幅清洗，但保留以防新增"节点 XXXX"漏网）。
+     */
+    private String resolveSubjectName(BizSubject e) {
+        String name = e.getName();
+        if (name == null || !name.matches("^节点 \\d+$")) {
+            return name;
+        }
+        Integer level = e.getLevel();
+        String prefix = level == null ? "节点 " : switch (level) {
+            case 1 -> "学科 ";
+            case 2 -> "教材 ";
+            case 3 -> "章节 ";
+            case 4 -> "节 ";
+            case 5 -> "知识点 ";
+            default -> "节点 ";
+        };
+        return prefix + e.getId();
+    }
+
+    private SubjectNodeVo toSubjectVo(BizSubject e) {
+        SubjectNodeVo vo = new SubjectNodeVo();
+        vo.setId(e.getId());
+        vo.setParentId(e.getParentId());
+        String displayName = resolveSubjectName(e);
+        vo.setName(displayName);
+        vo.setTitle(displayName);
+        vo.setLevel(e.getLevel());
+        vo.setSort(e.getSort());
+        vo.setKnowledgeImg(e.getKnowledgeImg());
+        vo.setKnowledgeVideo(e.getKnowledgeVideo());
+        vo.setIsShare(e.getIsShare());
+        vo.setCreateTime(e.getCreateTime() == null ? null : e.getCreateTime().getTime());
+        vo.setKey(e.getId());
+        vo.setValue(e.getId());
+        vo.setNodeDataSum(null);
+        return vo;
+    }
+
+    private void sortSubjectRecursive(List<SubjectNodeVo> nodes) {
+        if (nodes == null) {
+            return;
+        }
+        nodes.sort(Comparator.comparing(SubjectNodeVo::getSort, Comparator.nullsLast(Comparator.naturalOrder())));
+        for (SubjectNodeVo n : nodes) {
+            sortSubjectRecursive(n.getChildren());
+        }
+    }
+
+    private void markSubjectHasChildren(List<SubjectNodeVo> nodes) {
+        if (nodes == null) {
+            return;
+        }
+        for (SubjectNodeVo n : nodes) {
+            if (n.getChildren() == null || n.getChildren().isEmpty()) {
+                n.setHasChildren(false);
+            }
+            markSubjectHasChildren(n.getChildren());
+        }
     }
 
     /**
