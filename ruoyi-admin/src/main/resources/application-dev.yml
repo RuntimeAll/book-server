@@ -28,9 +28,9 @@ snail-job:
   # 客户端ip指定
   host:
 
---- # api 接口加密 — H1 卡 V-11 段④验收完工后还原 true（2026-05-23）
+--- # api 接口加密 — dev 期再降级关闭（H1 卡 §6 R8 长期项：plus-ui FE login 默认加密 vs RuoYi BE /auth/login 无 @ApiEncrypt → 500 mismatch；待专项卡对齐前不开）
 api-decrypt:
-  enabled: true
+  enabled: false
 
 --- # captcha 验证码 dev 期临时关闭（V0.1 联调验收用，无人工交互的 curl 自验需要）
 captcha:
