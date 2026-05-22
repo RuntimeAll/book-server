@@ -3,9 +3,13 @@ package org.dromara.book.service.impl;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.vo.CurrentUserVo;
 import org.dromara.book.service.IUserService;
+import org.dromara.common.core.domain.model.LoginUser;
+import org.dromara.common.satoken.utils.LoginHelper;
 import org.dromara.system.domain.SysUser;
 import org.dromara.system.mapper.SysUserMapper;
 import org.springframework.stereotype.Service;
+
+import java.util.Collections;
 
 /**
  * 当前用户 Service 实现。
@@ -36,6 +40,10 @@ public class UserServiceImpl implements IUserService {
         vo.setPhone(u.getPhonenumber());
         // 教师固定 role = 2（misikt 风格：2=教师，本工程不复刻学生）
         vo.setRole(2);
+        // U 卡新增 — 真实角色 role_key 集合（FE 登录分流用）
+        LoginUser loginUser = LoginHelper.getLoginUser();
+        vo.setRoles(loginUser != null && loginUser.getRolePermission() != null
+            ? loginUser.getRolePermission() : Collections.emptySet());
         // avatar 在 RuoYi 是 sys_oss 引用 Long；V0.1 直接 toString 让 FE 拿到非 null（不退化）
         vo.setImagePath(u.getAvatar() == null ? null : String.valueOf(u.getAvatar()));
         // 不复刻字段全 null（保持 FE TS interface 字段齐全）

@@ -34,4 +34,12 @@ public class PaperPageBo implements Serializable {
 
     /** 试卷分类 id，走 prefix-match（biz_paper.subject_id LIKE 'subjectId%'）；空串 = 不过滤 */
     private String subjectId;
+
+    /**
+     * U 卡新增 — 创建人 user_id（biz_paper.create_by VARCHAR(64) 存数字字符串）。
+     * <p>FE 工作台"我创建的卷"section 调本端点时传当前老师 user_id（字符串）；空串 = 不过滤。
+     * <p>注意 biz_paper.create_by 字段类型是 VARCHAR(64)，DB 真实存 admin/admin_id 的字符串形式
+     * （V2 ETL CAST(raw_paper.create_user AS CHAR)，参 P 卡 §0.4 沉淀）。
+     */
+    private String createBy;
 }

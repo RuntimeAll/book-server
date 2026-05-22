@@ -4,6 +4,7 @@ import lombok.Data;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.util.Set;
 
 /**
  * /teacher/user/current 响应 VO。
@@ -46,8 +47,16 @@ public class CurrentUserVo implements Serializable {
 
     /**
      * 教师固定 = 2（misikt 风格：2=教师 / 1=学生，本工程不复刻学生 role）
+     * 历史字段（J 卡 / B 卡仍在用），不删；U 卡新增 roles[] 供登录分流。
      */
     private Integer role;
+
+    /**
+     * U 卡新增 — 当前用户角色 role_key 集合（如 {"teacher"} / {"superadmin"}）。
+     * FE 登录后判 roles.includes('teacher') 决定跳 /workspace；admin/superadmin 跳 /home。
+     * 数据源：LoginHelper.getLoginUser().getRolePermission()（Sa-Token 登录时已注入）。
+     */
+    private Set<String> roles;
 
     /**
      * 头像：sys_user.avatar（RuoYi 实际是 sys_oss 引用 Long，V0.1 直接 toString，FE 不渲染头像也不退化）

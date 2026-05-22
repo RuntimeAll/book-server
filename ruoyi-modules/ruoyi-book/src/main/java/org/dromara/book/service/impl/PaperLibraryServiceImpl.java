@@ -177,6 +177,16 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
                 wrapper.likeRight("p.subject_id", sid);
             }
         }
+        // U 卡新增 — createBy 精确匹配（工作台"我创建的卷"用）
+        if (bo.getCreateBy() != null && !bo.getCreateBy().isEmpty()) {
+            String cb = bo.getCreateBy();
+            // 防 SQL 注入：create_by 存数字字符串（V2 ETL CAST(create_user AS CHAR)），仅允许纯数字
+            if (!cb.matches("^\\d+$")) {
+                wrapper.apply("1=0");
+            } else {
+                wrapper.eq("p.create_by", cb);
+            }
+        }
         wrapper.orderByDesc("p.sort");
 
         Page<PaperListItemVo> mpPage = new Page<>(pageIndex, pageSize);
