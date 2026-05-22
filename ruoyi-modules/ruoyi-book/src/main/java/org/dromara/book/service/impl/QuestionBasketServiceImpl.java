@@ -1,15 +1,19 @@
 package org.dromara.book.service.impl;
 
 import lombok.RequiredArgsConstructor;
+import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
 import org.dromara.book.mapper.BizQuestionBasketMapper;
+import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.service.IQuestionBasketService;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -33,6 +37,7 @@ public class QuestionBasketServiceImpl implements IQuestionBasketService {
 
     private final BizQuestionBasketMapper bizQuestionBasketMapper;
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
+    private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
 
     @Override
     public void addBasket(Long userId, Long questionId) {
@@ -60,11 +65,13 @@ public class QuestionBasketServiceImpl implements IQuestionBasketService {
         if (records == null || records.isEmpty()) {
             return Collections.emptyList();
         }
-        // 回填 questionKnowledges（source='U'）— 复用 page 端点批量策略
+        // 回填 questionKnowledges（source='U'） + freeTags（X 卡段②）— 复用 page 端点批量策略
         List<Long> ids = records.stream().map(QuestionItemVo::getId).collect(Collectors.toList());
         Map<Long, List<QuestionKnowledgeVo>> uMap = loadKnowledgesByQuestionIds(ids, "U");
+        Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
         for (QuestionItemVo vo : records) {
             vo.setQuestionKnowledges(uMap.getOrDefault(vo.getId(), Collections.emptyList()));
+            vo.setFreeTags(ftMap.getOrDefault(vo.getId(), Collections.emptyList()));
         }
         return records;
     }
@@ -104,5 +111,31 @@ public class QuestionBasketServiceImpl implements IQuestionBasketService {
             return Collections.emptyMap();
         }
         return all.stream().collect(Collectors.groupingBy(QuestionKnowledgeVo::getQuestionId));
+    }
+
+    /**
+     * 批量按 question_id 拉 freeTags 并按 questionId 分组（X 卡段②）。
+     *
+     * <p>Mapper 返回 FreeTagWithQid 含 questionId，复制成纯 FreeTagVo 避免响应泄露。
+     * 跟 {@code QuestionServiceImpl#loadFreeTagsByQuestionIds} 同源实现 — 第三处再用就抽公共类。
+     */
+    private Map<Long, List<FreeTagVo>> loadFreeTagsByQuestionIds(Collection<Long> questionIds) {
+        if (questionIds == null || questionIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<BizQuestionFreeTagMapper.FreeTagWithQid> all =
+            bizQuestionFreeTagMapper.selectGroupedByQuestionIds(questionIds);
+        if (all == null || all.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, List<FreeTagVo>> grouped = new HashMap<>();
+        for (BizQuestionFreeTagMapper.FreeTagWithQid row : all) {
+            FreeTagVo pure = new FreeTagVo();
+            pure.setId(row.getId());
+            pure.setName(row.getName());
+            pure.setPosition(row.getPosition());
+            grouped.computeIfAbsent(row.getQuestionId(), k -> new ArrayList<>()).add(pure);
+        }
+        return grouped;
     }
 }

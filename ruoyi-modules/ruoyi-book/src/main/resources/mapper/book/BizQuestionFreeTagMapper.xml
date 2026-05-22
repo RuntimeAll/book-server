@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  题目-freeTag 关联 Mapper XML（biz_question_free_tag + biz_free_tag）。
+
+  X 卡段② / freeTag 字典化：
+    - LEFT JOIN biz_free_tag 取 tag.name（关联失败时 name 为 null，但 ETL 保证不应出现）
+    - 排序 question_id ASC, position ASC —— 同题 position 顺序对，FE 决定颜色
+    - 不在 ResultMap 引用同名 Vo 类（FreeTagWithQid 继承 FreeTagVo + questionId）
+-->
+<mapper namespace="org.dromara.book.mapper.BizQuestionFreeTagMapper">
+
+    <resultMap id="FreeTagWithQidMap"
+               type="org.dromara.book.mapper.BizQuestionFreeTagMapper$FreeTagWithQid">
+        <id property="id" column="tag_id"/>
+        <result property="name" column="tag_name"/>
+        <result property="position" column="position"/>
+        <result property="questionId" column="question_id"/>
+    </resultMap>
+
+    <select id="selectGroupedByQuestionIds" resultMap="FreeTagWithQidMap">
+        SELECT
+            qft.question_id   AS question_id,
+            qft.position      AS position,
+            ft.id             AS tag_id,
+            ft.name           AS tag_name
+        FROM biz_question_free_tag qft
+        LEFT JOIN biz_free_tag ft ON ft.id = qft.tag_id
+        WHERE qft.question_id IN
+        <foreach collection="questionIds" item="qid" open="(" separator="," close=")">
+            #{qid}
+        </foreach>
+        ORDER BY qft.question_id ASC, qft.position ASC
+    </select>
+
+</mapper>

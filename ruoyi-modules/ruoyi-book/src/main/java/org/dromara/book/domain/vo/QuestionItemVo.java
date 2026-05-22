@@ -142,4 +142,18 @@ public class QuestionItemVo implements Serializable {
      * 用户标注知识点（source='U'，列表 + 详情都返）
      */
     private List<QuestionKnowledgeVo> questionKnowledges;
+
+    /**
+     * 结构化 freeTag 数组（X 卡段② / freeTag 字典化）。
+     *
+     * <p>跟 {@link #freeTag}（原始字符串字段）并存：
+     * <ul>
+     *   <li>老字段 {@code freeTag} = biz_question.free_tag 原始串（向下兼容，不删）</li>
+     *   <li>新字段 {@code freeTags} = biz_question_free_tag JOIN biz_free_tag
+     *       的结构化数组，元素 {id, name, position}，position 决定 FE 颜色</li>
+     * </ul>
+     *
+     * <p>page / select / queryBasket / paper source 4 个端点都返。
+     */
+    private List<FreeTagVo> freeTags;
 }

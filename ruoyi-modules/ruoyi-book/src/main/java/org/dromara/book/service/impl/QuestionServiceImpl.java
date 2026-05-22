@@ -8,10 +8,12 @@ import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
+import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
+import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.service.IQuestionBasketService;
@@ -46,6 +48,7 @@ public class QuestionServiceImpl implements IQuestionService {
 
     private final BizQuestionMapper bizQuestionMapper;
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
+    private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
     private final IQuestionBasketService questionBasketService;
 
     /** misikt 默认每页 10，pageIndex 兜底 1 */
@@ -64,13 +67,15 @@ public class QuestionServiceImpl implements IQuestionService {
         Page<QuestionItemVo> mpPage = new Page<>(pageIndex, pageSize);
         IPage<QuestionItemVo> result = bizQuestionMapper.selectQuestionPage(mpPage, wrapper);
 
-        // 回填 questionKnowledges（source='U'）
+        // 回填 questionKnowledges（source='U'） + freeTags（X 卡段②）
         List<QuestionItemVo> records = result.getRecords();
         if (records != null && !records.isEmpty()) {
             List<Long> ids = records.stream().map(QuestionItemVo::getId).collect(Collectors.toList());
             Map<Long, List<QuestionKnowledgeVo>> uMap = loadKnowledgesByQuestionIds(ids, "U");
+            Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
             for (QuestionItemVo vo : records) {
                 vo.setQuestionKnowledges(uMap.getOrDefault(vo.getId(), Collections.emptyList()));
+                vo.setFreeTags(ftMap.getOrDefault(vo.getId(), Collections.emptyList()));
             }
         }
 
@@ -86,10 +91,11 @@ public class QuestionServiceImpl implements IQuestionService {
         if (vo == null) {
             return null;
         }
-        // 回填 questionKnowledges + questionStdKnowledges
+        // 回填 questionKnowledges + questionStdKnowledges + freeTags（X 卡段②）
         List<Long> ids = Collections.singletonList(id);
         vo.setQuestionKnowledges(loadKnowledgesByQuestionIds(ids, "U").getOrDefault(id, new ArrayList<>()));
         vo.setQuestionStdKnowledges(loadKnowledgesByQuestionIds(ids, "S").getOrDefault(id, new ArrayList<>()));
+        vo.setFreeTags(loadFreeTagsByQuestionIds(ids).getOrDefault(id, new ArrayList<>()));
         return vo;
     }
 
@@ -217,5 +223,34 @@ public class QuestionServiceImpl implements IQuestionService {
             return Collections.emptyMap();
         }
         return all.stream().collect(Collectors.groupingBy(QuestionKnowledgeVo::getQuestionId));
+    }
+
+    /**
+     * 批量按 question_id 拉 freeTags 并按 questionId 分组（X 卡段②）。
+     *
+     * <p>Mapper 返回 {@link BizQuestionFreeTagMapper.FreeTagWithQid} 含 questionId，
+     * 本方法把每行复制成纯 {@link FreeTagVo}（避免 Jackson 序列化时把 questionId
+     * 也写进响应 JSON — 子类的额外字段也会被序列化）。
+     *
+     * @param questionIds 题目 ID 集合（空集合返空 Map）
+     */
+    private Map<Long, List<FreeTagVo>> loadFreeTagsByQuestionIds(Collection<Long> questionIds) {
+        if (questionIds == null || questionIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<BizQuestionFreeTagMapper.FreeTagWithQid> all =
+            bizQuestionFreeTagMapper.selectGroupedByQuestionIds(questionIds);
+        if (all == null || all.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, List<FreeTagVo>> grouped = new java.util.HashMap<>();
+        for (BizQuestionFreeTagMapper.FreeTagWithQid row : all) {
+            FreeTagVo pure = new FreeTagVo();
+            pure.setId(row.getId());
+            pure.setName(row.getName());
+            pure.setPosition(row.getPosition());
+            grouped.computeIfAbsent(row.getQuestionId(), k -> new ArrayList<>()).add(pure);
+        }
+        return grouped;
     }
 }
