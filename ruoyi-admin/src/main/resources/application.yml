@@ -1,7 +1,7 @@
 # 开发环境配置
 server:
-  # 服务器的HTTP端口，默认为8080
-  port: 8080
+  # 服务器的HTTP端口（codeSpace2 master-admin 分支隔离开发口子 — 主 codeSpace 仍用 8080 跑用户端线程）
+  port: 7888
   servlet:
     # 应用的访问路径
     context-path: /
