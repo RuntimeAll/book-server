@@ -5,10 +5,12 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.domain.R;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -72,5 +74,59 @@ public class AdminQuestionController {
             bo = new SubjectLazyTreeBo();
         }
         return R.ok(adminQuestionService.adminLazyTree(bo));
+    }
+
+    /**
+     * POST /admin/question/select/{id} — 题目详情（编辑回填用，V-5 波 2a）。
+     *
+     * <p>响应 envelope：RuoYi 标准 {@code R<QuestionDetailVo>}。
+     * 复用教师端 VO（DDL 单源），但 service 方法独立维护。
+     *
+     * <p>鉴权：{@code admin:question:list}（详情属 list 权限范围；写操作 V-1 才用 edit 权限）。
+     */
+    @SaCheckPermission("admin:question:list")
+    @PostMapping("/select/{id}")
+    public R<QuestionDetailVo> select(@PathVariable("id") Long id) {
+        return R.ok(adminQuestionService.adminSelectById(id));
+    }
+
+    /**
+     * POST /admin/question/delete/{id} — 题目软删 + 引用校验（V-2 波 2a）。
+     *
+     * <p>业务规则（PRD §3.2）：
+     * <ul>
+     *   <li>biz_paper_question 引用 &gt; 0 → 抛 ServiceException "该题被 N 张试卷引用，无法删除"</li>
+     *   <li>未引用 → UPDATE biz_question SET status='2'，软删<strong>不动</strong>
+     *       biz_question_knowledge / biz_question_free_tag（历史试卷渲染可用）</li>
+     * </ul>
+     *
+     * <p>响应 envelope：成功 {@code R<Void>.ok()} / 失败 {@code R.fail("...")}（全局异常处理器转）。
+     *
+     * <p>鉴权：{@code admin:question:edit}（写权限）。
+     */
+    @SaCheckPermission("admin:question:edit")
+    @PostMapping("/delete/{id}")
+    public R<Void> delete(@PathVariable("id") Long id) {
+        adminQuestionService.adminSoftDelete(id);
+        return R.ok();
+    }
+
+    /**
+     * POST /admin/question/publish/{id} — 题目发布（状态机 0 → 1，V-3 波 2a）。
+     *
+     * <p>SQL：{@code UPDATE biz_question SET status='1' WHERE id=? AND status='0'}。
+     * 影响行数 0 时抛 ServiceException "状态非法（当前不是草稿，不能发布）"。
+     *
+     * <p>不允许反向：'1' → '0' / '2' → 任何（PRD §3.8 状态机）。
+     *
+     * <p>响应 envelope：成功 {@code R<Void>.ok()} / 失败 {@code R.fail("...")}。
+     *
+     * <p>鉴权：{@code admin:question:edit}（写权限）。
+     */
+    @SaCheckPermission("admin:question:edit")
+    @PostMapping("/publish/{id}")
+    public R<Void> publish(@PathVariable("id") Long id) {
+        adminQuestionService.adminPublish(id);
+        return R.ok();
     }
 }

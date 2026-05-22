@@ -1,6 +1,7 @@
 package org.dromara.bookadmin.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +11,7 @@ import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizSubject;
 import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
@@ -17,14 +19,18 @@ import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
+import org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper;
 import org.dromara.bookadmin.service.IAdminQuestionService;
+import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +68,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
     private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
     private final BizSubjectMapper bizSubjectMapper;
+    private final AdminPaperQuestionRefMapper adminPaperQuestionRefMapper;
 
     /** misikt 默认每页 10，pageIndex 兜底 1（与教师端一致）。 */
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -141,6 +148,71 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         // favorite 表也有 create_time / id 列 → orderBy 必须加 q. 前缀避免 ambiguous。
         w.orderByDesc("q.create_time").orderByDesc("q.id");
         return w;
+    }
+
+    @Override
+    public QuestionDetailVo adminSelectById(Long id) {
+        if (id == null) {
+            return null;
+        }
+        QuestionDetailVo vo = bizQuestionMapper.selectQuestionDetailById(id);
+        if (vo == null) {
+            return null;
+        }
+        // 回填 questionKnowledges (U) + questionStdKnowledges (S) + freeTags
+        // 与教师端 QuestionServiceImpl#selectById 等效，但 admin 独立维护
+        List<Long> ids = Collections.singletonList(id);
+        vo.setQuestionKnowledges(loadKnowledgesByQuestionIds(ids, "U").getOrDefault(id, new ArrayList<>()));
+        vo.setQuestionStdKnowledges(loadKnowledgesByQuestionIds(ids, "S").getOrDefault(id, new ArrayList<>()));
+        vo.setFreeTags(loadFreeTagsByQuestionIds(ids).getOrDefault(id, new ArrayList<>()));
+        return vo;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void adminSoftDelete(Long id) {
+        if (id == null) {
+            throw new ServiceException("题目 ID 不能为空");
+        }
+        // 题目存在性校验（避免软删一个不存在的 id 静默返 ok）
+        BizQuestion exists = bizQuestionMapper.selectById(id);
+        if (exists == null) {
+            throw new ServiceException("题目不存在: " + id);
+        }
+        if ("2".equals(exists.getStatus())) {
+            throw new ServiceException("题目已软删，不能重复删除");
+        }
+        // 引用校验 — 走 admin 自有 Mapper（不动 ruoyi-book/BizPaperQuestionMapper）
+        int refCount = adminPaperQuestionRefMapper.countByQuestionId(id);
+        if (refCount > 0) {
+            throw new ServiceException("该题被 " + refCount + " 张试卷引用，无法删除");
+        }
+        // 软删：UPDATE biz_question SET status='2', update_time=NOW() WHERE id=?
+        // 不动 biz_question_knowledge / biz_question_free_tag — 历史试卷渲染知识点 tag 仍可用
+        UpdateWrapper<BizQuestion> w = new UpdateWrapper<>();
+        w.eq("id", id)
+            .set("status", "2")
+            .set("update_time", new Date());
+        bizQuestionMapper.update(null, w);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void adminPublish(Long id) {
+        if (id == null) {
+            throw new ServiceException("题目 ID 不能为空");
+        }
+        // SQL: UPDATE biz_question SET status='1', update_time=NOW() WHERE id=? AND status='0'
+        // 走 UpdateWrapper 串 status='0' 条件，让 DB 一步完成状态校验 + 写
+        UpdateWrapper<BizQuestion> w = new UpdateWrapper<>();
+        w.eq("id", id)
+            .eq("status", "0")
+            .set("status", "1")
+            .set("update_time", new Date());
+        int affected = bizQuestionMapper.update(null, w);
+        if (affected == 0) {
+            throw new ServiceException("状态非法（当前不是草稿，不能发布）");
+        }
     }
 
     @Override

@@ -3,6 +3,7 @@ package org.dromara.bookadmin.service;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
 
@@ -16,17 +17,19 @@ import java.util.List;
  * {@code org.dromara.book.service.IQuestionService}（教师端 Service）的任何方法。
  * admin 与 teacher 改方法互不波及。
  *
- * <p>当前接口（V-5 重构）：
+ * <p>当前接口（V-5 重构 + 波 2a）：
  * <ul>
  *   <li>{@link #adminPage(QuestionPageBo)} — admin 分页（独立维护，未来可加 status='0' 草稿过滤 / 创建人过滤 等）</li>
+ *   <li>{@link #adminLazyTree(SubjectLazyTreeBo)} — admin 章节-知识点树懒加载</li>
+ *   <li>{@link #adminSelectById(Long)} — V-5 详情查询（编辑回填用）</li>
+ *   <li>{@link #adminSoftDelete(Long)} — V-2 软删 + biz_paper_question 引用校验</li>
+ *   <li>{@link #adminPublish(Long)} — V-3 status 0→1 发布</li>
  * </ul>
  *
- * <p>下波（V-1/V-2/V-3/V-4）补：
+ * <p>下波（V-1/V-4/V-6）补：
  * <ul>
- *   <li>{@code edit(AdminQuestionEditBo bo)} — V-1 新建 / 编辑统一端点</li>
- *   <li>{@code softDelete(Long id)} — V-2 软删 + biz_paper_question 引用校验</li>
- *   <li>{@code publish(Long id)} — V-3 status 0→1 发布</li>
- *   <li>{@code uploadFile(MultipartFile file, String type)} — V-4 图上传 + image_asset 记录</li>
+ *   <li>{@code adminEdit(AdminQuestionEditBo bo)} — V-1 新建 / 编辑统一端点</li>
+ *   <li>{@code adminUploadFile(MultipartFile file, String type)} — V-4 图上传 + image_asset 记录</li>
  * </ul>
  *
  * @author backend-dev
@@ -56,6 +59,60 @@ public interface IAdminQuestionService {
      */
     List<SubjectNodeVo> adminLazyTree(SubjectLazyTreeBo bo);
 
-    // 下波 V-1~V-4 在此补方法
+    /**
+     * 题目详情查询（V-5 — 编辑回填用）。
+     *
+     * <p>与教师端 {@code QuestionServiceImpl#selectById} 当前等效（同 mapper SQL + 同回填策略），
+     * 但独立维护 — admin 后续可解除 status='1' 限制 / 加创建人过滤等。
+     *
+     * <p>回填：
+     * <ul>
+     *   <li>{@code questionKnowledges}（source='U'，用户标注知识点）</li>
+     *   <li>{@code questionStdKnowledges}（source='S'，标准库知识点）</li>
+     *   <li>{@code freeTags}（biz_question_free_tag JOIN biz_free_tag）</li>
+     * </ul>
+     *
+     * <p>鉴权：Controller 层 {@code @SaCheckPermission("admin:question:list")}（编辑回填属 list 范围；
+     * 后续 V-1 edit 端点才挂 admin:question:edit 写权限）。
+     *
+     * @param id 题目 ID
+     * @return 详情 VO，未找到时返 {@code null}
+     */
+    QuestionDetailVo adminSelectById(Long id);
+
+    /**
+     * 题目软删（V-2 — 状态 0/1 → 2，含引用校验）。
+     *
+     * <p>业务规则：
+     * <ol>
+     *   <li>查 biz_paper_question 引用次数 N</li>
+     *   <li>N &gt; 0 → 抛 {@code ServiceException("该题被 N 张试卷引用，无法删除")}</li>
+     *   <li>N == 0 → {@code UPDATE biz_question SET status='2', update_time=NOW() WHERE id=?}</li>
+     * </ol>
+     *
+     * <p>软删<strong>不动</strong> biz_question_knowledge / biz_question_free_tag —
+     * 历史试卷里仍能渲染知识点 tag（PRD §3.2）。
+     *
+     * <p>事务：{@code @Transactional(rollbackFor = Exception.class)}（虽只单表 UPDATE，
+     * 但未来扩展可能加联动写，保留事务边界）。
+     *
+     * @param id 题目 ID
+     */
+    void adminSoftDelete(Long id);
+
+    /**
+     * 题目发布（V-3 — 状态机 0 → 1）。
+     *
+     * <p>SQL：{@code UPDATE biz_question SET status='1', update_time=NOW() WHERE id=? AND status='0'}。
+     *
+     * <p>影响行数 0 → 抛 {@code ServiceException("状态非法（当前不是草稿，不能发布）")}。
+     *
+     * <p>不允许反向：'1' → '0' / '2' → 任何（PRD §3.8）。
+     *
+     * @param id 题目 ID
+     */
+    void adminPublish(Long id);
+
+    // 下波 V-1 (edit) / V-4 (fileUpload) 在此补方法
 
 }
