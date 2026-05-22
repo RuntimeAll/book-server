@@ -137,6 +137,153 @@
         ORDER BY pq.sort ASC
     </select>
 
+    <!-- ============================================================
+         E 卡段② — 试卷详情（POST /teacher/exam/paper/detail）
+         ============================================================ -->
+
+    <!-- 试卷详情卷头 ResultMap（PaperDetailVo） -->
+    <resultMap id="PaperDetailHeaderMap" type="org.dromara.book.domain.vo.PaperDetailVo">
+        <id property="paperId" column="paper_id"/>
+        <result property="paperName" column="paper_name"/>
+        <result property="subjectId" column="subject_id"/>
+        <result property="score" column="score"/>
+        <result property="suggestTime" column="suggest_time"/>
+        <result property="questionCount" column="question_count"/>
+        <result property="examYear" column="exam_year"/>
+        <result property="paperType" column="paper_type"/>
+    </resultMap>
+
+    <!-- 试卷大题分组 ResultMap（PaperSectionVo） -->
+    <resultMap id="PaperSectionMap" type="org.dromara.book.domain.vo.PaperSectionVo">
+        <id property="sectionId" column="id"/>
+        <result property="title" column="title"/>
+        <result property="sort" column="sort"/>
+    </resultMap>
+
+    <!--
+      试卷下所有题 + sectionId ResultMap（QuestionWithSectionId）
+      复用 PaperSourceQuestionMap 字段映射，外加 section_id 列映射到 sectionId
+    -->
+    <resultMap id="PaperDetailQuestionMap" type="org.dromara.book.mapper.BizPaperMapper$QuestionWithSectionId">
+        <id property="id" column="id"/>
+        <result property="questionType" column="question_type"/>
+        <result property="difficult" column="difficult"/>
+        <result property="subjectId" column="subject_id"/>
+        <result property="shortTitle" column="short_title"/>
+        <result property="stemText" column="stem_text"/>
+        <result property="stemImg" column="stem_img_url"/>
+        <result property="freeTag" column="free_tag"/>
+        <result property="correctAnswer" column="correct_answer"/>
+        <result property="score" column="score_val"/>
+        <result property="examYear" column="exam_year"/>
+        <result property="examPaperId" column="exam_paper_id"/>
+        <result property="examPaperName" column="exam_paper_name"/>
+        <result property="isShare" column="is_share"/>
+        <result property="isRepeat" column="is_repeat"/>
+        <result property="repeatQuestionId" column="repeat_question_id"/>
+        <result property="status" column="status"/>
+        <result property="createUser" column="create_user"/>
+        <result property="createBy" column="create_by"/>
+        <result property="createTime" column="create_time_ms"/>
+        <result property="updateTime" column="update_time_ms"/>
+        <result property="updateBy" column="update_by"/>
+        <result property="answer" column="correct_answer"/>
+        <result property="answerImg" column="answer_img_url"/>
+        <result property="explainImg" column="explain_img_url"/>
+        <result property="fileBin" column="file_bin_url"/>
+        <result property="videoUrl" column="video_url"/>
+        <result property="optionsJson" column="options_json"/>
+        <result property="scoreStd" column="score_std_json"/>
+        <result property="sort" column="pq_sort"/>
+        <result property="pqScore" column="pq_score"/>
+        <!-- E 卡段② 专属：section_id 用于 Service 端按 section 分组 -->
+        <result property="sectionId" column="pq_section_id"/>
+    </resultMap>
+
+    <!--
+      E 卡段② 第 1 步 — 试卷详情卷头查询。
+      过滤 status='1'，不存在 / 草稿 / 软删 → null。
+    -->
+    <select id="selectPaperDetailHeader"
+            parameterType="java.lang.Long"
+            resultMap="PaperDetailHeaderMap">
+        SELECT
+            p.id            AS paper_id,
+            p.name          AS paper_name,
+            p.subject_id    AS subject_id,
+            p.score         AS score,
+            p.suggest_time  AS suggest_time,
+            p.question_count AS question_count,
+            p.exam_year     AS exam_year,
+            p.paper_type    AS paper_type
+        FROM biz_paper p
+        WHERE p.id = #{paperId}
+          AND p.status = '1'
+    </select>
+
+    <!--
+      E 卡段② 第 2 步 — 试卷大题分组查询。
+      ORDER BY sort ASC（⚠️ section.sort 可能跳号 1/3/4，不连续，必须显式 ORDER BY）。
+    -->
+    <select id="selectSectionsByPaperId"
+            parameterType="java.lang.Long"
+            resultMap="PaperSectionMap">
+        SELECT
+            s.id    AS id,
+            s.title AS title,
+            s.sort  AS sort
+        FROM biz_paper_section s
+        WHERE s.paper_id = #{paperId}
+        ORDER BY s.sort ASC
+    </select>
+
+    <!--
+      E 卡段② 第 3 步 — 试卷下所有题 + sectionId（含 freeTags / knowledges 走 Service 端二次回填）。
+      跟 selectQuestionsByPaperId 唯一区别：多 SELECT pq.section_id AS pq_section_id（用于 Service 端按 section 分组）。
+      字段口径完全对齐 BizQuestionMapper 与 PaperSourceQuestionMap。
+    -->
+    <select id="selectQuestionsByPaperIdWithSection"
+            parameterType="java.lang.Long"
+            resultMap="PaperDetailQuestionMap">
+        SELECT
+            q.id,
+            q.question_type,
+            q.difficult,
+            q.subject_id,
+            q.short_title,
+            q.stem_text,
+            q.stem_img_url,
+            q.answer_img_url,
+            q.explain_img_url,
+            q.file_bin_url,
+            q.video_url,
+            q.options_json,
+            q.correct_answer,
+            q.score_std_json,
+            q.free_tag,
+            0 AS score_val,
+            q.exam_year,
+            q.exam_paper_id,
+            q.exam_paper_name,
+            q.is_share,
+            q.is_repeat,
+            q.repeat_question_id,
+            q.status,
+            q.create_user,
+            q.create_by,
+            UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
+            UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
+            q.update_by,
+            pq.sort       AS pq_sort,
+            pq.score      AS pq_score,
+            pq.section_id AS pq_section_id
+        FROM biz_paper_question pq
+        JOIN biz_question q ON q.id = pq.question_id
+        WHERE pq.paper_id = #{paperId}
+          AND q.status = '1'
+        ORDER BY pq.sort ASC
+    </select>
+
     <!--
       D 卡卷库视觉级还原 — 试卷分页列表 ResultMap。
       字段类型口径严格按 misikt 真响应（A6-paper-page.json）：
