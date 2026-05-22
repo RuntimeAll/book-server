@@ -156,4 +156,12 @@ public class QuestionItemVo implements Serializable {
      * <p>page / select / queryBasket / paper source 4 个端点都返。
      */
     private List<FreeTagVo> freeTags;
+
+    /**
+     * 当前用户是否已收藏该题（J 卡段② / LEFT JOIN biz_question_favorite by user_id）。
+     *
+     * <p>Boolean 而非 boolean — 区分"未登录/未查"(null) 与"未收藏"(false)。
+     * page 端点固定回填（默认 false），FE 直接渲染心形态，免 N+1 GET /qd/favorite/{id}。
+     */
+    private Boolean isFavorite;
 }

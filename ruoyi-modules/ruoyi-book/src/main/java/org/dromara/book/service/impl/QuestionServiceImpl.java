@@ -18,6 +18,7 @@ import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.service.IQuestionBasketService;
 import org.dromara.book.service.IQuestionService;
+import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -64,8 +65,12 @@ public class QuestionServiceImpl implements IQuestionService {
 
         QueryWrapper<BizQuestion> wrapper = buildPageWrapper(bo);
 
+        // J 卡段②：注入当前 userId → mapper LEFT JOIN biz_question_favorite 直接出 isFavorite，
+        // 免 FE N+1 调用 /qd/favorite/{id}。@SaCheckLogin 在 Controller 兜底，此处不为 null。
+        Long currentUserId = LoginHelper.getUserId();
+
         Page<QuestionItemVo> mpPage = new Page<>(pageIndex, pageSize);
-        IPage<QuestionItemVo> result = bizQuestionMapper.selectQuestionPage(mpPage, wrapper);
+        IPage<QuestionItemVo> result = bizQuestionMapper.selectQuestionPage(mpPage, wrapper, currentUserId);
 
         // 回填 questionKnowledges（source='U'） + freeTags（X 卡段②）
         List<QuestionItemVo> records = result.getRecords();

@@ -25,12 +25,17 @@ public interface BizQuestionMapper extends BaseMapperPlus<BizQuestion, BizQuesti
     /**
      * 分页查询题目列表（不含 questionKnowledges，由 Service 二次填充）。
      *
-     * @param page    MyBatis-Plus 分页对象
-     * @param wrapper LambdaQueryWrapper / QueryWrapper 注入 WHERE 条件
-     * @return 分页 VO（仅 BizQuestion 主字段映射 + 别名 stemImg 等）
+     * <p>J 卡段②：新增 {@code currentUserId} 参数，mapper.xml LEFT JOIN biz_question_favorite
+     * 一次性带出 isFavorite 字段，免 FE N+1 调用 /qd/favorite/{id}。
+     *
+     * @param page           MyBatis-Plus 分页对象
+     * @param wrapper        LambdaQueryWrapper / QueryWrapper 注入 WHERE 条件
+     * @param currentUserId  当前登录用户 ID（Service 注入；未登录场景理论上 SaCheckLogin 拦在前面，此处不容 null）
+     * @return 分页 VO（仅 BizQuestion 主字段映射 + 别名 stemImg 等 + isFavorite）
      */
     IPage<QuestionItemVo> selectQuestionPage(IPage<QuestionItemVo> page,
-                                             @Param(Constants.WRAPPER) Wrapper<BizQuestion> wrapper);
+                                             @Param(Constants.WRAPPER) Wrapper<BizQuestion> wrapper,
+                                             @Param("currentUserId") Long currentUserId);
 
     /**
      * 单题详情查询（不含 questionKnowledges / questionStdKnowledges，由 Service 二次填充）。

@@ -40,6 +40,8 @@
         <result property="createTime" column="create_time_ms"/>
         <result property="updateTime" column="update_time_ms"/>
         <result property="updateBy" column="update_by"/>
+        <!-- J 卡段② / page 端点专属，详情端点 SELECT 不带这列，serialize 时为 null -->
+        <result property="isFavorite" column="is_favorite"/>
     </resultMap>
 
     <!-- 详情 ResultMap（extends QuestionItemMap 加详情字段） -->
@@ -92,8 +94,12 @@
     <select id="selectQuestionPage"
             resultMap="QuestionItemMap">
         SELECT
-        <include refid="QuestionItemColumns"/>
+        <include refid="QuestionItemColumns"/>,
+        (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
         FROM biz_question q
+        LEFT JOIN biz_question_favorite f
+          ON f.question_id = q.id
+         AND f.user_id = #{currentUserId}
         ${ew.customSqlSegment}
     </select>
 
