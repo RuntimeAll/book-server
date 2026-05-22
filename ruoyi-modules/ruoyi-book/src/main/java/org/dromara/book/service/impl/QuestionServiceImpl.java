@@ -174,7 +174,9 @@ public class QuestionServiceImpl implements IQuestionService {
      */
     private QueryWrapper<BizQuestion> buildPageWrapper(QuestionPageBo bo) {
         QueryWrapper<BizQuestion> w = new QueryWrapper<>();
-        w.eq("status", "1");
+        // J 卡 hotfix（2026-05-22）：LEFT JOIN biz_question_favorite f 后，
+        // id / create_time 列在 q 和 f 都存在，所有 column 引用必须带 q. 前缀避免 ambiguous。
+        w.eq("q.status", "1");
 
         if (bo.getSubjectId() != null && !bo.getSubjectId().isEmpty() && !"0".equals(bo.getSubjectId())) {
             // ⚠️ BUG-2 真修（2026-05-21）：题↔章节关联走 biz_question_knowledge.knowledge_id，
@@ -187,28 +189,28 @@ public class QuestionServiceImpl implements IQuestionService {
                 // 非法 subjectId 直接返空集（不报错，misikt 真站也吞）
                 w.apply("1=0");
             } else {
-                w.inSql("id",
+                w.inSql("q.id",
                     "SELECT DISTINCT question_id FROM biz_question_knowledge "
                         + "WHERE knowledge_id LIKE '" + sid + "%'");
             }
         }
         if (bo.getQuestionType() != null) {
-            w.eq("question_type", bo.getQuestionType());
+            w.eq("q.question_type", bo.getQuestionType());
         }
         if (bo.getDifficult() != null) {
-            w.eq("difficult", bo.getDifficult());
+            w.eq("q.difficult", bo.getDifficult());
         }
         if (bo.getKeyWord() != null && !bo.getKeyWord().isEmpty()) {
             // V0.1 LIKE 兜底（ngram fulltext 未配 my.cnf）
-            w.like("stem_text", bo.getKeyWord());
+            w.like("q.stem_text", bo.getKeyWord());
         }
         if (bo.getNotUsedQuestion() != null && bo.getNotUsedQuestion() == 1) {
-            w.notInSql("id", "SELECT question_id FROM biz_paper_question");
+            w.notInSql("q.id", "SELECT question_id FROM biz_paper_question");
         }
         // notTaskQuestion=1：V0.1 schema 无 biz_task_question 表（M6 才上），
         // 入参收下但不施加过滤 — 等同 0=不限。撞 M6 起卡时再补 SQL。
         // if (bo.getNotTaskQuestion() != null && bo.getNotTaskQuestion() == 1) { ... }
-        w.orderByDesc("create_time").orderByDesc("id");
+        w.orderByDesc("q.create_time").orderByDesc("q.id");
         return w;
     }
 
