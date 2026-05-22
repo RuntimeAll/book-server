@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  H1 卡段② BE 波 2b — V-6 写：biz_free_tag 字典 + biz_question_free_tag 关联表。
+  namespace 独立 (org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper)，
+  避开 ruoyi-book/ 的 BizQuestionFreeTagMapper namespace。
+-->
+<mapper namespace="org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper">
+
+    <select id="selectIdByName" parameterType="string" resultType="java.lang.Long">
+        SELECT id FROM biz_free_tag WHERE name = #{name} LIMIT 1
+    </select>
+
+    <insert id="insertFreeTag" parameterType="string">
+        INSERT INTO biz_free_tag(name, use_count, create_time)
+        VALUES (#{name}, 1, NOW())
+    </insert>
+
+    <delete id="deleteByQuestionId" parameterType="java.lang.Long">
+        DELETE FROM biz_question_free_tag WHERE question_id = #{questionId}
+    </delete>
+
+    <insert id="insertRel">
+        INSERT INTO biz_question_free_tag(question_id, tag_id, position)
+        VALUES (#{questionId}, #{tagId}, #{position})
+    </insert>
+
+</mapper>

@@ -17,16 +17,21 @@ import java.util.List;
  * {@code org.dromara.book.service.IQuestionService}（教师端 Service）的任何方法。
  * admin 与 teacher 改方法互不波及。
  *
- * <p>当前接口（V-5 重构 + 波 2a）：
+ * <p>当前接口（V-5 重构 + 波 2a + 波 2b）：
  * <ul>
- *   <li>{@link #adminPage(QuestionPageBo)} — admin 分页（独立维护，未来可加 status='0' 草稿过滤 / 创建人过滤 等）</li>
+ *   <li>{@link #adminPage(QuestionPageBo)} — admin 分页</li>
  *   <li>{@link #adminLazyTree(SubjectLazyTreeBo)} — admin 章节-知识点树懒加载</li>
- *   <li>{@link #adminSelectById(Long)} — V-5 详情查询（编辑回填用）</li>
+ *   <li>{@link #adminSelectById(Long)} — V-5 详情查询</li>
  *   <li>{@link #adminSoftDelete(Long)} — V-2 软删 + biz_paper_question 引用校验</li>
  *   <li>{@link #adminPublish(Long)} — V-3 status 0→1 发布</li>
+ *   <li>{@link #adminEdit} — V-1 + V-6 新建/编辑统一事务入口（含 U 轨知识点全量替换 + 标签全量替换 + 字典自动建）</li>
  * </ul>
  *
- * <p>下波（V-1/V-4/V-6）补：
+ * <p>下波（V-4）补：
+ * <ul>
+ *   <li>{@code adminUploadFile(MultipartFile file, String type)} — V-4 图上传 + image_asset 记录</li>
+ * </ul>
+ *
  * <ul>
  *   <li>{@code adminEdit(AdminQuestionEditBo bo)} — V-1 新建 / 编辑统一端点</li>
  *   <li>{@code adminUploadFile(MultipartFile file, String type)} — V-4 图上传 + image_asset 记录</li>
@@ -113,6 +118,37 @@ public interface IAdminQuestionService {
      */
     void adminPublish(Long id);
 
-    // 下波 V-1 (edit) / V-4 (fileUpload) 在此补方法
+    /**
+     * 题目新建 / 编辑统一入口（V-1 + V-6 — H1 卡段② BE 波 2b）。
+     *
+     * <p>分支：
+     * <ul>
+     *   <li>{@code bo.id == null} → 新建：INSERT biz_question (status='0' 草稿)
+     *       + INSERT biz_question_knowledge (source='U')
+     *       + INSERT biz_question_free_tag + biz_free_tag 字典（自动建）</li>
+     *   <li>{@code bo.id != null} → 编辑：UPDATE biz_question (status 不动，要发布走 publish)
+     *       + 全量替换 biz_question_knowledge (source='U')
+     *       + 全量替换 biz_question_free_tag</li>
+     * </ul>
+     *
+     * <p>同一事务边界（{@code @Transactional(rollbackFor = Exception.class)}）：
+     * 任意 step 抛 {@code ServiceException} 整体回滚。
+     *
+     * <p>校验（PRD §3.1 + §6 R7）：
+     * <ul>
+     *   <li>questionType ∈ {1,2,3,4,5} / difficult ∈ {1..4} / subjectId 存在</li>
+     *   <li>选择题 (type=1)：optionsJson ≥ 2 + correctAnswer ∈ keys</li>
+     *   <li>questionKnowledges.size ≥ 1，每个 knowledgeId 在 biz_subject 存在</li>
+     *   <li>stemText 与 stemImgUrl 至少有一个非空（PRD §6 R7）</li>
+     * </ul>
+     *
+     * <p>knowledge source 强制 'U'：防 FE 误传 'S' 污染标准库知识点（PRD §3.5）。
+     *
+     * @param bo 入参（id 可空 = 新建 / 非空 = 编辑）
+     * @return 题目 ID（新建为新自增 / 编辑为原 id）
+     */
+    Long adminEdit(org.dromara.bookadmin.domain.bo.AdminQuestionEditBo bo);
+
+    // 下波 V-4 (fileUpload) 在此补方法
 
 }

@@ -4,10 +4,13 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.entity.BizQuestion;
+import org.dromara.book.domain.entity.BizQuestionKnowledge;
 import org.dromara.book.domain.entity.BizSubject;
 import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
@@ -19,6 +22,8 @@ import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
+import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
+import org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper;
 import org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.exception.ServiceException;
@@ -32,8 +37,10 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -69,6 +76,14 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
     private final BizSubjectMapper bizSubjectMapper;
     private final AdminPaperQuestionRefMapper adminPaperQuestionRefMapper;
+    /** admin 自有 freeTag 字典 + 关联表写 Mapper（V-6 波 2b 新增）。 */
+    private final AdminFreeTagWriteMapper adminFreeTagWriteMapper;
+
+    /**
+     * Jackson ObjectMapper（V-6 — biz_question.options_json 序列化）。
+     * 静态共享避免重复创建；ObjectMapper 是线程安全的（配置不变情况下）。
+     */
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** misikt 默认每页 10，pageIndex 兜底 1（与教师端一致）。 */
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -212,6 +227,244 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         int affected = bizQuestionMapper.update(null, w);
         if (affected == 0) {
             throw new ServiceException("状态非法（当前不是草稿，不能发布）");
+        }
+    }
+
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long adminEdit(AdminQuestionEditBo bo) {
+        // ===== Step 0：入参校验（PRD §3.1 + §6 R7） =====
+        validateEditBo(bo);
+
+        boolean isCreate = bo.getId() == null;
+        Long currentUserId = LoginHelper.getUserId();
+        String currentUserName = LoginHelper.getUsername();
+
+        // ===== Step 1：INSERT/UPDATE biz_question（含 free_tag 冗余串同步） =====
+        Long questionId;
+        if (isCreate) {
+            BizQuestion entity = new BizQuestion();
+            entity.setQuestionType(bo.getQuestionType());
+            entity.setDifficult(bo.getDifficult());
+            entity.setSubjectId(bo.getSubjectId());
+            entity.setShortTitle(bo.getShortTitle());
+            entity.setStemText(bo.getStemText());
+            entity.setStemImgUrl(bo.getStemImgUrl());
+            entity.setAnswerImgUrl(bo.getAnswerImgUrl());
+            entity.setExplainImgUrl(bo.getExplainImgUrl());
+            entity.setOptionsJson(serializeOptionsJson(bo.getOptionsJson()));
+            entity.setCorrectAnswer(bo.getCorrectAnswer());
+            entity.setScoreStdJson(bo.getScoreStdJson());
+            entity.setFreeTag(joinFreeTag(bo.getTagNames()));
+            // 新建时 status='0' 草稿（PRD §3.8 状态机）；status='1' 走 publish 端点
+            entity.setStatus("0");
+            // create_by / create_user 手动赋值（entity 没有自动填充注解）
+            entity.setCreateBy(currentUserName);
+            entity.setCreateUser(currentUserId);
+            // create_time / update_time 由 entity @TableField(fill) MetaObjectHandler 自动填充
+            bizQuestionMapper.insert(entity);
+            questionId = entity.getId();
+            if (questionId == null) {
+                // 防御：MyBatis-Plus useGeneratedKeys 默认开，理论上一定会回填 id
+                throw new ServiceException("新建题目失败：未拿到自增 id");
+            }
+        } else {
+            questionId = bo.getId();
+            // 编辑前先确认题目存在 + 未软删（防对 status='2' 的题做编辑导致渲染串）
+            BizQuestion exists = bizQuestionMapper.selectById(questionId);
+            if (exists == null) {
+                throw new ServiceException("题目不存在: " + questionId);
+            }
+            if ("2".equals(exists.getStatus())) {
+                throw new ServiceException("题目已软删，不能编辑");
+            }
+            // UPDATE — status 不动（要发布走 publish 端点）；update_by 手动赋；update_time 自动填充
+            UpdateWrapper<BizQuestion> w = new UpdateWrapper<>();
+            w.eq("id", questionId)
+                .set("question_type", bo.getQuestionType())
+                .set("difficult", bo.getDifficult())
+                .set("subject_id", bo.getSubjectId())
+                .set("short_title", bo.getShortTitle())
+                .set("stem_text", bo.getStemText())
+                .set("stem_img_url", bo.getStemImgUrl())
+                .set("answer_img_url", bo.getAnswerImgUrl())
+                .set("explain_img_url", bo.getExplainImgUrl())
+                .set("options_json", serializeOptionsJson(bo.getOptionsJson()))
+                .set("correct_answer", bo.getCorrectAnswer())
+                .set("score_std_json", bo.getScoreStdJson())
+                .set("free_tag", joinFreeTag(bo.getTagNames()))
+                .set("update_by", currentUserName)
+                .set("update_time", new Date());
+            int affected = bizQuestionMapper.update(null, w);
+            if (affected == 0) {
+                throw new ServiceException("题目更新失败（影响行数 0）: " + questionId);
+            }
+        }
+
+        // ===== Step 2：知识点全量替换（仅 U 轨；S 轨不动 — 防污染标准库） =====
+        writeKnowledgesUOnly(questionId, bo.getQuestionKnowledges());
+
+        // ===== Step 3：标签全量替换（含字典自动建 + 冗余串已在 Step 1 同步） =====
+        writeFreeTags(questionId, bo.getTagNames());
+
+        return questionId;
+    }
+
+    /**
+     * 入参校验（V-1 — PRD §3.1 + §6 R7）。任一不满足抛 ServiceException 整体回滚。
+     */
+    private void validateEditBo(AdminQuestionEditBo bo) {
+        if (bo == null) {
+            throw new ServiceException("入参不能为空");
+        }
+        if (bo.getQuestionType() == null
+            || bo.getQuestionType() < 1 || bo.getQuestionType() > 5) {
+            throw new ServiceException("题型非法（必须 1..5）");
+        }
+        if (bo.getDifficult() == null
+            || bo.getDifficult() < 1 || bo.getDifficult() > 4) {
+            throw new ServiceException("难度非法（必须 1..4）");
+        }
+        if (bo.getSubjectId() == null || bo.getSubjectId().isEmpty()) {
+            throw new ServiceException("章节 ID 不能为空");
+        }
+        if (bizSubjectMapper.selectById(bo.getSubjectId()) == null) {
+            throw new ServiceException("章节不存在: " + bo.getSubjectId());
+        }
+        // PRD §6 R7：stemText / stemImgUrl 至少有一个非空
+        boolean stemTextEmpty = bo.getStemText() == null || bo.getStemText().isEmpty();
+        boolean stemImgEmpty = bo.getStemImgUrl() == null || bo.getStemImgUrl().isEmpty();
+        if (stemTextEmpty && stemImgEmpty) {
+            throw new ServiceException("题干文本与题干图至少需要填一个");
+        }
+        // 选择题 (type=1)：必须有 ≥ 2 个选项 + correctAnswer ∈ optionsJson[*].key
+        if (bo.getQuestionType() == 1) {
+            List<Map<String, Object>> options = bo.getOptionsJson();
+            if (options == null || options.size() < 2) {
+                throw new ServiceException("选择题至少需要 2 个选项");
+            }
+            if (bo.getCorrectAnswer() == null || bo.getCorrectAnswer().isEmpty()) {
+                throw new ServiceException("选择题必须指定正确答案");
+            }
+            Set<String> keys = new LinkedHashSet<>();
+            for (Map<String, Object> opt : options) {
+                Object k = opt.get("key");
+                if (k != null) {
+                    keys.add(String.valueOf(k));
+                }
+            }
+            if (!keys.contains(bo.getCorrectAnswer())) {
+                throw new ServiceException("正确答案不在选项 key 列表中: " + bo.getCorrectAnswer());
+            }
+        }
+        // 知识点至少 1 个 + 每个 knowledgeId 在 biz_subject 存在
+        List<AdminQuestionEditBo.QuestionKnowledgeItem> kns = bo.getQuestionKnowledges();
+        if (kns == null || kns.isEmpty()) {
+            throw new ServiceException("至少关联 1 个知识点");
+        }
+        for (AdminQuestionEditBo.QuestionKnowledgeItem k : kns) {
+            if (k.getKnowledgeId() == null || k.getKnowledgeId().isEmpty()) {
+                throw new ServiceException("知识点 ID 不能为空");
+            }
+            if (bizSubjectMapper.selectById(k.getKnowledgeId()) == null) {
+                throw new ServiceException("知识点不存在: " + k.getKnowledgeId());
+            }
+        }
+    }
+
+    /**
+     * 序列化 optionsJson List → String（落 biz_question.options_json MySQL JSON 列）。
+     *
+     * @return null（入参 null/空） 或 JSON 字符串
+     */
+    private String serializeOptionsJson(List<Map<String, Object>> options) {
+        if (options == null || options.isEmpty()) {
+            return null;
+        }
+        try {
+            return OBJECT_MAPPER.writeValueAsString(options);
+        } catch (JsonProcessingException e) {
+            throw new ServiceException("optionsJson 序列化失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 拼 biz_question.free_tag 冗余串（PRD §3.5）。
+     * tagNames 空时返 null（而非空串）— 与 DB 现存数据一致。
+     */
+    private String joinFreeTag(List<String> tagNames) {
+        if (tagNames == null || tagNames.isEmpty()) {
+            return null;
+        }
+        return String.join(",", tagNames);
+    }
+
+    /**
+     * U 轨知识点全量替换（V-6 — PRD §3.5）。
+     *
+     * <p>S 轨（source='S' 标准库）不动 — admin 编辑禁污染标准库。
+     */
+    private void writeKnowledgesUOnly(Long questionId,
+                                      List<AdminQuestionEditBo.QuestionKnowledgeItem> knowledges) {
+        // 先删旧 U 轨；S 轨不动
+        QueryWrapper<BizQuestionKnowledge> delWrapper = new QueryWrapper<>();
+        delWrapper.eq("question_id", questionId).eq("source", "U");
+        bizQuestionKnowledgeMapper.delete(delWrapper);
+
+        // 写新 U 轨（去重，防 FE 误传相同 knowledgeId 撞 unique 约束）
+        Set<String> seen = new LinkedHashSet<>();
+        Date now = new Date();
+        for (AdminQuestionEditBo.QuestionKnowledgeItem item : knowledges) {
+            String kid = item.getKnowledgeId();
+            if (!seen.add(kid)) {
+                continue;
+            }
+            BizQuestionKnowledge row = new BizQuestionKnowledge();
+            row.setQuestionId(questionId);
+            row.setKnowledgeId(kid);
+            row.setSource("U"); // 强制 'U'，忽略 FE 传的 source 字段（PRD §3.5 防污染）
+            row.setCreateTime(now);
+            bizQuestionKnowledgeMapper.insert(row);
+        }
+    }
+
+    /**
+     * 标签全量替换 + biz_free_tag 字典自动建（V-6 — PRD §3.5 + §6 R5）。
+     *
+     * <p>头期宽松策略（PRD §6 R5）：INSERT 字典 use_count=1，DELETE 关联时不减 use_count
+     * （误差沉远期 cron 重算）。
+     *
+     * <p>同一题内 tagNames 去重（防 FE 误传重复 name 撞 unique 约束于 biz_question_free_tag 的
+     * (question_id, tag_id) 业务唯一性 — 表层无此 unique，但避免重复行也是良好实践）。
+     */
+    private void writeFreeTags(Long questionId, List<String> tagNames) {
+        // 先全删旧关联（biz_question_free_tag）
+        adminFreeTagWriteMapper.deleteByQuestionId(questionId);
+
+        if (tagNames == null || tagNames.isEmpty()) {
+            return;
+        }
+        // 去重 + 保序（用 LinkedHashSet）
+        Set<String> uniqueNames = new LinkedHashSet<>();
+        for (String name : tagNames) {
+            if (name != null && !name.isEmpty()) {
+                uniqueNames.add(name);
+            }
+        }
+        int position = 0;
+        for (String name : uniqueNames) {
+            Long tagId = adminFreeTagWriteMapper.selectIdByName(name);
+            if (tagId == null) {
+                adminFreeTagWriteMapper.insertFreeTag(name);
+                tagId = adminFreeTagWriteMapper.selectIdByName(name);
+                if (tagId == null) {
+                    // 防御：刚 INSERT 完应该一定能查到（unique 约束）
+                    throw new ServiceException("freeTag 字典插入后回查失败: " + name);
+                }
+            }
+            adminFreeTagWriteMapper.insertRel(questionId, tagId, position);
+            position++;
         }
     }
 

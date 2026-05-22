@@ -8,6 +8,7 @@ import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
+import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.domain.R;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -16,7 +17,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 /**
  * book-admin 后台题目管理 Controller（H1 卡 段② BE 波 2 — 独立模块化重构）。
@@ -128,5 +131,30 @@ public class AdminQuestionController {
     public R<Void> publish(@PathVariable("id") Long id) {
         adminQuestionService.adminPublish(id);
         return R.ok();
+    }
+
+    /**
+     * POST /admin/question/edit — 题目新建 / 编辑统一端点（V-1 + V-6 — 波 2b）。
+     *
+     * <p>分支（PRD §3.1）：
+     * <ul>
+     *   <li>{@code body.id == null} → 新建：INSERT biz_question (status='0' 草稿)
+     *       + INSERT 知识点 (source='U') + INSERT 标签 + 字典自动建</li>
+     *   <li>{@code body.id != null} → 编辑：UPDATE biz_question (status 不动，发布走 publish)
+     *       + 全量替换 知识点 (U 轨) + 全量替换 标签</li>
+     * </ul>
+     *
+     * <p>同事务：service 层挂 {@code @Transactional(rollbackFor = Exception.class)}，
+     * 任一步抛 {@code ServiceException} 整体回滚。
+     *
+     * <p>响应：{@code R<Map<"id", Long>>} —— {@code {"code":200,"msg":"操作成功","data":{"id":36187}}}（PRD §3.1）。
+     *
+     * <p>鉴权：{@code admin:question:edit}（写权限）。
+     */
+    @SaCheckPermission("admin:question:edit")
+    @PostMapping("/edit")
+    public R<Map<String, Long>> edit(@RequestBody AdminQuestionEditBo bo) {
+        Long id = adminQuestionService.adminEdit(bo);
+        return R.ok(Collections.singletonMap("id", id));
     }
 }
