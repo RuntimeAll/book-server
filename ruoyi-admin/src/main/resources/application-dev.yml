@@ -28,9 +28,9 @@ snail-job:
   # 客户端ip指定
   host:
 
---- # api 接口加密 dev 期临时关闭（V0.1 联调验收用，验收后还原）
+--- # api 接口加密 — H1 卡 V-11 段④验收完工后还原 true（2026-05-23）
 api-decrypt:
-  enabled: false
+  enabled: true
 
 --- # captcha 验证码 dev 期临时关闭（V0.1 联调验收用，无人工交互的 curl 自验需要）
 captcha:
