@@ -24,23 +24,40 @@ import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
 import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
 import org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper;
+import org.dromara.bookadmin.mapper.AdminImageAssetWriteMapper;
 import org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.exception.ServiceException;
+import org.dromara.common.oss.core.OssClient;
+import org.dromara.common.oss.entity.UploadResult;
+import org.dromara.common.oss.factory.OssFactory;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -78,6 +95,8 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final AdminPaperQuestionRefMapper adminPaperQuestionRefMapper;
     /** admin 自有 freeTag 字典 + 关联表写 Mapper（V-6 波 2b 新增）。 */
     private final AdminFreeTagWriteMapper adminFreeTagWriteMapper;
+    /** admin 自有 image_asset 写 Mapper（V-4 波 2c 新增）。 */
+    private final AdminImageAssetWriteMapper adminImageAssetWriteMapper;
 
     /**
      * Jackson ObjectMapper（V-6 — biz_question.options_json 序列化）。
@@ -88,6 +107,24 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     /** misikt 默认每页 10，pageIndex 兜底 1（与教师端一致）。 */
     private static final int DEFAULT_PAGE_SIZE = 10;
     private static final int DEFAULT_PAGE_INDEX = 1;
+
+    /** V-4 文件上传：最大 5MB。 */
+    private static final long ADMIN_UPLOAD_MAX_BYTES = 5L * 1024 * 1024;
+
+    /** V-4 文件上传：合法扩展名白名单（小写比较，含点）。 */
+    private static final Set<String> ADMIN_UPLOAD_ALLOWED_EXTS =
+        new HashSet<>(Arrays.asList(".png", ".jpg", ".jpeg", ".webp"));
+
+    /** V-4 文件上传：合法 type 集合（image_asset.asset_kind 取值，小写）。 */
+    private static final Set<String> ADMIN_UPLOAD_ALLOWED_TYPES =
+        new HashSet<>(Arrays.asList("stem", "answer", "explain"));
+
+    /** V-4 文件上传：OSS 路径日期段 — yyyy-MM-dd。 */
+    private static final DateTimeFormatter ADMIN_UPLOAD_DATE_FMT =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+    /** V-4 文件上传：OSS key 前缀。 */
+    private static final String ADMIN_UPLOAD_KEY_PREFIX = "admin-upload";
 
     @Override
     public MisiktPageVo<QuestionItemVo> adminPage(QuestionPageBo bo) {
@@ -609,5 +646,153 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             grouped.computeIfAbsent(row.getQuestionId(), k -> new ArrayList<>()).add(pure);
         }
         return grouped;
+    }
+
+
+    // ────────────────────────────────────────────────────────────
+    // V-4 fileUpload — H1 卡段② BE 波 2c
+    // ────────────────────────────────────────────────────────────
+
+    /**
+     * admin 图上传 — multipart → OSS + 写 image_asset。
+     *
+     * <p>实现要点：
+     * <ol>
+     *   <li>校验：file 非空 + size ≤ 5MB + 后缀白名单 + type 白名单兜底</li>
+     *   <li>OSS key 手工构造 {@code admin-upload/<YYYY-MM-dd>/<uuid>.<ext>}（绕过
+     *       {@link OssClient#uploadSuffix} 默认 properties.getPrefix() 拼接逻辑）</li>
+     *   <li>调 {@link OssClient#upload(java.io.InputStream, String, Long, String)} 上传</li>
+     *   <li>写 image_asset（src_url 用 admin-upload:// 虚 URL 兜底 NOT NULL；
+     *       url_hash = SHA-256(srcUrl) 64 字符 hex；
+     *       entity_ref='admin' 标识来源）</li>
+     *   <li>返回 {@code {url: ossUrl, assetId: <自增 id>}}</li>
+     * </ol>
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> adminUploadFile(MultipartFile file, String type) {
+        // 1. 校验入参
+        if (file == null || file.isEmpty()) {
+            throw new ServiceException("上传文件不能为空");
+        }
+        if (file.getSize() > ADMIN_UPLOAD_MAX_BYTES) {
+            throw new ServiceException("文件大小不能超过 5MB");
+        }
+        String suffix = resolveUploadSuffix(file.getOriginalFilename());
+        // suffix 含 "." 前缀，比较白名单
+        if (!ADMIN_UPLOAD_ALLOWED_EXTS.contains(suffix.toLowerCase(Locale.ROOT))) {
+            throw new ServiceException("仅支持 png/jpg/jpeg/webp 格式");
+        }
+        String assetKind = sanitizeUploadType(type);
+
+        // 2. 构造 OSS key —— admin-upload/<YYYY-MM-dd>/<uuid>.<ext>
+        String datePath = LocalDate.now().format(ADMIN_UPLOAD_DATE_FMT);
+        String uuid = UUID.randomUUID().toString().replace("-", "");
+        String ossKey = ADMIN_UPLOAD_KEY_PREFIX + "/" + datePath + "/" + uuid + suffix.toLowerCase(Locale.ROOT);
+
+        // 3. 上传 OSS（手动构造 key，不走 uploadSuffix 默认 prefix 逻辑）
+        OssClient storage = OssFactory.instance();
+        UploadResult uploadResult;
+        try {
+            byte[] bytes = file.getBytes();
+            uploadResult = storage.upload(
+                new ByteArrayInputStream(bytes),
+                ossKey,
+                Long.valueOf(bytes.length),
+                file.getContentType()
+            );
+        } catch (IOException e) {
+            throw new ServiceException("文件读取失败：" + e.getMessage());
+        }
+        String ossUrl = uploadResult.getUrl();
+        String host = extractHost(ossUrl);
+
+        // 4. 写 image_asset
+        String srcUrl = "admin-upload://" + ossKey;
+        String urlHash = sha256Hex(srcUrl);
+        String extNoDot = suffix.substring(1).toLowerCase(Locale.ROOT);
+        Map<String, Object> idHolder = new HashMap<>();
+        adminImageAssetWriteMapper.insertAdminUpload(
+            assetKind,
+            "admin",
+            srcUrl,
+            urlHash,
+            host,
+            extNoDot,
+            ossKey,
+            "",
+            file.getSize(),
+            file.getContentType(),
+            ossUrl,
+            idHolder
+        );
+        Object assetIdObj = idHolder.get("id");
+        if (assetIdObj == null) {
+            throw new ServiceException("image_asset 落库失败");
+        }
+        Long assetId = ((Number) assetIdObj).longValue();
+
+        // 5. 返回 {url, assetId}
+        Map<String, Object> data = new HashMap<>(2);
+        data.put("url", ossUrl);
+        data.put("assetId", assetId);
+        return data;
+    }
+
+    /**
+     * 从原始文件名解析后缀（含点）。无后缀返空串 — 由调用方校验白名单时拒绝。
+     */
+    private String resolveUploadSuffix(String originalFilename) {
+        if (originalFilename == null) {
+            return "";
+        }
+        int idx = originalFilename.lastIndexOf('.');
+        if (idx < 0 || idx == originalFilename.length() - 1) {
+            return "";
+        }
+        return originalFilename.substring(idx);
+    }
+
+    /**
+     * type 参数白名单 + null 兜底。null / 非法 → 默认 "stem"。
+     */
+    private String sanitizeUploadType(String type) {
+        if (type == null) {
+            return "stem";
+        }
+        String lower = type.trim().toLowerCase(Locale.ROOT);
+        return ADMIN_UPLOAD_ALLOWED_TYPES.contains(lower) ? lower : "stem";
+    }
+
+    /**
+     * 从 OSS URL 解析 host（供 image_asset.host 字段）。解析失败返 null（host 列允许 null）。
+     */
+    private String extractHost(String ossUrl) {
+        if (ossUrl == null || ossUrl.isEmpty()) {
+            return null;
+        }
+        try {
+            return URI.create(ossUrl).getHost();
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * SHA-256 hex（64 字符，匹配 image_asset.url_hash char(64) 约束）。
+     */
+    private String sha256Hex(String src) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(src.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b & 0xff));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 是 JRE 标配，不会进这里
+            throw new ServiceException("SHA-256 不可用：" + e.getMessage());
+        }
     }
 }

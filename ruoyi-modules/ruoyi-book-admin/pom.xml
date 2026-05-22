@@ -67,6 +67,12 @@
             <artifactId>ruoyi-common-web</artifactId>
         </dependency>
 
+        <!-- OSS（V-4 fileUpload — 走 OssClient + UploadResult）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-oss</artifactId>
+        </dependency>
+
     </dependencies>
 
 </project>

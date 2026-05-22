@@ -15,7 +15,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Collections;
 import java.util.List;
@@ -156,5 +158,37 @@ public class AdminQuestionController {
     public R<Map<String, Long>> edit(@RequestBody AdminQuestionEditBo bo) {
         Long id = adminQuestionService.adminEdit(bo);
         return R.ok(Collections.singletonMap("id", id));
+    }
+
+
+    /**
+     * POST /admin/question/fileUpload — admin 图上传（multipart → OSS + image_asset，V-4 波 2c）。
+     *
+     * <p>请求：{@code multipart/form-data}，字段：
+     * <ul>
+     *   <li>{@code file} — 二进制图（≤ 5MB，PNG / JPG / JPEG / WEBP）必填</li>
+     *   <li>{@code type} — stem / answer / explain（可选，default stem，仅用于 image_asset.asset_kind 命名）</li>
+     * </ul>
+     *
+     * <p>实现：详见 {@link IAdminQuestionService#adminUploadFile(MultipartFile, String)}。
+     *
+     * <p>响应：{@code R<Map<"url", "assetId">>}：
+     * <pre>{@code
+     * {
+     *   "code": 200, "msg": "操作成功",
+     *   "data": {
+     *     "url": "https://ai-book.oss-cn-hangzhou.aliyuncs.com/admin-upload/2026-05-22/<uuid>.png",
+     *     "assetId": 108573
+     *   }
+     * }
+     * }</pre>
+     *
+     * <p>鉴权：{@code admin:question:edit}（写权限）。
+     */
+    @SaCheckPermission("admin:question:edit")
+    @PostMapping("/fileUpload")
+    public R<Map<String, Object>> fileUpload(@RequestParam("file") MultipartFile file,
+                                             @RequestParam(value = "type", required = false) String type) {
+        return R.ok(adminQuestionService.adminUploadFile(file, type));
     }
 }

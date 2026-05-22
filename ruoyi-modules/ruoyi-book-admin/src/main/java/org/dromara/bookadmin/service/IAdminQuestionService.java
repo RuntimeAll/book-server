@@ -9,36 +9,6 @@ import org.dromara.book.domain.vo.SubjectNodeVo;
 
 import java.util.List;
 
-/**
- * admin 题目 Service 接口（H1 卡 V-6 — 写操作统一事务入口）。
- *
- * <p>模块隔离铁则（用户 2026-05-22 拍板）：本接口物理落 {@code ruoyi-book-admin} 模块，
- * 方法内部走 {@code BizQuestionMapper} 自查，<strong>禁调</strong>
- * {@code org.dromara.book.service.IQuestionService}（教师端 Service）的任何方法。
- * admin 与 teacher 改方法互不波及。
- *
- * <p>当前接口（V-5 重构 + 波 2a + 波 2b）：
- * <ul>
- *   <li>{@link #adminPage(QuestionPageBo)} — admin 分页</li>
- *   <li>{@link #adminLazyTree(SubjectLazyTreeBo)} — admin 章节-知识点树懒加载</li>
- *   <li>{@link #adminSelectById(Long)} — V-5 详情查询</li>
- *   <li>{@link #adminSoftDelete(Long)} — V-2 软删 + biz_paper_question 引用校验</li>
- *   <li>{@link #adminPublish(Long)} — V-3 status 0→1 发布</li>
- *   <li>{@link #adminEdit} — V-1 + V-6 新建/编辑统一事务入口（含 U 轨知识点全量替换 + 标签全量替换 + 字典自动建）</li>
- * </ul>
- *
- * <p>下波（V-4）补：
- * <ul>
- *   <li>{@code adminUploadFile(MultipartFile file, String type)} — V-4 图上传 + image_asset 记录</li>
- * </ul>
- *
- * <ul>
- *   <li>{@code adminEdit(AdminQuestionEditBo bo)} — V-1 新建 / 编辑统一端点</li>
- *   <li>{@code adminUploadFile(MultipartFile file, String type)} — V-4 图上传 + image_asset 记录</li>
- * </ul>
- *
- * @author backend-dev
- */
 public interface IAdminQuestionService {
 
     /**
@@ -149,6 +119,46 @@ public interface IAdminQuestionService {
      */
     Long adminEdit(org.dromara.bookadmin.domain.bo.AdminQuestionEditBo bo);
 
-    // 下波 V-4 (fileUpload) 在此补方法
+    /**
+     * admin 图上传 (V-4 — H1 卡段② BE 波 2c)。
+     *
+     * <p>multipart/form-data 上传 PNG / JPG / JPEG / WEBP 图片到 OSS，同时写
+     * {@code image_asset} 表追踪。返回 {@code {url, assetId}}。
+     *
+     * <p>OSS 路径：{@code admin-upload/<YYYY-MM-dd>/<uuid>.<ext>}（手动构造 key，
+     * 绕开 {@link org.dromara.common.oss.core.OssClient#uploadSuffix} 默认走 properties.getPrefix() 的逻辑）。
+     *
+     * <p>校验：
+     * <ul>
+     *   <li>file 非空 → 否则 {@code ServiceException("上传文件不能为空")}</li>
+     *   <li>size ≤ 5MB → 否则 {@code ServiceException("文件大小不能超过 5MB")}</li>
+     *   <li>后缀 ∈ {".png", ".jpg", ".jpeg", ".webp"}（小写比较）→ 否则
+     *       {@code ServiceException("仅支持 png/jpg/jpeg/webp 格式")}</li>
+     *   <li>type ∈ {"stem", "answer", "explain", null}（null 默认 "stem"）</li>
+     * </ul>
+     *
+     * <p>image_asset INSERT（字段与现有数据语义对齐）：
+     * <ul>
+     *   <li>{@code entity_type='question'} / {@code asset_kind=type}（默认 stem）</li>
+     *   <li>{@code entity_ref='admin'}（标识来源 — 表无 source 字段，复用 entity_ref）</li>
+     *   <li>{@code src_url='admin-upload://<oss-key>'}（NOT NULL 兜底，标识 admin 直传）</li>
+     *   <li>{@code url_hash=sha256(src_url)}（NOT NULL UNIQUE，char(64) 正好 SHA-256 hex 长度）</li>
+     *   <li>{@code rel_path=oss-key}（NOT NULL，复用 OSS key 作 rel 标识）</li>
+     *   <li>{@code local_path=''}（NOT NULL 但 admin 直传无本地路径，给空串）</li>
+     *   <li>{@code status='ok'} / {@code oss_url=...} / {@code oss_uploaded_ts=NOW()}</li>
+     *   <li>{@code file_size} / {@code content_type} / {@code ext}（不带点）</li>
+     * </ul>
+     *
+     * <p>事务：{@code @Transactional(rollbackFor = Exception.class)}，主要保护
+     * image_asset INSERT 失败时不返成功 url。OSS 上传已成功但 image_asset 写失败时
+     * OSS 文件会留着（业务可接受 — 后续 cron 清理）。
+     *
+     * <p>鉴权：Controller 层 {@code @SaCheckPermission("admin:question:edit")}（写权限）。
+     *
+     * @param file multipart 文件（必填）
+     * @param type 图片用途 stem / answer / explain（可选，默认 stem）
+     * @return {@code {"url": "https://...", "assetId": 108573}}
+     */
+    java.util.Map<String, Object> adminUploadFile(org.springframework.web.multipart.MultipartFile file, String type);
 
 }
