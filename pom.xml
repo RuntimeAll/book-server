@@ -364,6 +364,13 @@
                 <version>${revision}</version>
             </dependency>
 
+            <!--  题库 + 卷库 后台管理模块（H1 卡 — book-admin BE，与 ruoyi-book 物理隔离）  -->
+            <dependency>
+                <groupId>org.dromara</groupId>
+                <artifactId>ruoyi-book-admin</artifactId>
+                <version>${revision}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 

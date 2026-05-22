@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <groupId>org.dromara</groupId>
+        <artifactId>ruoyi-modules</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>ruoyi-book-admin</artifactId>
+
+    <description>
+        ruoyi-book-admin 后台管理业务模块（H1 卡）—— 与 ruoyi-book 教师端模块物理隔离：
+        共享 entity / mapper / VO（依赖 ruoyi-book），但 Controller / Service 独立，
+        方法内部不互通，admin 写法变更不波及 teacher，反之亦然。
+    </description>
+
+    <dependencies>
+
+        <!-- 复用 ruoyi-book 模块：entity / mapper / VO / BO 全部共享，DDL 单源 -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-book</artifactId>
+        </dependency>
+
+        <!-- 通用工具（R envelope / PageQuery / TableDataInfo / ServiceException 等）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-core</artifactId>
+        </dependency>
+
+        <!-- Knife4j / Swagger API 文档 -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-doc</artifactId>
+        </dependency>
+
+        <!-- MyBatis-Plus + 分页 + PageHelper -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-mybatis</artifactId>
+        </dependency>
+
+        <!-- Redis / Redisson（admin 后续缓存场景预留）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-redis</artifactId>
+        </dependency>
+
+        <!-- 操作日志 -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-log</artifactId>
+        </dependency>
+
+        <!-- Sa-Token 鉴权（@SaCheckPermission）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-security</artifactId>
+        </dependency>
+
+        <!-- Web 通用（统一异常处理 / 跨域 / R<T> 等）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-web</artifactId>
+        </dependency>
+
+    </dependencies>
+
+</project>

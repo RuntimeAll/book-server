@@ -99,6 +99,12 @@
             <artifactId>ruoyi-book</artifactId>
         </dependency>
 
+        <!--  题库 + 卷库 后台管理模块（H1 卡 — book-admin 工程 BE，与 ruoyi-book 物理隔离）  -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-book-admin</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>de.codecentric</groupId>
             <artifactId>spring-boot-admin-starter-client</artifactId>
