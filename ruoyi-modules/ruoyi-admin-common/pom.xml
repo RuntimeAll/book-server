@@ -36,10 +36,13 @@
             <artifactId>ruoyi-common-web</artifactId>
         </dependency>
 
-        <!-- OSS（OssClient + UploadResult — admin 文件上传核心依赖）-->
+        <!--
+          ruoyi-system 提供 ISysOssService.upload(MultipartFile) —— admin 端文件上传
+          委托给 RuoYi 自带 sys_oss 实现（含落库 + 后台 /system/oss CRUD 复用）。
+        -->
         <dependency>
             <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-common-oss</artifactId>
+            <artifactId>ruoyi-system</artifactId>
         </dependency>
 
     </dependencies>

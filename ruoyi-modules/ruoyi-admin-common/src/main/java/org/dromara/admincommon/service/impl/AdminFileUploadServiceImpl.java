@@ -4,50 +4,51 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.admincommon.service.IAdminFileUploadService;
 import org.dromara.common.core.exception.ServiceException;
-import org.dromara.common.oss.core.OssClient;
-import org.dromara.common.oss.entity.UploadResult;
-import org.dromara.common.oss.factory.OssFactory;
+import org.dromara.system.domain.vo.SysOssVo;
+import org.dromara.system.service.ISysOssService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 /**
- * admin 端通用文件上传 Service 实现（H1 卡补丁抽离 + image_asset 废弃版）。
+ * admin 端通用文件上传 Service 实现 —— 委托 RuoYi 自带 {@link ISysOssService#upload(MultipartFile)}。
  *
- * <p>实现要点：详见 {@link IAdminFileUploadService#uploadImage} javadoc。
+ * <p>2026-05-23 演进：
+ * <ol>
+ *   <li>H1 卡补丁初版：内联实现 OSS upload + INSERT image_asset（commit fecc1a0）</li>
+ *   <li>当日下午 image_asset 表废弃：删 image_asset 写入，仅 OSS 上传（commit 427f247）</li>
+ *   <li>本次：sys_oss 接手追溯职责，admin 上传委托 RuoYi 自带 ISysOssService.upload —
+ *       零重复代码 + 直接复用 RuoYi 后台 {@code /system/oss/list} 页面看历史上传</li>
+ * </ol>
  *
- * <p>2026-05-23 调整：用户拍板 image_asset 表即将废弃，本 service 不再写入 image_asset；
- * OSS 真上传保留，返回 {@code {url}} 一字段 Map。entityType / assetKind / entityRef
- * 入参仍保留（A/B 卡可能用作 OSS key 子目录或将来切到新表的过渡），但<strong>不</strong>
- * 落库。
- *
- * <p>实现层关键 workaround（H1 卡 Bug A + A2 教训）：
+ * <p>仍保留的业务层职责：
  * <ul>
- *   <li>不走 {@code OssClient.upload(InputStream,...)} —— 有 aws-sdk
- *       {@code BlockingInputStreamAsyncRequestBody} 的 subscribeTimeout race bug</li>
- *   <li>{@code MultipartFile} 在 {@code transferTo} 后底层 undertow 临时文件被移走 —
- *       必须先把 fileSize / contentType / originalFilename 缓存到局部变量</li>
+ *   <li>5MB 上限校验（RuoYi 自带 upload 不限制大小）</li>
+ *   <li>png/jpg/jpeg/webp 白名单校验（RuoYi 自带不限格式 — 题图业务约束）</li>
+ *   <li>entityType / assetKind / entityRef / keyPrefix 入参<strong>不</strong>传给 RuoYi
+ *       （RuoYi 用自己的 OSS prefix 逻辑），只做 INFO 日志埋点用于业务追溯</li>
  * </ul>
  *
- * @author backend-dev (H1 卡补丁 — admin-common 抽离 + image_asset 废弃)
+ * <p>⚠️ Bug A race 风险提示：RuoYi {@code ISysOssService.upload} 内部走
+ * {@code OssClient.uploadSuffix(byte[],...)} → {@code upload(InputStream,...)} —
+ * 这条路径在 aws-sdk + aliyun 冷启动慢的情况偶发 120s race（H1 卡 Bug A 教训）。
+ * dev / prod 冷启动首次上传如果碰到，重试一次基本会 OK（OssClient 已 cache）。
+ *
+ * @author backend-dev (H1 卡补丁 — 委托 RuoYi sys_oss)
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminFileUploadServiceImpl implements IAdminFileUploadService {
+
+    private final ISysOssService sysOssService;
 
     /** 单文件上限 5MB。 */
     private static final long UPLOAD_MAX_BYTES = 5L * 1024 * 1024;
@@ -55,9 +56,6 @@ public class AdminFileUploadServiceImpl implements IAdminFileUploadService {
     /** 合法扩展名白名单（小写比较，含点）。 */
     private static final Set<String> ALLOWED_EXTS =
         new HashSet<>(Arrays.asList(".png", ".jpg", ".jpeg", ".webp"));
-
-    /** OSS 路径日期段 — yyyy-MM-dd。 */
-    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -83,47 +81,31 @@ public class AdminFileUploadServiceImpl implements IAdminFileUploadService {
             throw new ServiceException("keyPrefix 不能为空");
         }
 
-        // 1. 缓存 multipart 元数据（防 transferTo 后底层临时文件被移走 — H1 Bug A2 教训）
+        // 1. 校验文件大小 + 扩展名（RuoYi 自带 upload 不做这俩校验，业务约束 admin-common 内置）
         long fileSize = file.getSize();
-        String contentType = file.getContentType();
-        String originalFilename = file.getOriginalFilename();
-
         if (fileSize > UPLOAD_MAX_BYTES) {
             throw new ServiceException("文件大小不能超过 5MB");
         }
-        String suffix = resolveSuffix(originalFilename).toLowerCase(Locale.ROOT);
+        String suffix = resolveSuffix(file.getOriginalFilename()).toLowerCase(Locale.ROOT);
         if (!ALLOWED_EXTS.contains(suffix)) {
             throw new ServiceException("仅支持 png/jpg/jpeg/webp 格式");
         }
 
-        // 2. 构造 OSS key —— <keyPrefix>/<YYYY-MM-dd>/<uuid>.<ext>
-        String datePath = LocalDate.now().format(DATE_FMT);
-        String uuid = UUID.randomUUID().toString().replace("-", "");
-        String ossKey = keyPrefix.trim() + "/" + datePath + "/" + uuid + suffix;
-
-        // 3. 上传 OSS —— 走 upload(Path,...)（File-based，绕过 aws-sdk BlockingInputStream race bug）
-        OssClient storage = OssFactory.instance();
-        UploadResult uploadResult;
-        Path tempPath;
+        // 2. 委托 RuoYi 自带 ISysOssService.upload — 内部完成 OSS 真上传 + sys_oss 落库
+        SysOssVo vo;
         try {
-            tempPath = Files.createTempFile("admin-oss-", suffix);
-            file.transferTo(tempPath.toFile());
-        } catch (IOException e) {
-            throw new ServiceException("临时文件创建失败：" + e.getMessage());
-        }
-        try {
-            // OssClient.upload(Path) 内 finally 自动 FileUtils.del(tempPath)，本方法无需重复删
-            uploadResult = storage.upload(tempPath, ossKey, null, contentType);
+            vo = sysOssService.upload(file);
         } catch (Exception e) {
-            throw new ServiceException("文件上传 OSS 失败：" + e.getMessage());
+            throw new ServiceException("文件上传失败：" + e.getMessage());
         }
-        String ossUrl = uploadResult.getUrl();
-        log.info("admin OSS 上传成功 entityType={} assetKind={} entityRef={} key={} size={} url={}",
-            entityType, assetKind, entityRef, ossKey, fileSize, ossUrl);
 
-        // 4. 返 {url} — image_asset 表 2026-05-23 废弃，不再落库
+        // 3. 业务追溯日志埋点（entityType/assetKind/entityRef 不落 sys_oss，仅日志可查）
+        log.info("admin OSS 上传成功 entityType={} assetKind={} entityRef={} keyPrefix={} ossId={} size={} url={}",
+            entityType, assetKind, entityRef, keyPrefix, vo.getOssId(), fileSize, vo.getUrl());
+
+        // 4. 返 {url}
         Map<String, Object> data = new HashMap<>(1);
-        data.put("url", ossUrl);
+        data.put("url", vo.getUrl());
         return data;
     }
 
@@ -136,7 +118,7 @@ public class AdminFileUploadServiceImpl implements IAdminFileUploadService {
     }
 
     /**
-     * 从原始文件名解析后缀（含点）。无后缀返空串 — 调用方校验白名单时拒绝。
+     * 从原始文件名解析后缀（含点）。无后缀返空串 — 由后续白名单校验拒绝。
      */
     private static String resolveSuffix(String originalFilename) {
         if (originalFilename == null) {
