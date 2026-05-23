@@ -1,7 +1,8 @@
 # 开发环境配置
 server:
   # 服务器的HTTP端口，默认为8080
-  port: 8080
+  # 主线 C (master-ai 分支 / 老师排课 Agent) = 9999；misikt master = 8081；admin master-admin = 7888
+  port: 9999
   servlet:
     # 应用的访问路径
     context-path: /

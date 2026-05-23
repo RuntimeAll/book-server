@@ -17,6 +17,7 @@
         <module>ruoyi-workflow</module>
         <module>ruoyi-book</module>
         <module>ruoyi-book-admin</module>
+        <module>ruoyi-scheduling</module>
     </modules>
 
     <artifactId>ruoyi-modules</artifactId>

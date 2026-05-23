@@ -276,3 +276,12 @@ justauth:
       client-id: 10**********6
       client-secret: 1f7d08**********5b7**********29e
       redirect-uri: ${justauth.address}/social-callback?source=gitea
+
+--- # 主线 C 老师排课 Agent 配置（master-ai 分支 / 凭据从 password/teacher-schedule-credentials.env 通过环境变量注入）
+schedule:
+  star:
+    base-url: ${STAR_AGGREGATOR_BASE_URL:https://api.lk888.ai}
+    model-id: ${STAR_AGGREGATOR_MODEL_ID:claude-opus-4-7}
+    api-key: ${STAR_AGGREGATOR_API_KEY:}
+  amap:
+    web-service-key: ${AMAP_WEB_SERVICE_KEY:}

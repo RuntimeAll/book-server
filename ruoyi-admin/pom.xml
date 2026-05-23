@@ -105,6 +105,12 @@
             <artifactId>ruoyi-book-admin</artifactId>
         </dependency>
 
+        <!--  主线 C 老师排课 Agent 业务模块（master-ai 分支）  -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-scheduling</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>de.codecentric</groupId>
             <artifactId>spring-boot-admin-starter-client</artifactId>
