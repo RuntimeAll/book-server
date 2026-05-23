@@ -2,13 +2,13 @@ package org.dromara.bookadmin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import lombok.RequiredArgsConstructor;
-import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
 import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
+import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.domain.R;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -53,13 +53,16 @@ public class AdminQuestionController {
      * <p>本波（V-5 重构）：路由 + Sa-Token 权限注解 + admin 独立 service 全部就绪，
      * 入参 BO + 返回 VO 与教师端共享（DDL 单源），但 service 方法独立维护。
      *
+     * <p>H1 卡 Bug2 补丁：入参 BO 从 {@code QuestionPageBo} → {@link AdminQuestionPageBo}，
+     * 新增 {@code tagIds} 支持 admin 列表页多选标签筛选（OR 语义）。
+     *
      * <p>响应 envelope：RuoYi 标准 {@code {code:200, msg:"操作成功", data:{records,total,...}}}。
      */
     @SaCheckPermission("admin:question:list")
     @PostMapping("/page")
-    public R<MisiktPageVo<QuestionItemVo>> page(@RequestBody(required = false) QuestionPageBo bo) {
+    public R<MisiktPageVo<QuestionItemVo>> page(@RequestBody(required = false) AdminQuestionPageBo bo) {
         if (bo == null) {
-            bo = new QuestionPageBo();
+            bo = new AdminQuestionPageBo();
         }
         return R.ok(adminQuestionService.adminPage(bo));
     }
@@ -190,5 +193,54 @@ public class AdminQuestionController {
     public R<Map<String, Object>> fileUpload(@RequestParam("file") MultipartFile file,
                                              @RequestParam(value = "type", required = false) String type) {
         return R.ok(adminQuestionService.adminUploadFile(file, type));
+    }
+
+
+    /**
+     * POST /admin/question/freeTagSearch — admin freeTag 字典搜索（H1 卡 Bug2 补丁）。
+     *
+     * <p>用途：FE 编辑页标签改成"搜索式 multi-select"后需此端点提供"输入即搜"
+     * 候选下拉；列表页 tag 多选筛选弹层同样复用。
+     *
+     * <p>入参（{@code application/json}）：
+     * <ul>
+     *   <li>{@code keyword} — 关键字（可选）；null / 空 / 纯空格 → 返热门 top 20（按 use_count 倒序）</li>
+     *   <li>{@code limit} — 返回上限（可选）；null / 非正 → 默认 20；&gt; 100 → clamp 100</li>
+     * </ul>
+     *
+     * <p>响应 envelope：RuoYi 标准 {@code R<List<Map>>}。
+     * <pre>{@code
+     * {
+     *   "code": 200, "msg": "操作成功",
+     *   "data": [
+     *     {"id": 25, "name": "勾股定理", "useCount": 3200},
+     *     {"id": 29, "name": "三角形内角和", "useCount": 1820},
+     *     ...
+     *   ]
+     * }
+     * }</pre>
+     *
+     * <p>鉴权：{@code admin:question:list}（属读端点；列表筛选 + 编辑回填都需访问）。
+     */
+    @SaCheckPermission("admin:question:list")
+    @PostMapping("/freeTagSearch")
+    public R<List<Map<String, Object>>> freeTagSearch(@RequestBody(required = false) Map<String, Object> body) {
+        String keyword = null;
+        Integer limit = null;
+        if (body != null) {
+            Object kw = body.get("keyword");
+            keyword = kw == null ? null : kw.toString();
+            Object lm = body.get("limit");
+            if (lm instanceof Number) {
+                limit = ((Number) lm).intValue();
+            } else if (lm != null) {
+                try {
+                    limit = Integer.parseInt(lm.toString().trim());
+                } catch (NumberFormatException ignored) {
+                    limit = null;
+                }
+            }
+        }
+        return R.ok(adminQuestionService.adminFreeTagSearch(keyword, limit));
     }
 }

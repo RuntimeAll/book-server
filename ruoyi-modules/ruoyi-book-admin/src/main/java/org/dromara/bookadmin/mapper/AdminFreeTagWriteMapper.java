@@ -66,4 +66,29 @@ public interface AdminFreeTagWriteMapper {
     int insertRel(@Param("questionId") Long questionId,
                   @Param("tagId") Long tagId,
                   @Param("position") int position);
+
+    /**
+     * 按 keyword 模糊搜索 biz_free_tag 字典，按 use_count 倒序返热度 top N（H1 卡 Bug2 补丁）。
+     *
+     * <p>FE 编辑页标签从动态输入改成搜索式 multi-select 后，需此端点提供"输入即搜"
+     * 候选下拉列表。keyword 为空 / null 时返热门 top N（用 use_count 倒序），
+     * 非空时走 LIKE '%keyword%' 模糊匹配。
+     *
+     * <p>SQL 行为：
+     * <ul>
+     *   <li>keyword null / "" → 不加 name 过滤，纯热度排序</li>
+     *   <li>keyword 非空 → 加 LIKE '%keyword%' 过滤后再按 use_count 倒序</li>
+     *   <li>ORDER BY use_count DESC, id DESC（同热度按 id 兜底稳定排序）</li>
+     *   <li>LIMIT 由调用方传（默认 20，service 层 clamp 上限 100）</li>
+     * </ul>
+     *
+     * <p>返结构：{@code [{id: Long, name: String, useCount: Integer}, ...]}
+     * — 字段名走 mapper.xml 显式 alias（{@code use_count AS useCount}）。
+     *
+     * @param keyword 关键字（null / 空 = 不过滤，返热门 top N）
+     * @param limit   返回上限（service 层兜底 20，最大 100）
+     * @return tag 候选列表（按 use_count 倒序）
+     */
+    java.util.List<java.util.Map<String, Object>> selectListByKeyword(@Param("keyword") String keyword,
+                                                                      @Param("limit") int limit);
 }

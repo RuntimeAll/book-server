@@ -25,4 +25,21 @@
         VALUES (#{questionId}, #{tagId}, #{position})
     </insert>
 
+    <!--
+      H1 卡 Bug2 补丁 — FE 标签搜索式 multi-select 候选下拉。
+      keyword null / 空时返热门 top N（不加 name 过滤），非空时按 LIKE '%keyword%' 过滤。
+      字段 alias use_count → useCount 保持驼峰，FE 直接消费。
+    -->
+    <select id="selectListByKeyword" resultType="java.util.Map">
+        SELECT id, name, use_count AS useCount
+        FROM biz_free_tag
+        <where>
+            <if test="keyword != null and keyword != ''">
+                name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+        ORDER BY use_count DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
 </mapper>

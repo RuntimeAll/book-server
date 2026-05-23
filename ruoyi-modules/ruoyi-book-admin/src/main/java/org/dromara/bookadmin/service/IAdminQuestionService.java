@@ -1,23 +1,28 @@
 package org.dromara.bookadmin.service;
 
-import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
+import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
 
 import java.util.List;
+import java.util.Map;
 
 public interface IAdminQuestionService {
 
     /**
      * 分页查询题目（admin 通道，方法内部走 Mapper 自查，不调教师端 service）。
      *
-     * @param bo 分页 + 筛选入参（misikt 风格 pageIndex / keyWord / difficult / 等）
+     * <p>H1 卡 Bug2 补丁：签名从 {@code QuestionPageBo} → {@link AdminQuestionPageBo}，
+     * 新增字段 {@code tagIds} 支持多选标签 OR 语义筛选。共有字段（subjectId / questionType /
+     * difficult / keyWord / 等）通过继承沿用，behavior 不变。
+     *
+     * @param bo 分页 + 筛选入参（misikt 风格 pageIndex / keyWord / difficult / + admin 独有 tagIds）
      * @return misikt 风格分页 VO
      */
-    MisiktPageVo<QuestionItemVo> adminPage(QuestionPageBo bo);
+    MisiktPageVo<QuestionItemVo> adminPage(AdminQuestionPageBo bo);
 
     /**
      * 章节-知识点树懒加载（admin 通道，方法内部走 {@code BizSubjectMapper} 自查，
@@ -160,5 +165,31 @@ public interface IAdminQuestionService {
      * @return {@code {"url": "https://...", "assetId": 108573}}
      */
     java.util.Map<String, Object> adminUploadFile(org.springframework.web.multipart.MultipartFile file, String type);
+
+
+    /**
+     * admin 端 freeTag 字典搜索 (H1 卡 Bug2 补丁 — 列表页 tag 多选筛选 + 编辑页搜索式 multi-select 共用候选源)。
+     *
+     * <p>SQL 行为（详见 {@link org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper#selectListByKeyword(String, int)}）：
+     * <ul>
+     *   <li>keyword null / 空（trim 后）→ 返热门 top {@code limit}（按 use_count 倒序）</li>
+     *   <li>keyword 非空 → LIKE '%keyword%' 模糊匹配，再按 use_count 倒序</li>
+     *   <li>同热度按 id 倒序兜底稳定排序</li>
+     * </ul>
+     *
+     * <p>limit 兜底规则：
+     * <ul>
+     *   <li>null / 0 / 负数 → 默认 20</li>
+     *   <li>大于 100 → clamp 到 100（防 FE 误传巨值打 DB）</li>
+     * </ul>
+     *
+     * <p>返结构：{@code [{id: Long, name: String, useCount: Integer}, ...]}
+     * — 字段已驼峰，FE 直接消费。
+     *
+     * @param keyword 关键字（null / 空 / 纯空格 → trim 后等效"返热门"）
+     * @param limit   返回上限（null / 非正 → 默认 20；&gt; 100 → clamp 到 100）
+     * @return tag 候选列表（按 use_count 倒序）
+     */
+    List<Map<String, Object>> adminFreeTagSearch(String keyword, Integer limit);
 
 }

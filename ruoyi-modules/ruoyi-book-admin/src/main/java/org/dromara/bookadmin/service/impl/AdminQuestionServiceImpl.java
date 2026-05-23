@@ -7,7 +7,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
@@ -23,6 +22,7 @@ import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
 import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
+import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
 import org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper;
 import org.dromara.bookadmin.mapper.AdminImageAssetWriteMapper;
 import org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper;
@@ -68,7 +68,7 @@ import java.util.stream.Collectors;
  * <strong>直接走 Mapper 自查</strong>，<strong>禁调</strong>
  * {@code org.dromara.book.service.IQuestionService}（教师端 Service）的任何方法。
  *
- * <p>本波（V-5 重构）{@link #adminPage(QuestionPageBo)} 实现策略与教师端
+ * <p>本波（V-5 重构）{@link #adminPage(AdminQuestionPageBo)} 实现策略与教师端
  * {@code QuestionServiceImpl#page(QuestionPageBo)} 当前等效（同 SQL 同回填），
  * 但独立维护 — admin 后续可加 status='0' 草稿过滤 / 创建人过滤 / status='2' 软删可见
  * 等需求，改本方法不影响 teacher 的 page。
@@ -126,8 +126,18 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     /** V-4 文件上传：OSS key 前缀。 */
     private static final String ADMIN_UPLOAD_KEY_PREFIX = "admin-upload";
 
+    /**
+     * adminLazyTree 整树缓存（H1 卡 §6 R12 — 编辑页加载性能）。
+     * biz_subject ~2116 行，每次内存重建树 + 序列化耗时 100-200ms；admin 改章节树功能未做，
+     * 进程内静态缓存 5 分钟 TTL 足够；BE 重启 / TTL 过期自动重拉。
+     * 未来 admin 章节编辑功能上线后，写操作处主动清零 LAZY_TREE_CACHE_AT。
+     */
+    private static final long LAZY_TREE_CACHE_TTL_MS = 5L * 60 * 1000;
+    private static volatile List<SubjectNodeVo> LAZY_TREE_CACHE = null;
+    private static volatile long LAZY_TREE_CACHE_AT = 0L;
+
     @Override
-    public MisiktPageVo<QuestionItemVo> adminPage(QuestionPageBo bo) {
+    public MisiktPageVo<QuestionItemVo> adminPage(AdminQuestionPageBo bo) {
         int pageIndex = bo.getPageIndex() == null || bo.getPageIndex() <= 0
             ? DEFAULT_PAGE_INDEX : bo.getPageIndex();
         int pageSize = bo.getPageSize() == null || bo.getPageSize() <= 0
@@ -166,8 +176,12 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
      *   <li>subjectId 空或 "0" 不过滤；非数字串直接 1=0 兜底</li>
      *   <li>{@code notUsedQuestion=1} 加 NOT IN biz_paper_question 子查询</li>
      * </ul>
+     *
+     * <p>H1 卡 Bug2 补丁：新增 {@code tagIds} 多选 OR 语义筛选 —
+     * {@code WHERE id IN (SELECT DISTINCT question_id FROM biz_question_free_tag WHERE tag_id IN (...))}。
+     * tagIds 是 Long 列表，{@code stream.map(String::valueOf)} 安全（不会 SQL 注入）。
      */
-    private QueryWrapper<BizQuestion> buildAdminPageWrapper(QuestionPageBo bo) {
+    private QueryWrapper<BizQuestion> buildAdminPageWrapper(AdminQuestionPageBo bo) {
         QueryWrapper<BizQuestion> w = new QueryWrapper<>();
         // 本波保持与 teacher 一致只看 status='1'；admin 下波将开放 status 入参支持
         w.eq("status", "1");
@@ -195,6 +209,12 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         }
         if (bo.getNotUsedQuestion() != null && bo.getNotUsedQuestion() == 1) {
             w.notInSql("id", "SELECT question_id FROM biz_paper_question");
+        }
+        // H1 卡 Bug2 补丁：admin 独有 tagIds 多选筛选（OR 语义）
+        if (bo.getTagIds() != null && !bo.getTagIds().isEmpty()) {
+            String inList = bo.getTagIds().stream().map(String::valueOf).collect(Collectors.joining(","));
+            w.inSql("id",
+                "SELECT DISTINCT question_id FROM biz_question_free_tag WHERE tag_id IN (" + inList + ")");
         }
         // mapper.xml selectQuestionPage 走 LEFT JOIN biz_question_favorite，主表 alias=q，
         // favorite 表也有 create_time / id 列 → orderBy 必须加 q. 前缀避免 ambiguous。
@@ -508,6 +528,13 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     @Override
     public List<SubjectNodeVo> adminLazyTree(SubjectLazyTreeBo bo) {
         // V0.1 忽略 bo.parentId（与教师端 SubjectServiceImpl 等效，misikt 真实行为也是一次返整树）
+        // H1 §6 R12 性能优化：5 分钟内重复请求走静态缓存（biz_subject 2116 行整树建立耗时大）
+        long now = System.currentTimeMillis();
+        List<SubjectNodeVo> cached = LAZY_TREE_CACHE;
+        if (cached != null && now - LAZY_TREE_CACHE_AT < LAZY_TREE_CACHE_TTL_MS) {
+            return cached;
+        }
+
         List<BizSubject> all = bizSubjectMapper.selectList(null);
         if (all == null || all.isEmpty()) {
             return new ArrayList<>();
@@ -538,6 +565,8 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         sortSubjectRecursive(roots);
         markSubjectHasChildren(roots);
 
+        LAZY_TREE_CACHE = roots;
+        LAZY_TREE_CACHE_AT = now;
         return roots;
     }
 
@@ -794,5 +823,34 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             // SHA-256 是 JRE 标配，不会进这里
             throw new ServiceException("SHA-256 不可用：" + e.getMessage());
         }
+    }
+
+
+    /**
+     * admin freeTag 字典搜索（H1 卡 Bug2 补丁）。
+     *
+     * <p>直接走 {@link AdminFreeTagWriteMapper#selectListByKeyword(String, int)}，
+     * 业务规则：
+     * <ul>
+     *   <li>keyword trim 后传入；为 null / "" → mapper 内 {@code <if>} 跳过 LIKE 过滤，返热门</li>
+     *   <li>limit 兜底：null / ≤ 0 → 20；&gt; 100 → clamp 100</li>
+     * </ul>
+     *
+     * @param keyword 关键字（null / 空 / 纯空格 → trim 后等效空 → 返热门）
+     * @param limit   返回上限（兜底 20 / clamp 100）
+     * @return tag 候选列表
+     */
+    @Override
+    public List<Map<String, Object>> adminFreeTagSearch(String keyword, Integer limit) {
+        String kw = keyword == null ? null : keyword.trim();
+        int lim;
+        if (limit == null || limit <= 0) {
+            lim = 20;
+        } else if (limit > 100) {
+            lim = 100;
+        } else {
+            lim = limit;
+        }
+        return adminFreeTagWriteMapper.selectListByKeyword(kw, lim);
     }
 }
