@@ -104,6 +104,52 @@ public class QuestionServiceImpl implements IQuestionService {
         return vo;
     }
 
+    /**
+     * Q' 卡段① — 批量按 id 拉题目详情（试卷预览 PDF 导出场景）。
+     *
+     * <p>实现：
+     * <ol>
+     *   <li>mapper 批查（IN + status&lt;&gt;'2'）拿到无序 list</li>
+     *   <li>复用 {@link #loadKnowledgesByQuestionIds} 拿 U/S knowledges + {@link #loadFreeTagsByQuestionIds} 拿 freeTags</li>
+     *   <li>回填到每条 vo</li>
+     *   <li>用 LinkedHashMap by id 按入参 ids 顺序重排（不依赖 SQL FIND_IN_SET）</li>
+     * </ol>
+     */
+    @Override
+    public List<QuestionDetailVo> listByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<QuestionDetailVo> raw = bizQuestionMapper.selectQuestionDetailByIds(ids);
+        if (raw == null || raw.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 二次批量拉 knowledges + freeTags
+        Map<Long, List<QuestionKnowledgeVo>> uMap = loadKnowledgesByQuestionIds(ids, "U");
+        Map<Long, List<QuestionKnowledgeVo>> sMap = loadKnowledgesByQuestionIds(ids, "S");
+        Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
+
+        // 按 id 索引（保序的中间结构 — DB 返回顺序不保证）
+        Map<Long, QuestionDetailVo> byId = new LinkedHashMap<>(raw.size() * 2);
+        for (QuestionDetailVo vo : raw) {
+            vo.setQuestionKnowledges(uMap.getOrDefault(vo.getId(), new ArrayList<>()));
+            vo.setQuestionStdKnowledges(sMap.getOrDefault(vo.getId(), new ArrayList<>()));
+            vo.setFreeTags(ftMap.getOrDefault(vo.getId(), new ArrayList<>()));
+            byId.put(vo.getId(), vo);
+        }
+
+        // 按入参 ids 顺序重排（软删 / 不存在的 id 自动跳过）
+        List<QuestionDetailVo> ordered = new ArrayList<>(byId.size());
+        for (Long id : ids) {
+            QuestionDetailVo vo = byId.get(id);
+            if (vo != null) {
+                ordered.add(vo);
+            }
+        }
+        return ordered;
+    }
+
 
     /**
      * 组卷草稿 — section 顺序固定 1=选择 → 4=填空 → 5=简答（misikt 真实行为）。

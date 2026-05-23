@@ -143,4 +143,48 @@
         WHERE q.id = #{id}
     </select>
 
+    <!--
+      Q' 卡段① — 批量按 id 拉详情（试卷预览 PDF 导出场景）。
+      软删过滤：status&lt;&gt;'2'。
+      不带 ORDER BY — Service 端按入参 ids 顺序用 LinkedHashMap 重排（FIND_IN_SET 跨方言风险，BE 不依赖）。
+    -->
+    <select id="selectQuestionDetailByIds"
+            resultMap="QuestionDetailMap">
+        SELECT
+            q.id,
+            q.question_type,
+            q.difficult,
+            q.subject_id,
+            q.short_title,
+            q.stem_text,
+            q.stem_img_url,
+            q.answer_img_url,
+            q.explain_img_url,
+            q.file_bin_url,
+            q.video_url,
+            q.options_json,
+            q.correct_answer,
+            q.score_std_json,
+            q.free_tag,
+            0 AS score_val,
+            q.exam_year,
+            q.exam_paper_id,
+            q.exam_paper_name,
+            q.is_share,
+            q.is_repeat,
+            q.repeat_question_id,
+            q.status,
+            q.create_user,
+            q.create_by,
+            UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
+            UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
+            q.update_by
+        FROM biz_question q
+        WHERE q.id IN
+        <foreach collection="ids" item="qid" open="(" separator="," close=")">
+            #{qid}
+        </foreach>
+        AND q.status &lt;&gt; '2'
+    </select>
+
 </mapper>

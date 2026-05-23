@@ -9,12 +9,18 @@ import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.service.IQuestionService;
 import org.dromara.common.core.domain.R;
+import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 题目 Controller（/teacher/question/page + /teacher/question/select/{id}）。
@@ -68,5 +74,25 @@ public class QuestionController {
     public R<ExamDataVo> genExamData() {
         Long userId = LoginHelper.getUserId();
         return R.ok(questionService.genExamData(userId));
+    }
+
+    /**
+     * GET /teacher/question/list?ids=1,2,3 — Q' 卡段① 批量按 id 拉详情。
+     *
+     * <p>试卷预览 PDF 导出场景：basket cache 字段不全，进模态时调本端点拉一次。
+     * 返回字段含 answer / explain / freeTags / questionKnowledges / stemImg 等 FE 渲染必须的全集。
+     * 入参上限 100（防超大请求），软删题（status='2'）自动过滤，
+     * 返回顺序按入参 ids 保序（Service 端 LinkedHashMap 重排）。
+     */
+    @SaCheckLogin
+    @GetMapping("/list")
+    public R<List<QuestionDetailVo>> listByIds(@RequestParam List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return R.ok(Collections.emptyList());
+        }
+        if (ids.size() > 100) {
+            throw new ServiceException("单次最多 100 题导出");
+        }
+        return R.ok(questionService.listByIds(ids));
     }
 }

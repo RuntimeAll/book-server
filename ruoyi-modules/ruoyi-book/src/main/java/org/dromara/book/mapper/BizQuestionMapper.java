@@ -10,6 +10,9 @@ import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
+import java.util.Collection;
+import java.util.List;
+
 /**
  * 题目主表 Mapper（biz_question）。
  *
@@ -44,4 +47,15 @@ public interface BizQuestionMapper extends BaseMapperPlus<BizQuestion, BizQuesti
      * @return 详情 VO（含 answer/explain/file/video 等详情字段）
      */
     org.dromara.book.domain.vo.QuestionDetailVo selectQuestionDetailById(@Param("id") Long id);
+
+    /**
+     * Q' 卡段① — 批量按 id 拉详情（试卷预览 PDF 导出场景）。
+     *
+     * <p>软删过滤：{@code status<>'2'}。不带 ORDER BY（Service 端按入参顺序重排）。
+     * 不含 questionKnowledges / questionStdKnowledges / freeTags（由 Service 二次填充）。
+     *
+     * @param ids 题目 ID 集合（不可空）
+     * @return 详情 VO 列表（顺序不保证，由 Service LinkedHashMap by id 重排）
+     */
+    List<org.dromara.book.domain.vo.QuestionDetailVo> selectQuestionDetailByIds(@Param("ids") Collection<Long> ids);
 }
