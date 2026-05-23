@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <!--
-  H1 卡段② BE 波 2c — V-4 写：image_asset 行（admin 直传 OSS 场景）。
-  namespace 独立 (org.dromara.bookadmin.mapper.AdminImageAssetWriteMapper)，
-  不动 ruoyi-book/ 模块。
+  admin 直传 OSS 场景的 image_asset 写 Mapper（H1 卡补丁 — 从 ruoyi-book-admin 抽离到
+  ruoyi-admin-common 模块，admin 端跨业务通用）。
+
+  namespace org.dromara.admincommon.mapper.AdminImageAssetWriteMapper（已与旧
+  org.dromara.bookadmin.mapper 物理隔离，旧位置已删除）。
 
   字段策略详见 AdminImageAssetWriteMapper.java javadoc。
 -->
-<mapper namespace="org.dromara.bookadmin.mapper.AdminImageAssetWriteMapper">
+<mapper namespace="org.dromara.admincommon.mapper.AdminImageAssetWriteMapper">
 
     <!--
       useGeneratedKeys + keyProperty 回填自增 id 到 idHolder map 的 "id" key。
@@ -41,7 +43,7 @@
             #{ext},
             #{relPath},
             #{localPath},
-            'question',
+            #{entityType},
             #{entityRef},
             'ok',
             #{fileSize},

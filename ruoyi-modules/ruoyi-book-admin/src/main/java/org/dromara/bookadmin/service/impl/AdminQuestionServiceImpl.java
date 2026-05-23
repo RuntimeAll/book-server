@@ -21,31 +21,18 @@ import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
+import org.dromara.admincommon.service.IAdminFileUploadService;
 import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
 import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
 import org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper;
-import org.dromara.bookadmin.mapper.AdminImageAssetWriteMapper;
 import org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.exception.ServiceException;
-import org.dromara.common.oss.core.OssClient;
-import org.dromara.common.oss.entity.UploadResult;
-import org.dromara.common.oss.factory.OssFactory;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
-import java.io.IOException;
-import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -97,8 +84,8 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final AdminPaperQuestionRefMapper adminPaperQuestionRefMapper;
     /** admin 自有 freeTag 字典 + 关联表写 Mapper（V-6 波 2b 新增）。 */
     private final AdminFreeTagWriteMapper adminFreeTagWriteMapper;
-    /** admin 自有 image_asset 写 Mapper（V-4 波 2c 新增）。 */
-    private final AdminImageAssetWriteMapper adminImageAssetWriteMapper;
+    /** admin 端通用文件上传 Service（H1 卡补丁抽离 — V-4 fileUpload 委托）。 */
+    private final IAdminFileUploadService adminFileUploadService;
 
     /**
      * Jackson ObjectMapper（V-6 — biz_question.options_json 序列化）。
@@ -110,22 +97,17 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private static final int DEFAULT_PAGE_SIZE = 10;
     private static final int DEFAULT_PAGE_INDEX = 1;
 
-    /** V-4 文件上传：最大 5MB。 */
-    private static final long ADMIN_UPLOAD_MAX_BYTES = 5L * 1024 * 1024;
-
-    /** V-4 文件上传：合法扩展名白名单（小写比较，含点）。 */
-    private static final Set<String> ADMIN_UPLOAD_ALLOWED_EXTS =
-        new HashSet<>(Arrays.asList(".png", ".jpg", ".jpeg", ".webp"));
-
-    /** V-4 文件上传：合法 type 集合（image_asset.asset_kind 取值，小写）。 */
+    /** V-4 文件上传：H 卡题库 asset_kind 白名单（image_asset.asset_kind 取值，小写）。 */
     private static final Set<String> ADMIN_UPLOAD_ALLOWED_TYPES =
         new HashSet<>(Arrays.asList("stem", "answer", "explain"));
 
-    /** V-4 文件上传：OSS 路径日期段 — yyyy-MM-dd。 */
-    private static final DateTimeFormatter ADMIN_UPLOAD_DATE_FMT =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    /** V-4 文件上传：H 卡题库 image_asset.entity_type 固定值。 */
+    private static final String ADMIN_UPLOAD_ENTITY_TYPE = "question";
 
-    /** V-4 文件上传：OSS key 前缀。 */
+    /** V-4 文件上传：H 卡题库 image_asset.entity_ref 固定值（admin 直传来源标识）。 */
+    private static final String ADMIN_UPLOAD_ENTITY_REF = "admin";
+
+    /** V-4 文件上传：H 卡题库 OSS key 顶层前缀。 */
     private static final String ADMIN_UPLOAD_KEY_PREFIX = "admin-upload";
 
     /**
@@ -710,107 +692,22 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
      * </ol>
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> adminUploadFile(MultipartFile file, String type) {
-        // 1. 校验入参
-        if (file == null || file.isEmpty()) {
-            throw new ServiceException("上传文件不能为空");
-        }
-        // H1 卡 Bug A2 修：MultipartFile 在 transferTo 之后底层 undertow 临时文件会被移走，
-        // 后续再调 file.getSize() / file.getContentType() / file.getOriginalFilename() 会 stat
-        // 不存在的临时路径抛 NoSuchFileException。所以必须**在 transferTo 之前**把所有元数据
-        // 缓存到局部变量。
-        long fileSize = file.getSize();
-        String contentType = file.getContentType();
-        String originalFilename = file.getOriginalFilename();
-
-        if (fileSize > ADMIN_UPLOAD_MAX_BYTES) {
-            throw new ServiceException("文件大小不能超过 5MB");
-        }
-        String suffix = resolveUploadSuffix(originalFilename);
-        // suffix 含 "." 前缀，比较白名单
-        if (!ADMIN_UPLOAD_ALLOWED_EXTS.contains(suffix.toLowerCase(Locale.ROOT))) {
-            throw new ServiceException("仅支持 png/jpg/jpeg/webp 格式");
-        }
+        // 题库语义层校验：H 卡白名单仅 stem/answer/explain（assetKind 业务边界 — 通用 service 不做）
         String assetKind = sanitizeUploadType(type);
 
-        // 2. 构造 OSS key —— admin-upload/<YYYY-MM-dd>/<uuid>.<ext>
-        String datePath = LocalDate.now().format(ADMIN_UPLOAD_DATE_FMT);
-        String uuid = UUID.randomUUID().toString().replace("-", "");
-        String ossKey = ADMIN_UPLOAD_KEY_PREFIX + "/" + datePath + "/" + uuid + suffix.toLowerCase(Locale.ROOT);
-
-        // 3. 上传 OSS（手动构造 key，不走 uploadSuffix 默认 prefix 逻辑）
-        // H1 卡 Bug A 修：ruoyi-common-oss OssClient#upload(InputStream,...) 有 aws-sdk
-        // BlockingInputStreamAsyncRequestBody#subscribeTimeout race bug — aliyun OSS
-        // 上传偶发 120s 卡死抛 OssException。改走 upload(Path,...) — 用 transferManager.uploadFile
-        // (File-based)，不走 BlockingInputStreamAsyncRequestBody，稳。
-        // 副作用：upload(Path) 在 finally 删 path，所以必须用 createTempFile 临时文件。
-        OssClient storage = OssFactory.instance();
-        UploadResult uploadResult;
-        Path tempPath;
-        try {
-            tempPath = Files.createTempFile("admin-oss-", suffix.toLowerCase(Locale.ROOT));
-            file.transferTo(tempPath.toFile());
-        } catch (IOException e) {
-            throw new ServiceException("临时文件创建失败：" + e.getMessage());
-        }
-        try {
-            uploadResult = storage.upload(tempPath, ossKey, null, contentType);
-        } catch (Exception e) {
-            // upload(Path) 内 finally 已经 FileUtils.del(tempPath)，这里不再重复删
-            throw new ServiceException("文件上传 OSS 失败：" + e.getMessage());
-        }
-        String ossUrl = uploadResult.getUrl();
-        String host = extractHost(ossUrl);
-
-        // 4. 写 image_asset（用上面缓存的 fileSize / contentType，不再触摸已移走的 multipart 临时文件）
-        String srcUrl = "admin-upload://" + ossKey;
-        String urlHash = sha256Hex(srcUrl);
-        String extNoDot = suffix.substring(1).toLowerCase(Locale.ROOT);
-        Map<String, Object> idHolder = new HashMap<>();
-        adminImageAssetWriteMapper.insertAdminUpload(
-            assetKind,
-            "admin",
-            srcUrl,
-            urlHash,
-            host,
-            extNoDot,
-            ossKey,
-            "",
-            fileSize,
-            contentType,
-            ossUrl,
-            idHolder
+        // 委托 admin-common 通用上传 service（H1 卡补丁抽离 — A/B 卡共用同一 service）
+        return adminFileUploadService.uploadImage(
+            file,
+            ADMIN_UPLOAD_ENTITY_TYPE,   // "question"
+            assetKind,                  // stem / answer / explain
+            ADMIN_UPLOAD_ENTITY_REF,    // "admin"
+            ADMIN_UPLOAD_KEY_PREFIX     // "admin-upload"
         );
-        Object assetIdObj = idHolder.get("id");
-        if (assetIdObj == null) {
-            throw new ServiceException("image_asset 落库失败");
-        }
-        Long assetId = ((Number) assetIdObj).longValue();
-
-        // 5. 返回 {url, assetId}
-        Map<String, Object> data = new HashMap<>(2);
-        data.put("url", ossUrl);
-        data.put("assetId", assetId);
-        return data;
     }
 
     /**
-     * 从原始文件名解析后缀（含点）。无后缀返空串 — 由调用方校验白名单时拒绝。
-     */
-    private String resolveUploadSuffix(String originalFilename) {
-        if (originalFilename == null) {
-            return "";
-        }
-        int idx = originalFilename.lastIndexOf('.');
-        if (idx < 0 || idx == originalFilename.length() - 1) {
-            return "";
-        }
-        return originalFilename.substring(idx);
-    }
-
-    /**
-     * type 参数白名单 + null 兜底。null / 非法 → 默认 "stem"。
+     * type 参数白名单 + null 兜底。null / 非法 → 默认 "stem"（H 卡题库语义专属）。
      */
     private String sanitizeUploadType(String type) {
         if (type == null) {
@@ -818,38 +715,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         }
         String lower = type.trim().toLowerCase(Locale.ROOT);
         return ADMIN_UPLOAD_ALLOWED_TYPES.contains(lower) ? lower : "stem";
-    }
-
-    /**
-     * 从 OSS URL 解析 host（供 image_asset.host 字段）。解析失败返 null（host 列允许 null）。
-     */
-    private String extractHost(String ossUrl) {
-        if (ossUrl == null || ossUrl.isEmpty()) {
-            return null;
-        }
-        try {
-            return URI.create(ossUrl).getHost();
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    /**
-     * SHA-256 hex（64 字符，匹配 image_asset.url_hash char(64) 约束）。
-     */
-    private String sha256Hex(String src) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] digest = md.digest(src.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b & 0xff));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            // SHA-256 是 JRE 标配，不会进这里
-            throw new ServiceException("SHA-256 不可用：" + e.getMessage());
-        }
     }
 
 

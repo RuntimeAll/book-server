@@ -73,6 +73,18 @@
             <artifactId>ruoyi-common-oss</artifactId>
         </dependency>
 
+        <!--
+          admin 端跨业务通用能力（H1 卡补丁抽离）：
+          - IAdminFileUploadService（OSS 上传 + image_asset 落库）
+          - AdminImageAssetWriteMapper（image_asset 写 Mapper，本表跨 admin 业务通用）
+          A 卡（AI 试卷生成 admin）/ B 卡（试卷管理 admin）等也都依赖此模块共享上传逻辑。
+        -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-admin-common</artifactId>
+            <version>${revision}</version>
+        </dependency>
+
     </dependencies>
 
 </project>

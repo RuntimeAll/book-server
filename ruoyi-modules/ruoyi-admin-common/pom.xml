@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <groupId>org.dromara</groupId>
+        <artifactId>ruoyi-modules</artifactId>
+        <version>${revision}</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>ruoyi-admin-common</artifactId>
+
+    <description>
+        ruoyi-admin-common —— admin 端跨业务模块共用能力（H1 卡补丁抽离）：
+        文件上传（OSS + image_asset 落库）/ 业务字典 / 跨模块 enums 等。
+        H 卡（题库 admin）/ A 卡（AI 试卷生成 admin）/ B 卡（试卷管理 admin）等
+        所有 admin 业务模块依赖本模块，避免重复造 OSS 上传 + image_asset 写入逻辑。
+
+        与 ruoyi-common-* 框架层差异：
+        - ruoyi-common-* 是 RuoYi 框架基础设施层，不耦合业务表
+        - 本模块耦合业务表 image_asset（admin 端通用业务表），属业务层而非框架层
+    </description>
+
+    <dependencies>
+
+        <!-- 通用工具（R envelope / ServiceException 等）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-core</artifactId>
+        </dependency>
+
+        <!-- MyBatis-Plus + 分页（image_asset 写 Mapper）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-mybatis</artifactId>
+        </dependency>
+
+        <!-- Sa-Token 登录态（取上传人 userId / userName 写 image_asset 元数据可选预留）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-security</artifactId>
+        </dependency>
+
+        <!-- Web 通用（MultipartFile 入参，统一异常处理）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-web</artifactId>
+        </dependency>
+
+        <!-- OSS（OssClient + UploadResult — admin 文件上传核心依赖）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-oss</artifactId>
+        </dependency>
+
+    </dependencies>
+
+</project>
