@@ -3,7 +3,9 @@ package org.dromara.book.mapper;
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.dromara.book.domain.entity.BizPaperQuestion;
 import org.dromara.book.domain.vo.QuestionPaperVo;
+import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 import java.util.List;
 
@@ -21,7 +23,7 @@ import java.util.List;
  */
 @Mapper
 @InterceptorIgnore(tenantLine = "true")
-public interface BizPaperQuestionMapper {
+public interface BizPaperQuestionMapper extends BaseMapperPlus<BizPaperQuestion, BizPaperQuestion> {
 
     /**
      * GET /teacher/qd/papers/{id} 业务查询 — 这题在哪些卷。

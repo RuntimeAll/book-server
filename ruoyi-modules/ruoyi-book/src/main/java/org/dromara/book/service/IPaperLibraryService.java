@@ -1,7 +1,9 @@
 package org.dromara.book.service;
 
+import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PaperCategoryNodeVo;
 import org.dromara.book.domain.vo.PaperListItemVo;
@@ -44,4 +46,22 @@ public interface IPaperLibraryService {
      * @return misikt 风格分页 VO
      */
     MisiktPageVo<PaperListItemVo> page(PaperPageBo bo);
+
+    /**
+     * Q 卡 段① — 创建试卷（POST /teacher/exam/paper/create）。
+     *
+     * <p>业务流（@Transactional 整体回滚）：
+     * <ol>
+     *   <li>INSERT biz_paper（status='1' 发布，create_by=String.valueOf(currentUserId)，paper_type=1 手工，
+     *       question_count = questionIds.size()，score=0，sort=0，is_share=0）</li>
+     *   <li>INSERT biz_paper_section 默认 section（title="题目"，sort=1）</li>
+     *   <li>批量 INSERT biz_paper_question（sort 按 questionIds 顺序 1/2/3...，score=0）</li>
+     * </ol>
+     *
+     * <p>FE 拿 paperId 跳 /papers/source/{paperId} 卷详情 + 清空试题栏 LS。
+     *
+     * @param bo 创建入参（name + questionIds + paperCategoryId?）
+     * @return 新建试卷 ID + 题目数
+     */
+    CreateExamPaperVo createExamPaper(CreateExamPaperBo bo);
 }

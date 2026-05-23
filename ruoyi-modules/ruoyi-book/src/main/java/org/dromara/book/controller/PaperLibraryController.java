@@ -1,9 +1,12 @@
 package org.dromara.book.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PaperCategoryNodeVo;
 import org.dromara.book.domain.vo.PaperDetailVo;
@@ -101,5 +104,23 @@ public class PaperLibraryController {
         }
         Long paperId = Long.valueOf(body.get("paperId").toString());
         return paperDetailService.getPaperDetail(paperId);
+    }
+
+    /**
+     * POST /teacher/exam/paper/create — Q 卡段① 创建试卷。
+     *
+     * <p>请求 body：{@code {"name": "卷名", "questionIds": [1,2,3], "paperCategoryId": null}}
+     *
+     * <p>业务：写 biz_paper（status='1' 发布 / create_by=currentUserId / paper_type=1 手工）+
+     * biz_paper_section（默认 "题目" 分组）+ 批量 biz_paper_question。@Transactional 整体回滚。
+     *
+     * <p>响应：{@link CreateExamPaperVo}（paperId + questionCount）— FE 拿 paperId 跳卷详情。
+     *
+     * <p>裸返回 —— advice 自动包 envelope，message 走 "成功"。
+     */
+    @SaCheckLogin
+    @PostMapping("/create")
+    public CreateExamPaperVo create(@Valid @RequestBody CreateExamPaperBo bo) {
+        return paperLibraryService.createExamPaper(bo);
     }
 }

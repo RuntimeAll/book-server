@@ -3,10 +3,12 @@ package org.dromara.book.mapper;
 import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.dromara.book.domain.entity.BizPaper;
 import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.domain.vo.PaperSectionVo;
 import org.dromara.book.domain.vo.PaperSourceQuestionVo;
 import org.dromara.book.domain.vo.PaperSourceVo;
+import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 import java.util.List;
 
@@ -28,7 +30,7 @@ import java.util.List;
  */
 @Mapper
 @InterceptorIgnore(tenantLine = "true")
-public interface BizPaperMapper {
+public interface BizPaperMapper extends BaseMapperPlus<BizPaper, BizPaper> {
 
     /**
      * 卷头信息查询（B-10 第一步）。
