@@ -185,8 +185,14 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
      */
     private QueryWrapper<BizQuestion> buildAdminPageWrapper(AdminQuestionPageBo bo) {
         QueryWrapper<BizQuestion> w = new QueryWrapper<>();
-        // 本波保持与 teacher 一致只看 status='1'；admin 下波将开放 status 入参支持
-        w.eq("status", "1");
+        // H1 卡 Bug D 修：admin 列表放开 status 过滤 — FE 状态下拉传 "0"/"1"/"2" 按值过滤；
+        // 不传 / 空 → admin 看全部状态（含草稿 '0' / 软删 '2'）。之前硬编码 status='1'
+        // 让用户刚新建（'0' 草稿）/ 软删（'2'）的题在列表完全不可见。
+        // q. 前缀避免 mapper.xml LEFT JOIN biz_question_favorite 时列歧义防御。
+        String statusFilter = bo.getStatus();
+        if (statusFilter != null && !statusFilter.isEmpty()) {
+            w.eq("q.status", statusFilter);
+        }
 
         if (bo.getSubjectId() != null && !bo.getSubjectId().isEmpty() && !"0".equals(bo.getSubjectId())) {
             // 题↔章节关联走 biz_question_knowledge.knowledge_id（教师端 BUG-2 修复，

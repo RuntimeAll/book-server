@@ -43,4 +43,15 @@ public class AdminQuestionPageBo extends QuestionPageBo {
      * {@code stream.map(String::valueOf)} 安全（不会 SQL 注入）。
      */
     private List<Long> tagIds;
+
+    /**
+     * 状态筛选（H1 卡 Bug D 补丁 — admin 列表放开 status 过滤）。
+     *
+     * <p>取值 {@code "0"} 草稿 / {@code "1"} 已发布 / {@code "2"} 软删；
+     * {@code null} 或空串 → 不过滤（admin 看全部状态，含草稿 + 软删）。
+     *
+     * <p>为啥 admin 独有：教师端只看 status='1' 已发布；admin 后台需管理草稿 / 软删，
+     * 所以放开。
+     */
+    private String status;
 }
