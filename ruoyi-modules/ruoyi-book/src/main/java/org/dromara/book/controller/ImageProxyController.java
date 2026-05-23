@@ -1,6 +1,6 @@
 package org.dromara.book.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.annotation.SaIgnore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.common.core.exception.ServiceException;
@@ -36,9 +36,12 @@ import java.time.Duration;
  *
  * <p><b>安全</b>：
  * <ul>
- *   <li>{@code @SaCheckLogin} 沿用 teacher 鉴权（未登录不可下图）</li>
+ *   <li>{@code @SaIgnore} 无需登录 — chrome {@code <img src>} 不会自动带 Bearer token，
+ *       加鉴权会让 401 阻塞 inline 渲染（hotfix-5 反派轮 5 真因）。
+ *       业务安全考量：OSS 图本身是 public-read（直连 OSS URL 任何人都能拿），代理层加鉴权冗余</li>
  *   <li>白名单只允许 ai-book OSS host，防 SSRF</li>
  *   <li>体积上限 10MB 防 DoS</li>
+ *   <li>未来如需防盗链 → 走 referer 检查 + bucket-level OSS ACL（不在本端点做）</li>
  * </ul>
  *
  * <p><b>envelope</b>：路径含 /teacher/ 前缀命中 {@link MisiktEnvelopeAdvice}，
@@ -72,7 +75,7 @@ public class ImageProxyController {
         .connectTimeout(Duration.ofSeconds(5))
         .build();
 
-    @SaCheckLogin
+    @SaIgnore
     @GetMapping
     public ResponseEntity<byte[]> proxy(@RequestParam("url") String url) {
         // 1. URI 解析 + 白名单校验
