@@ -36,9 +36,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -193,7 +195,9 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             if (!sid.matches("^\\d+$")) {
                 w.apply("1=0");
             } else {
-                w.inSql("id",
+                // H1 卡 Bug B 修：mapper.xml LEFT JOIN biz_question_favorite 让 id 列在主表/joined 表都存在，
+                // inSql 必须带主表 alias q. 前缀避免 "Column 'id' in IN/ALL/ANY subquery is ambiguous"
+                w.inSql("q.id",
                     "SELECT DISTINCT question_id FROM biz_question_knowledge "
                         + "WHERE knowledge_id LIKE '" + sid + "%'");
             }
@@ -208,12 +212,14 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             w.like("stem_text", bo.getKeyWord());
         }
         if (bo.getNotUsedQuestion() != null && bo.getNotUsedQuestion() == 1) {
-            w.notInSql("id", "SELECT question_id FROM biz_paper_question");
+            // 同上，notInSql 第一参也需带 q. 前缀避免 favorite 表 id 列歧义
+            w.notInSql("q.id", "SELECT question_id FROM biz_paper_question");
         }
         // H1 卡 Bug2 补丁：admin 独有 tagIds 多选筛选（OR 语义）
+        // 同上 — q.id 前缀避免双表 JOIN ambiguous
         if (bo.getTagIds() != null && !bo.getTagIds().isEmpty()) {
             String inList = bo.getTagIds().stream().map(String::valueOf).collect(Collectors.joining(","));
-            w.inSql("id",
+            w.inSql("q.id",
                 "SELECT DISTINCT question_id FROM biz_question_free_tag WHERE tag_id IN (" + inList + ")");
         }
         // mapper.xml selectQuestionPage 走 LEFT JOIN biz_question_favorite，主表 alias=q，
@@ -720,18 +726,25 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         String ossKey = ADMIN_UPLOAD_KEY_PREFIX + "/" + datePath + "/" + uuid + suffix.toLowerCase(Locale.ROOT);
 
         // 3. 上传 OSS（手动构造 key，不走 uploadSuffix 默认 prefix 逻辑）
+        // H1 卡 Bug A 修：ruoyi-common-oss OssClient#upload(InputStream,...) 有 aws-sdk
+        // BlockingInputStreamAsyncRequestBody#subscribeTimeout race bug — aliyun OSS
+        // 上传偶发 120s 卡死抛 OssException。改走 upload(Path,...) — 用 transferManager.uploadFile
+        // (File-based)，不走 BlockingInputStreamAsyncRequestBody，稳。
+        // 副作用：upload(Path) 在 finally 删 path，所以必须用 createTempFile 临时文件。
         OssClient storage = OssFactory.instance();
         UploadResult uploadResult;
+        Path tempPath;
         try {
-            byte[] bytes = file.getBytes();
-            uploadResult = storage.upload(
-                new ByteArrayInputStream(bytes),
-                ossKey,
-                Long.valueOf(bytes.length),
-                file.getContentType()
-            );
+            tempPath = Files.createTempFile("admin-oss-", suffix.toLowerCase(Locale.ROOT));
+            file.transferTo(tempPath.toFile());
         } catch (IOException e) {
-            throw new ServiceException("文件读取失败：" + e.getMessage());
+            throw new ServiceException("临时文件创建失败：" + e.getMessage());
+        }
+        try {
+            uploadResult = storage.upload(tempPath, ossKey, null, file.getContentType());
+        } catch (Exception e) {
+            // upload(Path) 内 finally 已经 FileUtils.del(tempPath)，这里不再重复删
+            throw new ServiceException("文件上传 OSS 失败：" + e.getMessage());
         }
         String ossUrl = uploadResult.getUrl();
         String host = extractHost(ossUrl);
