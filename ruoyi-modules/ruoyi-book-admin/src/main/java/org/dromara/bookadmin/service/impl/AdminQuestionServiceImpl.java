@@ -716,10 +716,18 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         if (file == null || file.isEmpty()) {
             throw new ServiceException("上传文件不能为空");
         }
-        if (file.getSize() > ADMIN_UPLOAD_MAX_BYTES) {
+        // H1 卡 Bug A2 修：MultipartFile 在 transferTo 之后底层 undertow 临时文件会被移走，
+        // 后续再调 file.getSize() / file.getContentType() / file.getOriginalFilename() 会 stat
+        // 不存在的临时路径抛 NoSuchFileException。所以必须**在 transferTo 之前**把所有元数据
+        // 缓存到局部变量。
+        long fileSize = file.getSize();
+        String contentType = file.getContentType();
+        String originalFilename = file.getOriginalFilename();
+
+        if (fileSize > ADMIN_UPLOAD_MAX_BYTES) {
             throw new ServiceException("文件大小不能超过 5MB");
         }
-        String suffix = resolveUploadSuffix(file.getOriginalFilename());
+        String suffix = resolveUploadSuffix(originalFilename);
         // suffix 含 "." 前缀，比较白名单
         if (!ADMIN_UPLOAD_ALLOWED_EXTS.contains(suffix.toLowerCase(Locale.ROOT))) {
             throw new ServiceException("仅支持 png/jpg/jpeg/webp 格式");
@@ -747,7 +755,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             throw new ServiceException("临时文件创建失败：" + e.getMessage());
         }
         try {
-            uploadResult = storage.upload(tempPath, ossKey, null, file.getContentType());
+            uploadResult = storage.upload(tempPath, ossKey, null, contentType);
         } catch (Exception e) {
             // upload(Path) 内 finally 已经 FileUtils.del(tempPath)，这里不再重复删
             throw new ServiceException("文件上传 OSS 失败：" + e.getMessage());
@@ -755,7 +763,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         String ossUrl = uploadResult.getUrl();
         String host = extractHost(ossUrl);
 
-        // 4. 写 image_asset
+        // 4. 写 image_asset（用上面缓存的 fileSize / contentType，不再触摸已移走的 multipart 临时文件）
         String srcUrl = "admin-upload://" + ossKey;
         String urlHash = sha256Hex(srcUrl);
         String extNoDot = suffix.substring(1).toLowerCase(Locale.ROOT);
@@ -769,8 +777,8 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             extNoDot,
             ossKey,
             "",
-            file.getSize(),
-            file.getContentType(),
+            fileSize,
+            contentType,
             ossUrl,
             idHolder
         );
