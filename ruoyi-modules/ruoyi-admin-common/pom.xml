@@ -30,19 +30,7 @@
             <artifactId>ruoyi-common-core</artifactId>
         </dependency>
 
-        <!-- MyBatis-Plus + 分页（image_asset 写 Mapper）-->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-common-mybatis</artifactId>
-        </dependency>
-
-        <!-- Sa-Token 登录态（取上传人 userId / userName 写 image_asset 元数据可选预留）-->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-common-security</artifactId>
-        </dependency>
-
-        <!-- Web 通用（MultipartFile 入参，统一异常处理）-->
+        <!-- Web 通用（MultipartFile 入参，统一异常处理 / @Transactional）-->
         <dependency>
             <groupId>org.dromara</groupId>
             <artifactId>ruoyi-common-web</artifactId>
