@@ -18,7 +18,7 @@ import java.util.Date;
  *   <li>{@code createTime} STRING 'YYYY-MM-DD' — misikt 真响应是日期串，跟 select 接口 ms timestamp 区别</li>
  *   <li>{@code status} Integer — misikt 真响应 1 整数，不是 '1' 字符串（DB CHAR(1) 转 Integer）</li>
  *   <li>{@code paperType} Integer — misikt 真响应 1 / 2 整数</li>
- *   <li>{@code createUser} Integer — misikt 真响应 2 整数（DB create_by VARCHAR(64) 转 Integer）</li>
+ *   <li>{@code createUser} Long — misikt 真响应小整数（D 卡 ETL admin id）；Q 卡后 RuoYi 雪花 19 位 user_id 需 Long 容纳（详 Q 卡 hotfix 沉淀）</li>
  *   <li>{@code finishTime} 恒 null（DB 无此列 — misikt 真响应也都 null）</li>
  *   <li>{@code hgScore} / {@code directoryName} / {@code frameTextContentId} 大多 null（透传 DB 原值）</li>
  *   <li>{@code sort} Integer — DB INT，通常 = id</li>
@@ -62,8 +62,12 @@ public class PaperListItemVo implements Serializable {
     /** 合格分（DB DECIMAL，misikt 真响应一般 null） */
     private Integer hgScore;
 
-    /** 创建人 id，DB biz_paper.create_by VARCHAR → Integer 对齐 misikt */
-    private Integer createUser;
+    /**
+     * 创建人 id，DB biz_paper.create_by VARCHAR(64) → Long。
+     * D 卡 ETL admin id 是小整数（misikt 真响应口径 Integer），Q 卡 RuoYi 注册 user_id 是雪花 19 位（超 Integer.MAX）。
+     * 改 Long 后老数据小整数兼容、新数据雪花容纳；FE JS Number 接收 >2^53 雪花会丢精度但不影响身份比较 + 显示。
+     */
+    private Long createUser;
 
     /** 目录名（misikt 真响应一般 null） */
     private String directoryName;
