@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  H1 卡段② BE 波 2b — V-6 写：biz_free_tag 字典 + biz_question_free_tag 关联表。
+  namespace 独立 (org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper)，
+  避开 ruoyi-book/ 的 BizQuestionFreeTagMapper namespace。
+-->
+<mapper namespace="org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper">
+
+    <select id="selectIdByName" parameterType="string" resultType="java.lang.Long">
+        SELECT id FROM biz_free_tag WHERE name = #{name} LIMIT 1
+    </select>
+
+    <insert id="insertFreeTag" parameterType="string">
+        INSERT INTO biz_free_tag(name, use_count, create_time)
+        VALUES (#{name}, 1, NOW())
+    </insert>
+
+    <delete id="deleteByQuestionId" parameterType="java.lang.Long">
+        DELETE FROM biz_question_free_tag WHERE question_id = #{questionId}
+    </delete>
+
+    <insert id="insertRel">
+        INSERT INTO biz_question_free_tag(question_id, tag_id, position)
+        VALUES (#{questionId}, #{tagId}, #{position})
+    </insert>
+
+    <!--
+      H1 卡 Bug2 补丁 — FE 标签搜索式 multi-select 候选下拉。
+      keyword null / 空时返热门 top N（不加 name 过滤），非空时按 LIKE '%keyword%' 过滤。
+      字段 alias use_count → useCount 保持驼峰，FE 直接消费。
+    -->
+    <select id="selectListByKeyword" resultType="java.util.Map">
+        SELECT id, name, use_count AS useCount
+        FROM biz_free_tag
+        <where>
+            <if test="keyword != null and keyword != ''">
+                name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+        ORDER BY use_count DESC, id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

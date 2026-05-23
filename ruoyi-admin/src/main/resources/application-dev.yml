@@ -28,7 +28,7 @@ snail-job:
   # 客户端ip指定
   host:
 
---- # api 接口加密 dev 期临时关闭（V0.1 联调验收用，验收后还原）
+--- # api 接口加密 — dev 期再降级关闭（H1 卡 §6 R8 长期项：plus-ui FE login 默认加密 vs RuoYi BE /auth/login 无 @ApiEncrypt → 500 mismatch；待专项卡对齐前不开）
 api-decrypt:
   enabled: false
 

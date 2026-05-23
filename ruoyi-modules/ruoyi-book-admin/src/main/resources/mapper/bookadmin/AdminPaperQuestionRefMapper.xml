@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  H1 卡段② BE 波 2a — V-2 软删校验：题被多少张试卷引用。
+  namespace 独立 (org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper)，
+  避开 ruoyi-book/ 的 BizPaperQuestionMapper namespace。
+-->
+<mapper namespace="org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper">
+
+    <select id="countByQuestionId" parameterType="java.lang.Long" resultType="int">
+        SELECT COUNT(*) FROM biz_paper_question WHERE question_id = #{questionId}
+    </select>
+
+</mapper>
