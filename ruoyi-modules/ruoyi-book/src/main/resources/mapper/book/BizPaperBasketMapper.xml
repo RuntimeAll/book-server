@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  试卷筐 Mapper XML（biz_paper_basket） — R 卡段① 对称试题筐复刻。
+
+  5 个定制 SQL：
+    insertIgnore                       — INSERT IGNORE 防重（复合主键命中则忽略）
+    deleteByUserAndPaper               — 单卷物理删
+    deleteAllByUser                    — 清空当前用户全筐
+    countByUser                        — 角标数量
+    selectBasketPapersByUser           — JOIN biz_paper 拉 PaperListItemVo（按 add_time DESC）
+
+  字段映射口径完全对齐 BizPaperMapper.xml 的 PaperListItemMap：
+    score   DECIMAL(6,2) → Integer (CAST AS SIGNED)
+    hg_score DECIMAL(6,2)→ Integer
+    status  CHAR(1) '1'  → Integer 1
+    create_by VARCHAR(64)→ Integer / Long (CAST AS SIGNED)
+    create_time DATETIME → Date（@JsonFormat YYYY-MM-DD 序列化在 VO 上）
+
+  ResultMap 自包含定义（不跨 mapper.xml 引用，跟 BizQuestionBasketMapper.xml 同款策略，
+  避免 MyBatis mapper 文件加载顺序导致 incomplete ResultMap 解析失败）。
+-->
+<mapper namespace="org.dromara.book.mapper.BizPaperBasketMapper">
+
+    <!-- queryBasket 走 PaperListItemVo（局部定义，跟 BizPaperMapper PaperListItemMap 字段对齐） -->
+    <resultMap id="BasketPaperListItemMap" type="org.dromara.book.domain.vo.PaperListItemVo">
+        <id property="id" column="id"/>
+        <result property="name" column="name"/>
+        <result property="questionCount" column="question_count"/>
+        <result property="score" column="score_int"/>
+        <result property="suggestTime" column="suggest_time"/>
+        <result property="createTime" column="create_time"/>
+        <!-- finishTime 不映射，VO 默认 null（DB 无此列） -->
+        <result property="hgScore" column="hg_score_int"/>
+        <result property="createUser" column="create_user_int"/>
+        <result property="directoryName" column="directory_name"/>
+        <result property="subjectId" column="subject_id"/>
+        <result property="paperType" column="paper_type"/>
+        <result property="frameTextContentId" column="frame_text_content_id"/>
+        <result property="status" column="status_int"/>
+        <result property="sort" column="sort"/>
+    </resultMap>
+
+    <!--
+      INSERT IGNORE — 复合主键 (user_id, paper_id) 命中则忽略（Iron law §1.6）。
+      重复加同卷不报错，返 0 影响行数；新增返 1。
+    -->
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO biz_paper_basket (user_id, paper_id, add_time)
+        VALUES (#{userId}, #{paperId}, NOW())
+    </insert>
+
+    <!--
+      单卷物理删（用户态数据可物理删，Iron law §1.6 + §10）。
+    -->
+    <delete id="deleteByUserAndPaper">
+        DELETE FROM biz_paper_basket
+        WHERE user_id = #{userId} AND paper_id = #{paperId}
+    </delete>
+
+    <!--
+      清空当前用户全部筐卷。
+    -->
+    <delete id="deleteAllByUser">
+        DELETE FROM biz_paper_basket
+        WHERE user_id = #{userId}
+    </delete>
+
+    <!--
+      统计当前用户筐卷数（角标 — basketNum 端点）。
+    -->
+    <select id="countByUser" resultType="long">
+        SELECT COUNT(*)
+        FROM biz_paper_basket
+        WHERE user_id = #{userId}
+    </select>
+
+    <!--
+      JOIN biz_paper 拉卷头字段（仅已发布卷 status='1'，按 add_time 倒序）。
+      字段口径完全对齐 BizPaperMapper.xml 的 PaperListItemMap（CAST 转 Integer 对齐 misikt 真响应）。
+    -->
+    <select id="selectBasketPapersByUser" resultMap="BasketPaperListItemMap">
+        SELECT
+            p.id,
+            p.name,
+            p.question_count,
+            CAST(p.score AS SIGNED) AS score_int,
+            p.suggest_time,
+            p.create_time,
+            CAST(p.hg_score AS SIGNED) AS hg_score_int,
+            CAST(p.create_by AS SIGNED) AS create_user_int,
+            p.directory_name,
+            p.subject_id,
+            p.paper_type,
+            p.frame_text_content_id,
+            CAST(p.status AS SIGNED) AS status_int,
+            p.sort
+        FROM biz_paper_basket b
+        INNER JOIN biz_paper p ON p.id = b.paper_id
+        WHERE b.user_id = #{userId}
+          AND p.status = '1'
+        ORDER BY b.add_time DESC
+    </select>
+
+</mapper>
