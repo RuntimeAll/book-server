@@ -1,0 +1,14 @@
+-- ============================================================================
+-- V7 · PRD-002 T1 — sys_user 加 grade / school 两列（教师个人资料扩展字段）
+-- ----------------------------------------------------------------------------
+-- 目的：教师「个人资料」页支持编辑「任教年级 / 学校」，需在 sys_user 落两列。
+--      走 ruoyi-system SysUser 实体 + @TableField 映射（非 ext 表，见 design.md）。
+--
+-- 变更：
+--   sys_user.grade   varchar(50)  NULL  — 任教年级（自由文本/前端下拉，如 "高一"）
+--   sys_user.school  varchar(100) NULL  — 任教学校
+--
+-- 加新不改老：本工程无 flyway_schema_history，部署时按 V 编号顺序手动 mysql < 执行；
+--            dev 库 miskt_data2 已由 backend-dev 手动 mcp__mysql 应用本 ALTER。
+-- ============================================================================
+ALTER TABLE sys_user ADD COLUMN grade varchar(50) NULL, ADD COLUMN school varchar(100) NULL;

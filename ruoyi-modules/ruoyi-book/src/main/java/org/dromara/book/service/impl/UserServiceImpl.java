@@ -2,8 +2,12 @@ package org.dromara.book.service.impl;
 
 import cn.hutool.crypto.digest.BCrypt;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;
+import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.book.domain.bo.RegisterTeacherBo;
+import org.dromara.book.domain.bo.UpdateProfileBo;
 import org.dromara.book.domain.vo.CurrentUserVo;
 import org.dromara.book.service.IUserService;
 import org.dromara.common.core.domain.model.LoginUser;
@@ -58,6 +62,10 @@ public class UserServiceImpl implements IUserService {
         vo.setUserName(u.getUserName());
         vo.setRealName(u.getNickName());
         vo.setPhone(u.getPhonenumber());
+        // PRD-002 — sex/grade/school 回填。sex 是 char(1) "0"/"1"/"2"，转 Integer（非 0/1 → null）
+        vo.setSex(parseSex(u.getSex()));
+        vo.setGrade(u.getGrade());
+        vo.setSchool(u.getSchool());
         // 教师固定 role = 2（misikt 风格：2=教师，本工程不复刻学生）
         vo.setRole(2);
         // U 卡新增 — 真实角色 role_key 集合（FE 登录分流用）
@@ -121,5 +129,49 @@ public class UserServiceImpl implements IUserService {
         sysUserRoleMapper.insert(userRole);
 
         return user.getUserId();
+    }
+
+    /**
+     * PRD-002 — 更新当前登录教师个人资料。
+     *
+     * <p>userId 由 Controller 从 LoginHelper 传入（不从 body 收，防越权）。
+     * 写 sys_user：nick_name(←realName) / sex / grade / school。
+     */
+    @Override
+    public void updateProfile(Long userId, UpdateProfileBo bo) {
+        if (userId == null) {
+            throw new ServiceException("未获取到当前登录用户");
+        }
+        SysUser u = sysUserMapper.selectById(userId);
+        if (u == null) {
+            throw new ServiceException("用户不存在");
+        }
+        // 显式 LambdaUpdateWrapper.set(...) 四列：支持把 sex/school 写为 null（清空语义，表单即真相）。
+        LambdaUpdateWrapper<SysUser> luw = Wrappers.<SysUser>lambdaUpdate()
+            .eq(SysUser::getUserId, userId)
+            .set(SysUser::getNickName, bo.getRealName())
+            // sex：Integer 0/1 → char(1) "0"/"1"；null → 写 null（表单未选=无性别）
+            .set(SysUser::getSex, bo.getSex() == null ? null : String.valueOf(bo.getSex()))
+            .set(SysUser::getGrade, bo.getGrade())
+            // school 可空：null/"" 都按表单原样写入（用户清空学校）
+            .set(SysUser::getSchool, bo.getSchool());
+        // 🔴 PRD-002 G3 根因：RuoYi 数据权限拦截器给 UPDATE sys_user 注入 AND create_by=<登录用户id>，
+        // teacher001 的 create_by≠5 → 0 行更新（静默假成功）。自己改自己资料（userId 取自登录态，无越权风险）
+        // 必须绕过数据权限 —— 与框架自带 SysProfileController.updateProfile / SysLoginService 登录写 login_date 同款。
+        DataPermissionHelper.ignore(() -> sysUserMapper.update(null, luw));
+    }
+
+    /**
+     * sys_user.sex（char(1) "0"/"1"/"2"）→ CurrentUserVo.sex（Integer 0男/1女/null）。
+     * 仅 "0"/"1" 映射为 0/1，其余（"2" 未知 / null / 空）→ null。
+     */
+    private Integer parseSex(String sex) {
+        if ("0".equals(sex)) {
+            return 0;
+        }
+        if ("1".equals(sex)) {
+            return 1;
+        }
+        return null;
     }
 }

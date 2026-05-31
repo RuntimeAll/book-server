@@ -5,10 +5,12 @@ import cn.dev33.satoken.annotation.SaIgnore;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.RegisterTeacherBo;
+import org.dromara.book.domain.bo.UpdateProfileBo;
 import org.dromara.book.domain.vo.CurrentUserVo;
 import org.dromara.book.service.IUserService;
 import org.dromara.common.core.domain.R;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -42,6 +44,24 @@ public class UserController {
         Long userId = LoginHelper.getUserId();
         CurrentUserVo vo = userService.getCurrent(userId);
         return R.ok(vo);
+    }
+
+    /**
+     * POST /teacher/user/update — 更新当前登录教师个人资料（PRD-002）。
+     *
+     * <p>鉴权：Sa-Token JWT（@SaCheckLogin）。userId 走 LoginHelper.getUserId() 取，
+     * 不从 body 收 —— 防越权改他人资料。
+     *
+     * <p>入参：realName(必填) / sex(0|1|null) / grade(必填) / school(可空)
+     * <p>写 sys_user：nick_name(←realName) / sex / grade / school。
+     * <p>校验失败（realName / grade 空）→ 400 含字段提示（@Validated 抛 MethodArgumentNotValidException）。
+     */
+    @SaCheckLogin
+    @PostMapping("/update")
+    public R<Void> update(@Validated @RequestBody UpdateProfileBo bo) {
+        Long userId = LoginHelper.getUserId();
+        userService.updateProfile(userId, bo);
+        return R.ok("操作成功");
     }
 
     /**

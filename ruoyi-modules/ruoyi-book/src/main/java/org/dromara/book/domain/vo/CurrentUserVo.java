@@ -46,6 +46,22 @@ public class CurrentUserVo implements Serializable {
     private String phone;
 
     /**
+     * 性别：0=男 / 1=女 / null=未设置（PRD-002）。
+     * 映射：sys_user.sex 是 char(1) "0"/"1"/"2"，回填时转 Integer（非 "0"/"1" → null）。
+     */
+    private Integer sex;
+
+    /**
+     * 任教年级：sys_user.grade（PRD-002 新列）
+     */
+    private String grade;
+
+    /**
+     * 任教学校：sys_user.school（PRD-002 新列）
+     */
+    private String school;
+
+    /**
      * 教师固定 = 2（misikt 风格：2=教师 / 1=学生，本工程不复刻学生 role）
      * 历史字段（J 卡 / B 卡仍在用），不删；U 卡新增 roles[] 供登录分流。
      */

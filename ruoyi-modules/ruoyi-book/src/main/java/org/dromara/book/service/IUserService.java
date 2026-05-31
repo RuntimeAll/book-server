@@ -1,6 +1,7 @@
 package org.dromara.book.service;
 
 import org.dromara.book.domain.bo.RegisterTeacherBo;
+import org.dromara.book.domain.bo.UpdateProfileBo;
 import org.dromara.book.domain.vo.CurrentUserVo;
 
 /**
@@ -35,4 +36,17 @@ public interface IUserService {
      * @throws org.dromara.common.core.exception.ServiceException 用户名重复 / teacher 角色未配置
      */
     Long register(RegisterTeacherBo bo);
+
+    /**
+     * 更新当前登录教师的个人资料（PRD-002 — POST /teacher/user/update）。
+     *
+     * <p>userId 从登录态 {@link org.dromara.common.satoken.utils.LoginHelper#getUserId()} 取
+     * （Controller 传入），不从 body 收 —— 防越权改他人。
+     *
+     * <p>写 sys_user 四字段：nick_name(←realName) / sex / grade / school。
+     *
+     * @param userId 当前登录用户 ID（Sa-Token 解出）
+     * @param bo     更新入参（realName / sex / grade / school）
+     */
+    void updateProfile(Long userId, UpdateProfileBo bo);
 }

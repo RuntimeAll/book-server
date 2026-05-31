@@ -68,6 +68,16 @@ public class SysUser extends TenantEntity {
     private Long avatar;
 
     /**
+     * 任教年级（PRD-002 — 教师个人资料扩展字段，sys_user.grade）
+     */
+    private String grade;
+
+    /**
+     * 任教学校（PRD-002 — 教师个人资料扩展字段，sys_user.school）
+     */
+    private String school;
+
+    /**
      * 密码
      */
     @TableField(
