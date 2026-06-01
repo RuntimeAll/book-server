@@ -187,8 +187,16 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
 
         QueryWrapper<PaperListItemVo> wrapper = new QueryWrapper<>();
         wrapper.eq("p.status", "1");
-        // 数据隔离：只返回当前教师自己创建的 + 公共卷（is_share=1）
-        wrapper.and(w -> w.eq("p.create_by", currentUserIdStr).or().eq("p.is_share", 1));
+
+        // scope 分流：'mine' → 只看自己的；其余（含 'public' / 缺省 / 非法）→ 公共卷
+        // 安全默认：缺省 / 非法 scope 走 public，绝不返回他人私卷
+        if ("mine".equals(bo.getScope())) {
+            // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
+            wrapper.eq("p.create_by", currentUserIdStr);
+        } else {
+            // 公共卷（scope=public 或缺省）：只看 is_share=1，不加 create_by 条件
+            wrapper.eq("p.is_share", 1);
+        }
 
         if (bo.getName() != null && !bo.getName().isEmpty()) {
             wrapper.like("p.name", bo.getName());
