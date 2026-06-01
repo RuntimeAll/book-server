@@ -10,6 +10,7 @@ import org.dromara.book.mapper.BizPaperMapper;
 import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.service.IPaperDetailService;
+import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
@@ -60,8 +61,9 @@ public class PaperDetailServiceImpl implements IPaperDetailService {
             return null;
         }
 
-        // step 1 — 卷头（不存在 / status≠'1' → null）
-        PaperDetailVo header = bizPaperMapper.selectPaperDetailHeader(paperId);
+        // step 1 — 卷头（不存在 / status≠'1' / 越权(非本人且非公共卷) → null）
+        String currentUserId = String.valueOf(LoginHelper.getUserId());
+        PaperDetailVo header = bizPaperMapper.selectPaperDetailHeader(paperId, currentUserId);
         if (header == null) {
             return null;
         }

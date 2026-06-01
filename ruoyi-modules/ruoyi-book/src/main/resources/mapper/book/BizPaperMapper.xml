@@ -219,6 +219,7 @@
         FROM biz_paper p
         WHERE p.id = #{paperId}
           AND p.status = '1'
+          AND ( p.create_by = #{currentUserId} OR p.is_share = 1 )
     </select>
 
     <!--

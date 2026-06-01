@@ -63,9 +63,10 @@ public interface BizPaperMapper extends BaseMapperPlus<BizPaper, BizPaper> {
      * <p>过滤 status='1' — 草稿 / 软删返 null。
      *
      * @param paperId 试卷 id
-     * @return 卷头 VO（不含 sections，由 service 二次填充），或 null
+     * @param currentUserId 当前登录用户 id（字符串口径，归属隔离用）
+     * @return 卷头 VO（不含 sections，由 service 二次填充），或 null（不存在/草稿/软删/越权）
      */
-    PaperDetailVo selectPaperDetailHeader(@Param("paperId") Long paperId);
+    PaperDetailVo selectPaperDetailHeader(@Param("paperId") Long paperId, @Param("currentUserId") String currentUserId);
 
     /**
      * E 卡段② — 试卷的大题分组（POST /teacher/exam/paper/detail 第 2 步）。
