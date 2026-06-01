@@ -14,7 +14,7 @@
 -- 用法（dev 本机）:
 --   $env:MYSQL_PWD='123456'; cmd /c '"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" `
 --     -h 127.0.0.1 -P 3307 -u root --default-character-set=utf8mb4 miskt_data2 `
---     < D:\workplace\book-ai\codeSpace\book-server\sql\V2__etl_from_raw.sql' 2>&1
+--     < D:\workplace\book-ai\codeplace-A\book-server\sql\V2__etl_from_raw.sql' 2>&1
 -- ============================================================
 
 SET NAMES utf8mb4;
