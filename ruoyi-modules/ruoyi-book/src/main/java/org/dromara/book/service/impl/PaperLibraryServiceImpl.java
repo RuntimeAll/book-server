@@ -178,8 +178,17 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         int pageSize = bo.getPageSize() == null || bo.getPageSize() <= 0
             ? DEFAULT_PAGE_SIZE : bo.getPageSize();
 
+        // 数据隔离：取当前登录用户 userId（create_by 存数字字符串）
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录用户不能访问卷库");
+        }
+        String currentUserIdStr = String.valueOf(currentUserId);
+
         QueryWrapper<PaperListItemVo> wrapper = new QueryWrapper<>();
         wrapper.eq("p.status", "1");
+        // 数据隔离：只返回当前教师自己创建的 + 公共卷（is_share=1）
+        wrapper.and(w -> w.eq("p.create_by", currentUserIdStr).or().eq("p.is_share", 1));
 
         if (bo.getName() != null && !bo.getName().isEmpty()) {
             wrapper.like("p.name", bo.getName());
@@ -192,16 +201,6 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
                 wrapper.apply("1=0");
             } else {
                 wrapper.likeRight("p.subject_id", sid);
-            }
-        }
-        // U 卡新增 — createBy 精确匹配（工作台"我创建的卷"用）
-        if (bo.getCreateBy() != null && !bo.getCreateBy().isEmpty()) {
-            String cb = bo.getCreateBy();
-            // 防 SQL 注入：create_by 存数字字符串（V2 ETL CAST(create_user AS CHAR)），仅允许纯数字
-            if (!cb.matches("^\\d+$")) {
-                wrapper.apply("1=0");
-            } else {
-                wrapper.eq("p.create_by", cb);
             }
         }
         wrapper.orderByDesc("p.sort");
