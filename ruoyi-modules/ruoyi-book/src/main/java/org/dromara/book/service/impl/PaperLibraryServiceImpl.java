@@ -188,15 +188,15 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         QueryWrapper<PaperListItemVo> wrapper = new QueryWrapper<>();
         wrapper.eq("p.status", "1");
 
-        // scope 分流：'mine' → 只看自己的；其余（含 'public' / 缺省 / 非法）→ 公共卷
-        // 安全默认：缺省 / 非法 scope 走 public，绝不返回他人私卷
+        // scope 分流：'mine' → 只看自己创建的；其余（'public' / 缺省）→ 公共卷库，按分类树归属过滤
+        // 🔴 2026-06-02 修：原 public 分支叠加 is_share=1 是错的 —— 622 份卷挂公共试卷(3001)分类下、
+        // 但 is_share 全 0（导入数据沿用 misikt 原始 create_by，非本系统老师），叠加 is_share=1 → 全被错杀，公共卷库全空。
+        // misikt 公共卷库语义 = 按 paper_category 分类树（subject_id 前缀，见下方），不是 is_share 开关。
         if ("mine".equals(bo.getScope())) {
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
             wrapper.eq("p.create_by", currentUserIdStr);
-        } else {
-            // 公共卷（scope=public 或缺省）：只看 is_share=1，不加 create_by 条件
-            wrapper.eq("p.is_share", 1);
         }
+        // else 公共卷库：不加 is_share / create_by 归属过滤，靠下方 subject_id 分类前缀筛
 
         if (bo.getName() != null && !bo.getName().isEmpty()) {
             wrapper.like("p.name", bo.getName());
