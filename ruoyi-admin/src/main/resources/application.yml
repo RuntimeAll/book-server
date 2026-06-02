@@ -1,7 +1,7 @@
 # 开发环境配置
 server:
-  # 服务器的HTTP端口（B 线 admin 端 7888 / A 线用户端 8080；A/B 共 master 但目录隔离 codeplace-A vs codeplace-B，本文件端口字段长期飘 — push 前注意）
-  port: 7888
+  # 服务器的HTTP端口（C 线 AI 编排 8090 / A 线用户端 8080 / B 线 admin 7888；多线共用同一 repo，端口靠目录隔离。C 线在 master-ai 分支固化本端口=8090，不再靠脏改动飘）
+  port: 8090
   servlet:
     # 应用的访问路径
     context-path: /
