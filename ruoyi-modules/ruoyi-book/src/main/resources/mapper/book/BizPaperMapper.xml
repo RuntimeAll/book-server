@@ -204,8 +204,13 @@
       E 卡段② 第 1 步 — 试卷详情卷头查询。
       过滤 status='1'，不存在 / 草稿 / 软删 → null。
     -->
+    <!--
+      ⚠️ 多 @Param 方法（paperId:Long + currentUserId:String）禁声明 parameterType。
+      声明 parameterType="java.lang.Long" 会让 MyBatis 把所有内联 #{} 都按 Long 解析 javaType，
+      于是 #{currentUserId}（String）被 LongTypeHandler 强转 (Long) → ClassCastException。
+      不声明 parameterType → 走 ParamMap 原生按运行时值类型设参，paperId→Long / currentUserId→String 各归各位。
+    -->
     <select id="selectPaperDetailHeader"
-            parameterType="java.lang.Long"
             resultMap="PaperDetailHeaderMap">
         SELECT
             p.id            AS paper_id,
