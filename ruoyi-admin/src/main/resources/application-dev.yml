@@ -32,7 +32,7 @@ snail-job:
 api-decrypt:
   enabled: false
 
---- # captcha 验证码 dev 期临时关闭（V0.1 联调验收用，无人工交互的 curl 自验需要）
+--- # captcha 验证码 —— 🔴 本地 dev 关闭（联调免人工填码）。线上 prod 默认开启（见 application-prod.yml 显式声明）。部署务必确认 prod=true。
 captcha:
   enable: false
 
