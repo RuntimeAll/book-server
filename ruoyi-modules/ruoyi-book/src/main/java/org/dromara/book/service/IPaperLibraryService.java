@@ -3,9 +3,11 @@ package org.dromara.book.service;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.bo.UpdateExamPaperBo;
 import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PaperCategoryNodeVo;
+import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.domain.vo.PaperListItemVo;
 
 import java.util.List;
@@ -64,4 +66,23 @@ public interface IPaperLibraryService {
      * @return 新建试卷 ID + 题目数
      */
     CreateExamPaperVo createExamPaper(CreateExamPaperBo bo);
+
+    /**
+     * PRD-A-005 T3 — 编辑试卷（POST /teacher/exam/paper/update）。
+     *
+     * <p>业务流（@Transactional 整体回滚）：
+     * <ol>
+     *   <li>校验 paperId 存在（不存在抛 ServiceException）</li>
+     *   <li>删该 paperId 旧 biz_paper_question 全部行</li>
+     *   <li>按 bo.questions 批量重插（section_id / question_id / sort / score）</li>
+     *   <li>重算并更新 biz_paper.question_count（题数）+ score（各题 score 之和）；
+     *       name / paperCategoryId 如传则一并更新</li>
+     * </ol>
+     *
+     * <p>questions = 该卷编辑后的最终完整题集（按 sort 升序）。
+     *
+     * @param bo 编辑入参（paperId + name? + paperCategoryId? + questions[]）
+     * @return 更新后的试卷详情 {@link PaperDetailVo}（复用 detail 查询）
+     */
+    PaperDetailVo updateExamPaper(UpdateExamPaperBo bo);
 }

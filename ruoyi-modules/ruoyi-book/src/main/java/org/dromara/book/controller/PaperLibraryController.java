@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.bo.UpdateExamPaperBo;
 import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PaperCategoryNodeVo;
@@ -122,5 +123,24 @@ public class PaperLibraryController {
     @PostMapping("/create")
     public CreateExamPaperVo create(@Valid @RequestBody CreateExamPaperBo bo) {
         return paperLibraryService.createExamPaper(bo);
+    }
+
+    /**
+     * POST /teacher/exam/paper/update — PRD-A-005 T3 编辑试卷。
+     *
+     * <p>请求 body：
+     * {@code {"paperId":2798, "name":"新卷名", "paperCategoryId":null,
+     * "questions":[{"questionId":1,"sectionId":3678,"sort":1,"score":5}, ...]}}
+     *
+     * <p>业务（@Transactional）：校验 paperId 存在 → 删该卷旧 biz_paper_question 全量 →
+     * 按 questions（最终完整题集，按 sort 升序）批量重插 → 重算 question_count + 总 score，
+     * name / paperCategoryId 如传则更新 → 返更新后 {@link PaperDetailVo}。
+     *
+     * <p>裸返回 PaperDetailVo —— advice 自动包 envelope，message 走 "成功"。
+     */
+    @SaCheckLogin
+    @PostMapping("/update")
+    public PaperDetailVo update(@Valid @RequestBody UpdateExamPaperBo bo) {
+        return paperLibraryService.updateExamPaper(bo);
     }
 }

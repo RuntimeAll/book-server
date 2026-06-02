@@ -104,6 +104,29 @@
     </select>
 
     <!--
+      PRD-A-005 T5 — 收藏分页（GET /teacher/qd/favorite/page）。
+      INNER JOIN biz_question_favorite f 只出当前用户已收藏题；folderId 非空再按收藏夹过滤。
+      复用 QuestionItemMap + QuestionItemColumns（与题库 page 同一套 misikt 字段命名 + VO），
+      is_favorite 恒 1（既然是收藏列表）。按 f.create_time DESC（最近收藏在前），id 兜底稳定排序。
+      软删题过滤 status<>'2'（与 listByIds 一致，避免列出已删题）。
+      currentUserId 由 Service 注入（@SaCheckLogin 兜底，不容 null），防越权。
+    -->
+    <select id="selectFavoritePage" resultMap="QuestionItemMap">
+        SELECT
+        <include refid="QuestionItemColumns"/>,
+        1 AS is_favorite
+        FROM biz_question q
+        INNER JOIN biz_question_favorite f
+          ON f.question_id = q.id
+         AND f.user_id = #{currentUserId}
+        WHERE q.status &lt;&gt; '2'
+        <if test="folderId != null">
+            AND f.folder_id = #{folderId}
+        </if>
+        ORDER BY f.create_time DESC, q.id DESC
+    </select>
+
+    <!--
       单题详情 — 含详情字段（answer/explain/file/video/optionsJson/scoreStd）。
       不限 status（详情可看草稿/已发/软删；V0.1 实数据全 '1'）。
     -->

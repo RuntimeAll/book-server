@@ -1,5 +1,6 @@
 package org.dromara.book.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -7,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.bo.UpdateExamPaperBo;
 import org.dromara.book.domain.entity.BizPaper;
 import org.dromara.book.domain.entity.BizPaperCategory;
 import org.dromara.book.domain.entity.BizPaperQuestion;
@@ -14,13 +16,16 @@ import org.dromara.book.domain.entity.BizPaperSection;
 import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PaperCategoryNodeVo;
+import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.domain.vo.PaperListItemVo;
 import org.dromara.book.mapper.BizPaperCategoryMapper;
 import org.dromara.book.mapper.BizPaperMapper;
 import org.dromara.book.mapper.BizPaperQuestionMapper;
 import org.dromara.book.mapper.BizPaperSectionMapper;
+import org.dromara.book.service.IPaperDetailService;
 import org.dromara.book.service.IPaperLibraryService;
 import org.dromara.common.core.exception.ServiceException;
+import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,6 +60,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
     private final BizPaperMapper bizPaperMapper;
     private final BizPaperSectionMapper bizPaperSectionMapper;
     private final BizPaperQuestionMapper bizPaperQuestionMapper;
+    private final IPaperDetailService paperDetailService;
 
     /** Q 卡默认 section title — FE 不展示，仅满足 biz_paper_question.section_id NOT NULL 约束 */
     private static final String DEFAULT_SECTION_TITLE = "题目";
@@ -272,5 +278,76 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         bizPaperQuestionMapper.insertBatch(pqList);
 
         return new CreateExamPaperVo(newPaperId, qCount);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PaperDetailVo updateExamPaper(UpdateExamPaperBo bo) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录用户不能编辑试卷");
+        }
+        if (bo.getPaperId() == null) {
+            throw new ServiceException("试卷ID不能为空");
+        }
+        if (bo.getQuestions() == null || bo.getQuestions().isEmpty()) {
+            throw new ServiceException("题目列表不能为空");
+        }
+
+        Long paperId = bo.getPaperId();
+
+        // biz_paper / biz_paper_question 走手动 wrapper 隔离、无 @DataPermission 注解，
+        // 注解式数据权限拦截器不会注入 AND create_by=登录id；此处 ignore 包裹作防御（无注解时为 no-op），
+        // 规避 PRD-A-002 沉淀的「数据权限拦截致写 0 行静默假成功」坑。
+        return DataPermissionHelper.ignore(() -> {
+            // 1. 校验 paperId 存在
+            BizPaper existing = bizPaperMapper.selectById(paperId);
+            if (existing == null) {
+                throw new ServiceException("试卷不存在: " + paperId);
+            }
+
+            Date now = new Date();
+            String userIdStr = String.valueOf(currentUserId);
+
+            // 2. 删该 paperId 旧 biz_paper_question 全部行
+            LambdaQueryWrapper<BizPaperQuestion> delWrapper = new LambdaQueryWrapper<>();
+            delWrapper.eq(BizPaperQuestion::getPaperId, paperId);
+            bizPaperQuestionMapper.delete(delWrapper);
+
+            // 3. 按 questions 批量重插（section_id / question_id / sort / score）
+            List<UpdateExamPaperBo.UpdateExamPaperQuestionBo> items = bo.getQuestions();
+            BigDecimal totalScore = BigDecimal.ZERO;
+            List<BizPaperQuestion> pqList = new ArrayList<>(items.size());
+            for (UpdateExamPaperBo.UpdateExamPaperQuestionBo item : items) {
+                BizPaperQuestion pq = new BizPaperQuestion();
+                pq.setPaperId(paperId);
+                pq.setSectionId(item.getSectionId());
+                pq.setQuestionId(item.getQuestionId());
+                pq.setSort(item.getSort());
+                BigDecimal score = item.getScore() == null ? BigDecimal.ZERO : item.getScore();
+                pq.setScore(score);
+                totalScore = totalScore.add(score);
+                pqList.add(pq);
+            }
+            bizPaperQuestionMapper.insertBatch(pqList);
+
+            // 4. 重算并更新 biz_paper 的 question_count + 总 score（+ name / paperCategoryId 如传）
+            BizPaper update = new BizPaper();
+            update.setId(paperId);
+            update.setQuestionCount(items.size());
+            update.setScore(totalScore);
+            if (bo.getName() != null) {
+                update.setName(bo.getName());
+            }
+            if (bo.getPaperCategoryId() != null) {
+                update.setPaperCategoryId(bo.getPaperCategoryId());
+            }
+            update.setUpdateBy(userIdStr);
+            update.setUpdateTime(now);
+            bizPaperMapper.updateById(update);
+
+            // 5. 返更新后 PaperDetailVo（复用 detail 查询）
+            return paperDetailService.getPaperDetail(paperId);
+        });
     }
 }
