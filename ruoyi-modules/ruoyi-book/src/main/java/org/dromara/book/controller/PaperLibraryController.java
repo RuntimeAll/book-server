@@ -143,4 +143,26 @@ public class PaperLibraryController {
     public PaperDetailVo update(@Valid @RequestBody UpdateExamPaperBo bo) {
         return paperLibraryService.updateExamPaper(bo);
     }
+
+    /**
+     * POST /teacher/exam/paper/delete — PRD-A-005 收尾（A-试卷删除）。
+     *
+     * <p>请求 body：{@code {"paperId": 2798}}
+     *
+     * <p>业务（@Transactional）：owner 校验（create_by=登录用户，否则抛 ServiceException 透传非200 code）→
+     * 级联物理删 biz_paper_question + biz_paper_section + biz_paper 本体。
+     * 公共卷 / 他人卷一律拒绝删除。
+     *
+     * <p>裸返回 null —— advice 自动包 envelope，message 走 "成功"（misikt 风格 code:1）。
+     */
+    @SaCheckLogin
+    @PostMapping("/delete")
+    public Object delete(@RequestBody Map<String, Object> body) {
+        if (body == null || body.get("paperId") == null) {
+            throw new org.dromara.common.core.exception.ServiceException("试卷ID不能为空");
+        }
+        Long paperId = Long.valueOf(body.get("paperId").toString());
+        paperLibraryService.deleteExamPaper(paperId);
+        return null;
+    }
 }

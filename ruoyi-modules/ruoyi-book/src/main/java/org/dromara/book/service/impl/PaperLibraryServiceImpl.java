@@ -316,6 +316,12 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
                 throw new ServiceException("试卷不存在: " + paperId);
             }
 
+            // 1.1 owner 校验（PRD-A-005 收尾 C-权限锁死）：只能编辑本人创建的卷，公共卷/他人卷一律拒绝。
+            //     绝不信任前端，归属一律以 create_by vs LoginHelper.getUserId() 为准。
+            if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
+                throw new ServiceException("无权编辑非本人创建的试卷");
+            }
+
             Date now = new Date();
             String userIdStr = String.valueOf(currentUserId);
 
@@ -358,6 +364,47 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
 
             // 5. 返更新后 PaperDetailVo（复用 detail 查询）
             return paperDetailService.getPaperDetail(paperId);
+        }));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteExamPaper(Long paperId) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录用户不能删除试卷");
+        }
+        if (paperId == null) {
+            throw new ServiceException("试卷ID不能为空");
+        }
+
+        // biz_paper / biz_paper_question / biz_paper_section 三表均无 tenant_id 列，
+        // BaseMapper 继承方法（selectById / deleteById / delete 带 WHERE）会被多租户拦截器
+        // 注入 AND tenant_id=? 报 Unknown column 'tenant_id'（PRD-A-005 G4 已踩）。
+        // 故全事务体走 TenantHelper.ignore(DataPermissionHelper.ignore(...)) 线程级包裹。
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 1. owner 校验：只能删本人创建的卷，公共卷/他人卷一律拒绝
+            BizPaper existing = bizPaperMapper.selectById(paperId);
+            if (existing == null) {
+                throw new ServiceException("试卷不存在: " + paperId);
+            }
+            if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
+                throw new ServiceException("无权删除非本人创建的试卷");
+            }
+
+            // 2. 级联物理删 biz_paper_question（该卷全部题关系）
+            LambdaQueryWrapper<BizPaperQuestion> pqWrapper = new LambdaQueryWrapper<>();
+            pqWrapper.eq(BizPaperQuestion::getPaperId, paperId);
+            bizPaperQuestionMapper.delete(pqWrapper);
+
+            // 3. 级联物理删 biz_paper_section（该卷全部大题分组）
+            LambdaQueryWrapper<BizPaperSection> secWrapper = new LambdaQueryWrapper<>();
+            secWrapper.eq(BizPaperSection::getPaperId, paperId);
+            bizPaperSectionMapper.delete(secWrapper);
+
+            // 4. 物理删 biz_paper 本体
+            bizPaperMapper.deleteById(paperId);
+            return null;
         }));
     }
 }

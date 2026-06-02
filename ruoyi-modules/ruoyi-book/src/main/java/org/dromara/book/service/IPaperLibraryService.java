@@ -85,4 +85,20 @@ public interface IPaperLibraryService {
      * @return 更新后的试卷详情 {@link PaperDetailVo}（复用 detail 查询）
      */
     PaperDetailVo updateExamPaper(UpdateExamPaperBo bo);
+
+    /**
+     * PRD-A-005 收尾（A-试卷删除）— 删除试卷（POST /teacher/exam/paper/delete）。
+     *
+     * <p>业务流（@Transactional 整体回滚 + TenantHelper.ignore(DataPermissionHelper.ignore(...))
+     * 包裹，三表无 tenant_id 列规避多租户拦截器注入报错）：
+     * <ol>
+     *   <li>owner 校验：查该 paper 的 create_by，≠ 当前登录 userId 抛 ServiceException（公共卷/他人卷一律拒绝）</li>
+     *   <li>级联物理删 biz_paper_question（该卷全部）</li>
+     *   <li>级联物理删 biz_paper_section（该卷全部）</li>
+     *   <li>物理删 biz_paper 本体</li>
+     * </ol>
+     *
+     * @param paperId 试卷 ID
+     */
+    void deleteExamPaper(Long paperId);
 }

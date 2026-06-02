@@ -203,6 +203,13 @@
     <!--
       E 卡段② 第 1 步 — 试卷详情卷头查询。
       过滤 status='1'，不存在 / 草稿 / 软删 → null。
+
+      🔴 PRD-A-005 收尾（D-bug）：越权判定与 page 的「公共卷库」语义对齐。
+      原判定 `p.create_by=#{currentUserId} OR p.is_share=1` 错 —— is_share 全库为 0 已弃用，
+      导致所有公共卷详情被判越权返 null（前端报"试卷数据加载失败：响应为空"）。
+      正确语义 = 本人创建 OR 该卷挂在公共分类树（subject_id 前缀 3001 公共试卷 / 3003 资料库 / 3004 专题卷库）下，
+      与 PaperLibraryServiceImpl.page 公共分支靠 subject_id 分类前缀过滤的口径完全一致：
+      凡 page 公共卷库能列出的卷 detail 都能看；本人卷能看；他人私卷（subject_id=5000* / null 等非公共树）返 null。
     -->
     <!--
       ⚠️ 多 @Param 方法（paperId:Long + currentUserId:String）禁声明 parameterType。
@@ -224,8 +231,13 @@
         FROM biz_paper p
         WHERE p.id = #{paperId}
           AND p.status = '1'
-          AND ( p.create_by = #{currentUserId} OR p.is_share = 1 )
-    </select>
+          AND (
+                p.create_by = #{currentUserId}
+             OR p.subject_id LIKE '3001%'
+             OR p.subject_id LIKE '3003%'
+             OR p.subject_id LIKE '3004%'
+          )
+</select>
 
     <!--
       E 卡段② 第 2 步 — 试卷大题分组查询。
