@@ -27,6 +27,7 @@ import org.dromara.book.service.IPaperLibraryService;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -299,7 +300,16 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         // biz_paper / biz_paper_question 走手动 wrapper 隔离、无 @DataPermission 注解，
         // 注解式数据权限拦截器不会注入 AND create_by=登录id；此处 ignore 包裹作防御（无注解时为 no-op），
         // 规避 PRD-A-002 沉淀的「数据权限拦截致写 0 行静默假成功」坑。
-        return DataPermissionHelper.ignore(() -> {
+        //
+        // 🔴 再叠一层 TenantHelper.ignore（PRD-A-005 G4 修复）：BaseMapper 继承方法
+        // selectById / updateById 的 mappedStatementId namespace 落在 BaseMapper（非
+        // BizPaperMapper），故 BizPaperMapper 类级 @InterceptorIgnore(tenantLine) 命中不到
+        // 这两个继承方法 → 多租户拦截器仍对 biz_paper 注入 AND tenant_id=? → 该表无此列报
+        // SQLSyntaxErrorException 致整事务回滚。TenantHelper.ignore 走线程级 ThreadLocal
+        // IgnoreStrategy，在 SQL 执行时刻判断、对继承方法同样生效，补上类级注解盲区。
+        // 与 DataPermissionHelper.ignore 写 IgnoreStrategy 不同字段、可叠加、互不覆盖。
+        // 覆盖事务全链路：selectById 校验存在 + delete + insertBatch + updateById 重算。
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
             // 1. 校验 paperId 存在
             BizPaper existing = bizPaperMapper.selectById(paperId);
             if (existing == null) {
@@ -348,6 +358,6 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
 
             // 5. 返更新后 PaperDetailVo（复用 detail 查询）
             return paperDetailService.getPaperDetail(paperId);
-        });
+        }));
     }
 }
