@@ -86,6 +86,13 @@ public class PaperDetailVo implements Serializable {
     private Integer paperType;
 
     /**
+     * 创建人 user_id（biz_paper.create_by VARCHAR(64) 存数字字符串）。
+     * <p>PRD-A-005 收尾新增：FE 用它判 owner —— == 当前登录 userId → 本人卷（可编辑/删除）；
+     * 否则即公共卷（detail 越权 SQL 已保证只返本人或公共卷）→ 编辑/删除按钮锁死。
+     */
+    private String createBy;
+
+    /**
      * 大题分组（按 biz_paper_section.sort ASC 排序；每个 section 内的 questions 按
      * biz_paper_question.sort ASC 排序 —— 跨 section 全局连续题号）
      */
