@@ -125,7 +125,8 @@ security:
 # 业务自定义配置
 book:
   # book-ui 前端基址 —— AI 组卷落库后拼卷详情深链(/papers/source/{paperId})用; prod 改成真实域名
-  front-base-url: http://localhost:5173
+  # C 线用户端在 :8091（老师从首页 AI 组卷进来），深链要回到 C 线而不是 A 线 :5173
+  front-base-url: http://localhost:8091
 
 # 多租户配置
 tenant:
