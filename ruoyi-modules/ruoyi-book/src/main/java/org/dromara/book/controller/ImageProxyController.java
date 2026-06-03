@@ -20,6 +20,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 
 /**
  * Q' 卡 hotfix-4 — OSS 图代理端点。
@@ -90,11 +91,19 @@ public class ImageProxyController {
         }
 
         // 2. Redis 缓存命中
+        // 🔴 hotfix(2026-06-03): RedisUtils 用 Jackson JSON codec，直接存 byte[] 会被序列化成 Base64
+        //    字符串，读回来是 String，强转 byte[] 必抛 ClassCastException —— 表现为预览/导出图「首次能看、
+        //    二次起全裂(500)」。修法：缓存显式存/取 Base64 String。读失败(含历史脏 byte[] 缓存)吞掉当
+        //    cache miss 重拉，自愈，无需手动清 Redis。
         String cacheKey = CACHE_KEY_PREFIX + DigestUtils.md5DigestAsHex(url.getBytes(StandardCharsets.UTF_8));
-        byte[] cached = RedisUtils.getCacheObject(cacheKey);
-        if (cached != null) {
-            log.debug("[image-proxy] cache hit: {}", url);
-            return buildResponse(cached, "image/png");
+        try {
+            String cachedB64 = RedisUtils.getCacheObject(cacheKey);
+            if (cachedB64 != null) {
+                log.debug("[image-proxy] cache hit: {}", url);
+                return buildResponse(Base64.getDecoder().decode(cachedB64), "image/png");
+            }
+        } catch (Exception e) {
+            log.warn("[image-proxy] cache read failed, will re-fetch: {} ({})", url, e.getMessage());
         }
 
         // 3. 走 OSS 拉
@@ -123,8 +132,8 @@ public class ImageProxyController {
             throw new ServiceException("OSS 拉取被中断");
         }
 
-        // 4. 写 Redis 缓存
-        RedisUtils.setCacheObject(cacheKey, bytes, CACHE_TTL);
+        // 4. 写 Redis 缓存（Base64 String，配合 Jackson codec，避免 byte[] 反序列化 ClassCastException）
+        RedisUtils.setCacheObject(cacheKey, Base64.getEncoder().encodeToString(bytes), CACHE_TTL);
         log.debug("[image-proxy] cache miss → fetched + cached: {} ({}B)", url, bytes.length);
 
         return buildResponse(bytes, contentType);
