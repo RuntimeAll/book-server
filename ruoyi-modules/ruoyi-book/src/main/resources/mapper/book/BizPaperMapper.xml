@@ -205,12 +205,15 @@
       E 卡段② 第 1 步 — 试卷详情卷头查询。
       过滤 status='1'，不存在 / 草稿 / 软删 → null。
 
-      🔴 PRD-A-005 收尾（D-bug）：越权判定与 page 的「公共卷库」语义对齐。
-      原判定 `p.create_by=#{currentUserId} OR p.is_share=1` 错 —— is_share 全库为 0 已弃用，
-      导致所有公共卷详情被判越权返 null（前端报"试卷数据加载失败：响应为空"）。
-      正确语义 = 本人创建 OR 该卷挂在公共分类树（subject_id 前缀 3001 公共试卷 / 3003 资料库 / 3004 专题卷库）下，
-      与 PaperLibraryServiceImpl.page 公共分支靠 subject_id 分类前缀过滤的口径完全一致：
-      凡 page 公共卷库能列出的卷 detail 都能看；本人卷能看；他人私卷（subject_id=5000* / null 等非公共树）返 null。
+      🔴 2026-06-03 修：detail（只读查看 / 组卷工作台拉题）去掉所有权越权块。
+      此前（PRD-A-005 收尾）给 detail 叠了 `create_by=#{currentUserId} OR subject_id LIKE 3001/3003/3004`
+      越权判定，结果误伤两类正常场景：
+        ① 组卷工作台对试卷篮内每张卷调本接口拉题，篮里 subject_id=5000*/null（非公共树前缀）
+           且非本人的卷被判 null → "N 张卷加载失败，已跳过"、试卷篮清不掉（用户实测 588 张 5000* 卷受影响）；
+        ② 查看他人 / 其他学科公共卷内容（只读）被无谓拦截。
+      正确边界：查看试卷内容是只读动作（misikt 行为 = 任何登录老师都能查看任意卷去组卷），
+      所有权锁死只在写接口（updateExamPaper / deleteExamPaper 已做 create_by owner 校验）。
+      故 detail 仅留 status='1'，不做归属过滤。currentUserId 参数保留（mapper 签名不变，SQL 不再引用，无副作用）。
     -->
     <!--
       ⚠️ 多 @Param 方法（paperId:Long + currentUserId:String）禁声明 parameterType。
@@ -233,12 +236,6 @@
         FROM biz_paper p
         WHERE p.id = #{paperId}
           AND p.status = '1'
-          AND (
-                p.create_by = #{currentUserId}
-             OR p.subject_id LIKE '3001%'
-             OR p.subject_id LIKE '3003%'
-             OR p.subject_id LIKE '3004%'
-          )
 </select>
 
     <!--
