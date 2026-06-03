@@ -271,3 +271,24 @@ justauth:
       client-id: 10**********6
       client-secret: 1f7d08**********5b7**********29e
       redirect-uri: ${justauth.address}/social-callback?source=gitea
+
+--- # AI 模块占位 (PRD-B-006 骨架; PRD-B-007 填 provider 实现 + 真实凭据)
+ai:
+  enabled: false
+  default-alias:
+  fail-over:
+    enabled: false
+    max-attempts: 3
+  aliases: {}
+  providers: {}
+
+--- # OCR 模块占位 (PRD-B-006 骨架; PRD-B-007 填 TextinOcrProvider 实现 + 真实凭据)
+ocr:
+  default-provider:
+  textin:
+    endpoint:
+    app-id:
+    secret-code:
+    formula-level: 1
+    get-image: objects
+    timeout: 120s
