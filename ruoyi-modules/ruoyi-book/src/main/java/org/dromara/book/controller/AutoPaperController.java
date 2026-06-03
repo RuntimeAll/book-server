@@ -1,6 +1,5 @@
 package org.dromara.book.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.AutoGenerateBo;
 import org.dromara.book.domain.vo.AutoGeneratePaperVo;
@@ -38,7 +37,7 @@ public class AutoPaperController {
      * <p>出参 {@link AutoGeneratePaperVo}：{ paper:{title, totalCount, sections}, coverage, tips,
      * gaps, notes }。题全部来自真实题库（可溯源 biz_question.id）。
      */
-    @SaCheckLogin
+    // 🔴 免登录(C线 Dify WF3 组卷调用) — 已在 application.yml security.excludes 放行, 不校验 Sa-Token。
     @PostMapping("/auto-generate")
     public R<AutoGeneratePaperVo> autoGenerate(@RequestBody AutoGenerateBo bo) {
         return R.ok(autoPaperService.autoGenerate(bo));

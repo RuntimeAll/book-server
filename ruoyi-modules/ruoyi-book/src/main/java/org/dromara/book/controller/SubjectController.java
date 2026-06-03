@@ -1,6 +1,5 @@
 package org.dromara.book.controller;
 
-import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
@@ -35,7 +34,7 @@ public class SubjectController {
      * 入参 body 即便缺省也允许（@RequestBody(required = false)）— 给 FE
      * 不传 body 的边界场景兜底。
      */
-    @SaCheckLogin
+    // 🔴 免登录(C线 Dify WF3 组卷调用) — 已在 application.yml security.excludes 放行, 不校验 Sa-Token。
     @PostMapping("/lazyTree")
     public R<List<SubjectNodeVo>> lazyTree(@RequestBody(required = false) SubjectLazyTreeBo bo) {
         if (bo == null) {
