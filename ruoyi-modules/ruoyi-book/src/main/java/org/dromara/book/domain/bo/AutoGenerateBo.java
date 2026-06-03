@@ -49,6 +49,18 @@ public class AutoGenerateBo implements Serializable {
     private String notesFromLLM;
 
     /**
+     * 是否在组卷后落库为正式试卷（写入 biz_paper）。默认 false（只组装不落库）。
+     * 为 true 时必须配 {@link #teacherId}，否则不落库。
+     */
+    private Boolean save = Boolean.FALSE;
+
+    /**
+     * 落库归属老师 id（= sys_user.id）。C 线 Dify 免登录调用，由 book-ui 嵌入时透传当前登录老师。
+     * save=true 时缺省则不落库（避免无主卷）。
+     */
+    private Long teacherId;
+
+    /**
      * 大纲单项 = 一个组卷需求单元。
      */
     @Data

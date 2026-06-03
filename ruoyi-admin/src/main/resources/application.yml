@@ -122,6 +122,11 @@ security:
     - /teacher/question/lazyTree
     - /teacher/paper/auto-generate
 
+# 业务自定义配置
+book:
+  # book-ui 前端基址 —— AI 组卷落库后拼卷详情深链(/papers/source/{paperId})用; prod 改成真实域名
+  front-base-url: http://localhost:5173
+
 # 多租户配置
 tenant:
   # 是否开启

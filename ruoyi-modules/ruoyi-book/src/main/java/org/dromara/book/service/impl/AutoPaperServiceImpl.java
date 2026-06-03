@@ -1,14 +1,19 @@
 package org.dromara.book.service.impl;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.dromara.book.domain.bo.AutoGenerateBo;
+import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.vo.AutoGeneratePaperVo;
+import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.service.IAutoPaperService;
+import org.dromara.book.service.IPaperLibraryService;
 import org.dromara.book.service.IQuestionService;
 import org.dromara.common.core.exception.ServiceException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -34,11 +39,17 @@ import java.util.Set;
  *
  * @author backend-dev
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AutoPaperServiceImpl implements IAutoPaperService {
 
     private final IQuestionService questionService;
+    private final IPaperLibraryService paperLibraryService;
+
+    /** book-ui 前端基址，用于拼卷详情深链；prod 改 application.yml book.front-base-url。 */
+    @Value("${book.front-base-url:http://localhost:5173}")
+    private String frontBaseUrl;
 
     /** misikt 真实题型顺序：1=选择 → 4=填空 → 5=简答 */
     private static final int[] TYPE_ORDER = {1, 4, 5};
@@ -150,6 +161,31 @@ public class AutoPaperServiceImpl implements IAutoPaperService {
         vo.setGaps(gaps);
         vo.setNotes(bo.getNotesFromLLM());
         vo.setTips(buildTips(totalCount, dedup, fallbackRelaxCount, gaps.size()));
+
+        // 可选落库：save=true 且 teacherId 有效 → 写进该老师"我的卷库"，回填 paperId + 深链。
+        // 收集组装后各 section 的真实 biz_question.id（保持试卷内顺序）。
+        if (Boolean.TRUE.equals(bo.getSave()) && bo.getTeacherId() != null && totalCount > 0) {
+            List<Long> questionIds = new ArrayList<>(totalCount);
+            for (ExamSectionVo sec : sections) {
+                if (sec.getQuestions() == null) {
+                    continue;
+                }
+                for (QuestionItemVo q : sec.getQuestions()) {
+                    if (q.getId() != null) {
+                        questionIds.add(q.getId());
+                    }
+                }
+            }
+            if (!questionIds.isEmpty()) {
+                CreateExamPaperBo createBo = new CreateExamPaperBo();
+                createBo.setName(paper.getTitle());
+                createBo.setQuestionIds(questionIds);
+                CreateExamPaperVo created = paperLibraryService.createExamPaperForTeacher(createBo, bo.getTeacherId());
+                vo.setPaperId(created.getPaperId());
+                vo.setPaperUrl(frontBaseUrl + "/papers/source/" + created.getPaperId());
+                log.info("[AI组卷] 已落库 paperId={} teacherId={} 题数={}", created.getPaperId(), bo.getTeacherId(), questionIds.size());
+            }
+        }
         return vo;
     }
 

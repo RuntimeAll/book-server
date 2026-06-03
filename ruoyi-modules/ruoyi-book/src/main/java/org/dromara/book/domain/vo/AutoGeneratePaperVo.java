@@ -58,6 +58,16 @@ public class AutoGeneratePaperVo implements Serializable {
     private String notes;
 
     /**
+     * 落库后的试卷 id（仅当入参 save=true 且 teacherId 有效时有值，否则 null）。
+     */
+    private Long paperId;
+
+    /**
+     * 落库后的卷详情深链（book-ui /papers/source/{paperId}），供老师一键打开；未落库为 null。
+     */
+    private String paperUrl;
+
+    /**
      * 试卷主体。
      */
     @Data

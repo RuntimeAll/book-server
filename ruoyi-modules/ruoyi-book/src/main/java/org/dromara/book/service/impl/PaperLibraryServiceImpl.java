@@ -225,13 +225,30 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         if (currentUserId == null) {
             throw new ServiceException("未登录用户不能创建试卷");
         }
+        return doCreateExamPaper(bo, String.valueOf(currentUserId));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CreateExamPaperVo createExamPaperForTeacher(CreateExamPaperBo bo, Long teacherId) {
+        if (teacherId == null) {
+            throw new ServiceException("归属老师 id 不能为空");
+        }
+        return doCreateExamPaper(bo, String.valueOf(teacherId));
+    }
+
+    /**
+     * 落库核心：写 biz_paper + section + 批量 paper_question。create_by 由调用方决定
+     * （登录态 or 显式 teacherId），是两个入口的唯一差异。
+     */
+    private CreateExamPaperVo doCreateExamPaper(CreateExamPaperBo bo, String ownerIdStr) {
         if (bo.getQuestionIds() == null || bo.getQuestionIds().isEmpty()) {
             throw new ServiceException("题目列表不能为空");
         }
 
         int qCount = bo.getQuestionIds().size();
         Date now = new Date();
-        String userIdStr = String.valueOf(currentUserId);
+        String userIdStr = ownerIdStr;
 
         // 1. INSERT biz_paper
         BizPaper paper = new BizPaper();
