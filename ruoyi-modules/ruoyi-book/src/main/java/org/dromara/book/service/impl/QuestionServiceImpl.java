@@ -4,7 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
@@ -18,7 +20,9 @@ import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.service.IQuestionBasketService;
 import org.dromara.book.service.IQuestionService;
+import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -150,6 +154,102 @@ public class QuestionServiceImpl implements IQuestionService {
         return ordered;
     }
 
+
+    /**
+     * PRD-A-007 T1 — 换一题实现。
+     *
+     * <p>候选策略（两步降级）：
+     * <ol>
+     *   <li>优先：同 subject_id + 同首考点（biz_question_knowledge source='U' 首条 knowledge_id）
+     *       + 同 question_type + id NOT IN excludeIds + status='1'，LIMIT 1</li>
+     *   <li>兜底：同 subject_id + 同 question_type + id NOT IN excludeIds + status='1'，LIMIT 1</li>
+     *   <li>仍无 → 返 null</li>
+     * </ol>
+     *
+     * <p>🔴 biz_question 无 tenant_id 列，全程走 TenantHelper.ignore + DataPermissionHelper.ignore
+     * 线程级包裹（同 PRD-A-005 G4 坑，BaseMapper 继承方法 namespace 落 BaseMapper 类级
+     * @InterceptorIgnore 命中不到，必须线程级）。
+     */
+    @Override
+    public QuestionDetailVo replaceQuestion(ReplaceQuestionBo bo) {
+        if (bo == null || bo.getCurrentQuestionId() == null) {
+            return null;
+        }
+
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            Long currentId = bo.getCurrentQuestionId();
+
+            // 构造排除集合：excludeIds 合并 currentQuestionId 自身
+            List<Long> excludeIds = bo.getExcludeIds() == null
+                ? new ArrayList<>() : new ArrayList<>(bo.getExcludeIds());
+            if (!excludeIds.contains(currentId)) {
+                excludeIds.add(currentId);
+            }
+
+            // 查当前题主表信息（subject_id / question_type）
+            LambdaQueryWrapper<BizQuestion> curWrapper = new LambdaQueryWrapper<>();
+            curWrapper.eq(BizQuestion::getId, currentId)
+                      .ne(BizQuestion::getStatus, "2")
+                      .last("LIMIT 1");
+            BizQuestion current = bizQuestionMapper.selectOne(curWrapper);
+            if (current == null) {
+                return null;
+            }
+
+            String subjectId = current.getSubjectId();
+            Integer questionType = current.getQuestionType();
+
+            // 取当前题首考点（biz_question_knowledge source='U' 按 id ASC 首条 knowledgeId）
+            List<QuestionKnowledgeVo> currentKnowledges =
+                loadKnowledgesByQuestionIds(Collections.singletonList(currentId), "U")
+                    .getOrDefault(currentId, Collections.emptyList());
+            String firstKnowledgeId = currentKnowledges.isEmpty()
+                ? null : currentKnowledges.get(0).getKnowledgeId();
+
+            // 步骤 1：优先 — 同 subject + 同首考点 + 同 question_type + NOT IN excludeIds
+            Long candidateId = null;
+            if (firstKnowledgeId != null && subjectId != null && questionType != null) {
+                LambdaQueryWrapper<BizQuestion> w1 = new LambdaQueryWrapper<>();
+                w1.eq(BizQuestion::getSubjectId, subjectId)
+                  .eq(BizQuestion::getQuestionType, questionType)
+                  .eq(BizQuestion::getStatus, "1")
+                  .notIn(BizQuestion::getId, excludeIds)
+                  // 过滤含同一首考点的题（通过 IN subquery）
+                  .inSql(BizQuestion::getId,
+                      "SELECT DISTINCT question_id FROM biz_question_knowledge "
+                          + "WHERE knowledge_id = '" + firstKnowledgeId.replace("'", "''") + "' "
+                          + "AND source = 'U'")
+                  .last("LIMIT 1");
+                BizQuestion candidate = bizQuestionMapper.selectOne(w1);
+                if (candidate != null) {
+                    candidateId = candidate.getId();
+                }
+            }
+
+            // 步骤 2：兜底 — 同 subject + 同 question_type + NOT IN excludeIds
+            if (candidateId == null && subjectId != null && questionType != null) {
+                LambdaQueryWrapper<BizQuestion> w2 = new LambdaQueryWrapper<>();
+                w2.eq(BizQuestion::getSubjectId, subjectId)
+                  .eq(BizQuestion::getQuestionType, questionType)
+                  .eq(BizQuestion::getStatus, "1")
+                  .notIn(BizQuestion::getId, excludeIds)
+                  .last("LIMIT 1");
+                BizQuestion candidate = bizQuestionMapper.selectOne(w2);
+                if (candidate != null) {
+                    candidateId = candidate.getId();
+                }
+            }
+
+            // 无候选 → 返 null（FE 提示"暂无可替换同类题"）
+            if (candidateId == null) {
+                return null;
+            }
+
+            // 复用 listByIds 同款装配（knowledges + freeTags 完整回填）
+            List<QuestionDetailVo> result = listByIds(Collections.singletonList(candidateId));
+            return result.isEmpty() ? null : result.get(0);
+        }));
+    }
 
     /**
      * 组卷草稿 — section 顺序固定 1=选择 → 4=填空 → 5=简答（misikt 真实行为）。

@@ -347,7 +347,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             }
             bizPaperQuestionMapper.insertBatch(pqList);
 
-            // 4. 重算并更新 biz_paper 的 question_count + 总 score（+ name / paperCategoryId 如传）
+            // 4. 重算并更新 biz_paper 的 question_count + 总 score（+ name / paperCategoryId / suggestTime 如传）
             BizPaper update = new BizPaper();
             update.setId(paperId);
             update.setQuestionCount(items.size());
@@ -358,9 +358,33 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             if (bo.getPaperCategoryId() != null) {
                 update.setPaperCategoryId(bo.getPaperCategoryId());
             }
+            // PRD-A-007 T2：suggestTime 可选，传则写 biz_paper.suggest_time
+            if (bo.getSuggestTime() != null) {
+                update.setSuggestTime(bo.getSuggestTime());
+            }
             update.setUpdateBy(userIdStr);
             update.setUpdateTime(now);
             bizPaperMapper.updateById(update);
+
+            // PRD-A-007 T2：sections 可选 — 逐条更新已有 biz_paper_section 的 title/sort
+            // sectionId 非空才更新（空 = 新建，v1 本期不做）
+            if (bo.getSections() != null && !bo.getSections().isEmpty()) {
+                for (UpdateExamPaperBo.SectionBo sectionBo : bo.getSections()) {
+                    if (sectionBo.getSectionId() == null) {
+                        // 新建大题 v1 不做，跳过
+                        continue;
+                    }
+                    BizPaperSection sectionUpdate = new BizPaperSection();
+                    sectionUpdate.setId(sectionBo.getSectionId());
+                    if (sectionBo.getName() != null) {
+                        sectionUpdate.setTitle(sectionBo.getName());
+                    }
+                    if (sectionBo.getSort() != null) {
+                        sectionUpdate.setSort(sectionBo.getSort());
+                    }
+                    bizPaperSectionMapper.updateById(sectionUpdate);
+                }
+            }
 
             // 5. 返更新后 PaperDetailVo（复用 detail 查询）
             return paperDetailService.getPaperDetail(paperId);

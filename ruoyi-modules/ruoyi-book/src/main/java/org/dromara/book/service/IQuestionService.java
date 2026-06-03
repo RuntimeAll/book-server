@@ -1,6 +1,7 @@
 package org.dromara.book.service;
 
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
@@ -49,6 +50,25 @@ public interface IQuestionService {
      * @return 详情 VO 列表（按入参顺序，软删题被剔除导致长度可能小于入参）
      */
     List<QuestionDetailVo> listByIds(List<Long> ids);
+
+    /**
+     * PRD-A-007 T1 — 换一题（POST /teacher/question/replace）。
+     *
+     * <p>候选逻辑（两步降级）：
+     * <ol>
+     *   <li>优先：同 subject_id + 同首考点（biz_question_knowledge source='U' 首条 knowledge_id）
+     *       + 同 question_type + id NOT IN excludeIds + status='1'（非软删）</li>
+     *   <li>兜底：同 subject_id + 同 question_type + id NOT IN excludeIds + status='1'</li>
+     *   <li>仍无 → 返 null（FE 提示"暂无可替换同类题"，不报错）</li>
+     * </ol>
+     *
+     * <p>🔴 biz_question 无 tenant_id 列，实现必须走
+     * {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹（同 PRD-A-005 G4 坑）。
+     *
+     * @param bo 换题入参（currentQuestionId + excludeIds）
+     * @return 候选 QuestionDetailVo（与 listByIds 单元素同构）；无候选返 null
+     */
+    QuestionDetailVo replaceQuestion(ReplaceQuestionBo bo);
 
     /**
      * 组卷草稿（POST /teacher/question/genExamData/）。
