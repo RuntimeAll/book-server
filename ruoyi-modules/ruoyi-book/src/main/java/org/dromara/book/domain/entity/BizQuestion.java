@@ -8,6 +8,7 @@ import lombok.Data;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.Date;
 
 /**
@@ -192,6 +193,56 @@ public class BizQuestion implements Serializable {
      * 创建用户 BIGINT（跟 create_by VARCHAR 历史并存）
      */
     private Long createUser;
+
+    /**
+     * 基础分值 DECIMAL(5,2)（PRD-B-012 标注维度地基新增）
+     */
+    private BigDecimal baseScore;
+
+    /**
+     * 是否已收藏 0/1（PRD-B-012 新增）
+     */
+    private Integer isCollected;
+
+    /**
+     * 导入来源（PRD-B-012 新增）
+     */
+    private String importSource;
+
+    /**
+     * 导入批次 ID（PRD-B-012 新增）
+     */
+    private String importBatchId;
+
+    /**
+     * 区域编码（PRD-B-012 新增）
+     */
+    private String regionCode;
+
+    /**
+     * 来源类型（PRD-B-012 新增）
+     */
+    private Integer sourceType;
+
+    /**
+     * 母题 ID（变式关系 PRD-B-012 新增）
+     */
+    private Long motherQuestionId;
+
+    /**
+     * 变式关系（PRD-B-012 新增）
+     */
+    private String variantRelation;
+
+    /**
+     * 标注版本（PRD-B-012 新增）
+     */
+    private Integer annotateVersion;
+
+    /**
+     * 标注状态（PRD-B-012 新增）
+     */
+    private Integer annotateStatus;
 
     @TableField(fill = FieldFill.INSERT)
     private Date createTime;
