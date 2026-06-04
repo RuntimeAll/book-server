@@ -29,7 +29,7 @@ import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
 import org.dromara.bookadmin.domain.vo.TagWithCoCountVo;
 import org.dromara.bookadmin.mapper.AdminFreeTagWriteMapper;
 import org.dromara.bookadmin.mapper.AdminPaperQuestionRefMapper;
-import org.dromara.bookadmin.mapper.AdminTagKnowledgeMapper;
+import org.dromara.bookadmin.mapper.AdminTagSubjectMapper;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.satoken.utils.LoginHelper;
@@ -90,8 +90,11 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final AdminPaperQuestionRefMapper adminPaperQuestionRefMapper;
     /** admin 自有 freeTag 字典 + 关联表写 Mapper（V-6 波 2b 新增）。 */
     private final AdminFreeTagWriteMapper adminFreeTagWriteMapper;
-    /** biz_tag_knowledge 共现反推表读 Mapper（PRD-B-006 收尾增量 — 标签按知识点过滤端点）。 */
-    private final AdminTagKnowledgeMapper adminTagKnowledgeMapper;
+    /**
+     * 学科节点(任意 level) → 共现标签实时算 Mapper(PRD-B-006 收尾·修正方案).
+     * 替代废弃的 AdminTagKnowledgeMapper(基于 V8/V9 预聚合 biz_tag_knowledge), 改三表实时 JOIN.
+     */
+    private final AdminTagSubjectMapper adminTagSubjectMapper;
     /** admin 端通用文件上传 Service（H1 卡补丁抽离 — V-4 fileUpload 委托）。 */
     private final IAdminFileUploadService adminFileUploadService;
 
@@ -828,24 +831,25 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
 
 
     /**
-     * 按知识点反推共现 top N 标签 — PRD-B-006 收尾增量。
+     * 按学科节点(任意 level)反推共现 top N 标签 — 实时算(PRD-B-006 收尾·修正方案).
      *
-     * <p>直接走 {@link AdminTagKnowledgeMapper#selectTopByKnowledge(String, int)}，
-     * 业务校验 + 兜底在本层：
+     * <p>直接走 {@link AdminTagSubjectMapper#selectTopBySubject(String, int)}, 三表实时 JOIN
+     * (qft × qk × ft) + qk.knowledge_id LIKE CONCAT(subjectId, '%') 前缀匹配子树.
+     * 业务校验 + 兜底在本层:
      * <ul>
-     *   <li>knowledgeId trim 后空 → 抛 {@code ServiceException("knowledgeId 不能为空")}（强校验，
-     *       FE 必须传具体节点 id，全字典请走 {@code /admin/question/freeTagSearch}）</li>
-     *   <li>topN null / ≤ 0 → 默认 50；&gt; 200 → clamp 200</li>
+     *   <li>subjectId trim 后空 → 抛 {@code ServiceException("subjectId 不能为空")}(强校验,
+     *       FE 必须传具体节点 id, 全字典请走 {@code /admin/question/freeTagSearch})</li>
+     *   <li>topN null / ≤ 0 → 默认 50; &gt; 200 → clamp 200</li>
      * </ul>
      *
-     * <p>不校验 knowledgeId 是否在 biz_subject 存在 — 不存在的 knowledgeId 在 biz_tag_knowledge
-     * 也查不到行，返空 list 即可，避免每次都打一次 biz_subject 查询。
+     * <p>不校验 subjectId 是否在 biz_subject 存在 — 不存在的 subjectId 在 biz_question_knowledge
+     * 也匹配不到行, 返空 list 即可, 避免每次都打一次 biz_subject 查询.
      */
     @Override
-    public List<TagWithCoCountVo> queryTagsByKnowledge(String knowledgeId, Integer topN) {
-        String kid = knowledgeId == null ? null : knowledgeId.trim();
-        if (kid == null || kid.isEmpty()) {
-            throw new ServiceException("knowledgeId 不能为空");
+    public List<TagWithCoCountVo> queryTagsBySubject(String subjectId, Integer topN) {
+        String sid = subjectId == null ? null : subjectId.trim();
+        if (sid == null || sid.isEmpty()) {
+            throw new ServiceException("subjectId 不能为空");
         }
         int top;
         if (topN == null || topN <= 0) {
@@ -855,6 +859,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         } else {
             top = topN;
         }
-        return adminTagKnowledgeMapper.selectTopByKnowledge(kid, top);
+        return adminTagSubjectMapper.selectTopBySubject(sid, top);
     }
 }

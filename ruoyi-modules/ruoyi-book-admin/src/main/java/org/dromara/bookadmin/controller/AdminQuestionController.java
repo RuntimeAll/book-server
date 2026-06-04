@@ -224,44 +224,48 @@ public class AdminQuestionController {
      * <p>鉴权：{@code admin:question:list}（属读端点；列表筛选 + 编辑回填都需访问）。
      */
     /**
-     * POST /admin/question/tag/byKnowledge — 按知识点反推共现 top N 标签（PRD-B-006 收尾增量）。
+     * POST /admin/question/tag/bySubject — 按学科节点(任意 level)反推共现 top N 标签 — 实时算(PRD-B-006 收尾·修正方案).
      *
-     * <p>用途：FE admin 列表页"标签筛选"弹层里用户先选了"前置知识点"再选"候选标签" — 通过本端点拿
-     * 该知识点下"共现题数最多"的 top 标签，避免全字典枚举（{@code /freeTagSearch} 不分知识点
-     * 返全字典，本端点强语义约束到指定 knowledge）。
+     * <p>2026-06-04 用户拍板推翻 V8/V9 预聚合方案(biz_tag_knowledge 已 V10 DROP), 改实时三表 JOIN.
+     * 端点原路径 {@code /tag/byKnowledge} 同步改名为 {@code /tag/bySubject}, 入参 {@code knowledgeId}
+     * 改名 {@code subjectId} 反映新语义(任意 level 1-5 都接受, 按 ID 前缀匹配子树).
      *
-     * <p>数据源：{@code biz_tag_knowledge}（V9 ETL 灌库的 tag ↔ knowledge 共现反推表，23635 行）
-     * JOIN {@code biz_free_tag}（取 tag 文本名）。
+     * <p>用途: FE admin 列表页"标签筛选"弹层里用户先选了"前置学科节点"(学段/学科/教材/章节/知识点
+     * 任意 level 均可)再选"候选标签" — 通过本端点拿该子树下"共现题数最多"的 top 标签, 避免全字典枚举
+     * ({@code /freeTagSearch} 不分节点返全字典, 本端点强语义约束到指定 subject 子树).
      *
-     * <p>入参（{@code application/json}）：
+     * <p>数据源(实时算): {@code biz_question_free_tag JOIN biz_question_knowledge JOIN biz_free_tag},
+     * 用 {@code knowledge_id LIKE CONCAT(subjectId, '%')} 前缀匹配子树, 实测 ≤ 10ms.
+     *
+     * <p>入参({@code application/json}):
      * <ul>
-     *   <li>{@code knowledgeId} — biz_subject.id（任意层级，varchar 编码）必填；
-     *       null / 空 / 纯空格 → 抛 {@code ServiceException("knowledgeId 不能为空")}</li>
-     *   <li>{@code topN} — 返回上限（可选）；null / ≤ 0 → 默认 50；&gt; 200 → clamp 200</li>
+     *   <li>{@code subjectId} — biz_subject.id(任意 level 1-5, varchar 编码)必填;
+     *       null / 空 / 纯空格 → 抛 {@code ServiceException("subjectId 不能为空")}</li>
+     *   <li>{@code topN} — 返回上限(可选); null / ≤ 0 → 默认 50; &gt; 200 → clamp 200</li>
      * </ul>
      *
-     * <p>响应 envelope：RuoYi 标准 {@code R<List<TagWithCoCountVo>>}。
+     * <p>响应 envelope: RuoYi 标准 {@code R<List<TagWithCoCountVo>>}.
      * <pre>{@code
      * {
      *   "code": 200, "msg": "操作成功",
      *   "data": [
-     *     {"tagId": 29, "tagName": "求线段长", "coCount": 27},
-     *     {"tagId": 25, "tagName": "勾股定理", "coCount": 24},
+     *     {"tagId": 6,   "tagName": "分类讨论", "coCount": 319},
+     *     {"tagId": 406, "tagName": "数轴",     "coCount": 267},
      *     ...
      *   ]
      * }
      * }</pre>
      *
-     * <p>鉴权：{@code admin:question:list}（属读端点；列表筛选场景，与 {@code /freeTagSearch} 同款权限）。
+     * <p>鉴权: {@code admin:question:list}(属读端点; 列表筛选场景, 与 {@code /freeTagSearch} 同款权限).
      */
     @SaCheckPermission("admin:question:list")
-    @PostMapping("/tag/byKnowledge")
-    public R<List<TagWithCoCountVo>> tagByKnowledge(@RequestBody(required = false) Map<String, Object> body) {
-        String knowledgeId = null;
+    @PostMapping("/tag/bySubject")
+    public R<List<TagWithCoCountVo>> tagBySubject(@RequestBody(required = false) Map<String, Object> body) {
+        String subjectId = null;
         Integer topN = null;
         if (body != null) {
-            Object kid = body.get("knowledgeId");
-            knowledgeId = kid == null ? null : kid.toString();
+            Object sid = body.get("subjectId");
+            subjectId = sid == null ? null : sid.toString();
             Object tn = body.get("topN");
             if (tn instanceof Number) {
                 topN = ((Number) tn).intValue();
@@ -273,7 +277,7 @@ public class AdminQuestionController {
                 }
             }
         }
-        return R.ok(adminQuestionService.queryTagsByKnowledge(knowledgeId, topN));
+        return R.ok(adminQuestionService.queryTagsBySubject(subjectId, topN));
     }
 
     @SaCheckPermission("admin:question:list")
