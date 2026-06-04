@@ -6,6 +6,7 @@ import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
 import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
+import org.dromara.bookadmin.domain.vo.TagWithCoCountVo;
 
 import java.util.List;
 import java.util.Map;
@@ -191,5 +192,41 @@ public interface IAdminQuestionService {
      * @return tag 候选列表（按 use_count 倒序）
      */
     List<Map<String, Object>> adminFreeTagSearch(String keyword, Integer limit);
+
+
+    /**
+     * 按知识点反推共现 top N 标签（PRD-B-006 收尾增量 — FE 标签按知识点过滤端点）。
+     *
+     * <p>数据源：{@code biz_tag_knowledge}（V9 ETL 灌库，23635 行 tag ↔ knowledge 共现）
+     * JOIN {@code biz_free_tag}（取 tag 文本名）。
+     *
+     * <p>业务场景：admin 列表页"标签筛选"弹层 — 用户先选了"前置知识点"再选"候选标签"，
+     * 通过本端点拿到该知识点下"共现次数最多"的 top N 个标签，避免全字典枚举。
+     *
+     * <p>SQL：
+     * <pre>{@code
+     * SELECT tk.tag_id AS tagId, ft.name AS tagName, tk.co_count AS coCount
+     * FROM biz_tag_knowledge tk
+     * JOIN biz_free_tag ft ON ft.id = tk.tag_id
+     * WHERE tk.knowledge_id = ?
+     * ORDER BY tk.co_count DESC, tk.tag_id ASC
+     * LIMIT ?
+     * }</pre>
+     *
+     * <p>命中索引 {@code biz_tag_knowledge.idx_knowledge_count(knowledge_id, co_count DESC)}。
+     *
+     * <p>入参兜底：
+     * <ul>
+     *   <li>{@code knowledgeId} null / 空 / 纯空格 → 抛 {@code ServiceException("knowledgeId 不能为空")}</li>
+     *   <li>{@code topN} null / ≤ 0 → 默认 50；&gt; 200 → clamp 200（防 FE 误传巨值打 DB）</li>
+     * </ul>
+     *
+     * <p>返结构：{@code [{tagId, tagName, coCount}, ...]}（按 coCount 倒序，同 coCount 按 tagId 升序）。
+     *
+     * @param knowledgeId biz_subject.id（任意层级，varchar 编码）— 必填
+     * @param topN        返回上限（null / ≤ 0 → 50；&gt; 200 → 200）
+     * @return tag 候选列表
+     */
+    List<TagWithCoCountVo> queryTagsByKnowledge(String knowledgeId, Integer topN);
 
 }

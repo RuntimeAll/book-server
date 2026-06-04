@@ -9,6 +9,7 @@ import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
 import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
 import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
+import org.dromara.bookadmin.domain.vo.TagWithCoCountVo;
 import org.dromara.bookadmin.service.IAdminQuestionService;
 import org.dromara.common.core.domain.R;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -222,6 +223,59 @@ public class AdminQuestionController {
      *
      * <p>鉴权：{@code admin:question:list}（属读端点；列表筛选 + 编辑回填都需访问）。
      */
+    /**
+     * POST /admin/question/tag/byKnowledge — 按知识点反推共现 top N 标签（PRD-B-006 收尾增量）。
+     *
+     * <p>用途：FE admin 列表页"标签筛选"弹层里用户先选了"前置知识点"再选"候选标签" — 通过本端点拿
+     * 该知识点下"共现题数最多"的 top 标签，避免全字典枚举（{@code /freeTagSearch} 不分知识点
+     * 返全字典，本端点强语义约束到指定 knowledge）。
+     *
+     * <p>数据源：{@code biz_tag_knowledge}（V9 ETL 灌库的 tag ↔ knowledge 共现反推表，23635 行）
+     * JOIN {@code biz_free_tag}（取 tag 文本名）。
+     *
+     * <p>入参（{@code application/json}）：
+     * <ul>
+     *   <li>{@code knowledgeId} — biz_subject.id（任意层级，varchar 编码）必填；
+     *       null / 空 / 纯空格 → 抛 {@code ServiceException("knowledgeId 不能为空")}</li>
+     *   <li>{@code topN} — 返回上限（可选）；null / ≤ 0 → 默认 50；&gt; 200 → clamp 200</li>
+     * </ul>
+     *
+     * <p>响应 envelope：RuoYi 标准 {@code R<List<TagWithCoCountVo>>}。
+     * <pre>{@code
+     * {
+     *   "code": 200, "msg": "操作成功",
+     *   "data": [
+     *     {"tagId": 29, "tagName": "求线段长", "coCount": 27},
+     *     {"tagId": 25, "tagName": "勾股定理", "coCount": 24},
+     *     ...
+     *   ]
+     * }
+     * }</pre>
+     *
+     * <p>鉴权：{@code admin:question:list}（属读端点；列表筛选场景，与 {@code /freeTagSearch} 同款权限）。
+     */
+    @SaCheckPermission("admin:question:list")
+    @PostMapping("/tag/byKnowledge")
+    public R<List<TagWithCoCountVo>> tagByKnowledge(@RequestBody(required = false) Map<String, Object> body) {
+        String knowledgeId = null;
+        Integer topN = null;
+        if (body != null) {
+            Object kid = body.get("knowledgeId");
+            knowledgeId = kid == null ? null : kid.toString();
+            Object tn = body.get("topN");
+            if (tn instanceof Number) {
+                topN = ((Number) tn).intValue();
+            } else if (tn != null) {
+                try {
+                    topN = Integer.parseInt(tn.toString().trim());
+                } catch (NumberFormatException ignored) {
+                    topN = null;
+                }
+            }
+        }
+        return R.ok(adminQuestionService.queryTagsByKnowledge(knowledgeId, topN));
+    }
+
     @SaCheckPermission("admin:question:list")
     @PostMapping("/freeTagSearch")
     public R<List<Map<String, Object>>> freeTagSearch(@RequestBody(required = false) Map<String, Object> body) {
