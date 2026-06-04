@@ -61,7 +61,10 @@ public class AdminQuestionEditBo implements Serializable {
     private String shortTitle;
 
     /**
-     * 题干文本（PRD §6 R7：与 stemImgUrl 至少有一个非空）
+     * 题干文本（PRD §6 R7：与 stemImgUrl 至少有一个非空）。
+     *
+     * <p>PRD-B-006 收尾增量起：长文本外置存储到 {@code biz_text_content content_type='S'}，
+     * 旧字段 {@code biz_question.stem_text} 同步双写过渡（保留兼容老查询路径）。
      */
     private String stemText;
 
@@ -71,9 +74,25 @@ public class AdminQuestionEditBo implements Serializable {
     private String stemImgUrl;
 
     /**
+     * 答案文本（PRD-B-006 收尾增量新增 — 与 {@link #stemText} 对称）。
+     *
+     * <p>长文本外置存储到 {@code biz_text_content content_type='A'}；
+     * 短答案（A/B/C/D / 短填空）仍走 {@link #correctAnswer}。
+     */
+    private String answerText;
+
+    /**
      * 答案图 URL（可空）
      */
     private String answerImgUrl;
+
+    /**
+     * 解析文本（PRD-B-006 收尾增量新增 — 与 {@link #stemText} 对称）。
+     *
+     * <p>长文本外置存储到 {@code biz_text_content content_type='E'}，
+     * 通过 {@code biz_question.analyze_text_content_id} 引用。
+     */
+    private String explainText;
 
     /**
      * 解析图 URL（可空）

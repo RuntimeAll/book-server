@@ -44,11 +44,20 @@
         <result property="isFavorite" column="is_favorite"/>
     </resultMap>
 
-    <!-- 详情 ResultMap（extends QuestionItemMap 加详情字段） -->
+    <!--
+      详情 ResultMap（extends QuestionItemMap 加详情字段）。
+      PRD-B-006 收尾增量后：
+        - stemText 优先用 biz_text_content S 外置, 兜底走 biz_question.stem_text(老数据)
+        - answer  优先用 biz_text_content A 外置, 兜底走 biz_question.correct_answer(短答案)
+        - explain 唯一来源 = biz_text_content E 外置(老数据无解析文本)
+      列别名 stem_text_resolved / answer_resolved / explain_resolved 由 SELECT 端的 COALESCE 拼好喂进来。
+    -->
     <resultMap id="QuestionDetailMap" type="org.dromara.book.domain.vo.QuestionDetailVo"
                extends="QuestionItemMap">
-        <result property="answer" column="correct_answer"/>
+        <result property="stemText" column="stem_text_resolved"/>
+        <result property="answer" column="answer_resolved"/>
         <result property="answerImg" column="answer_img_url"/>
+        <result property="explain" column="explain_resolved"/>
         <result property="explainImg" column="explain_img_url"/>
         <result property="fileBin" column="file_bin_url"/>
         <result property="videoUrl" column="video_url"/>
@@ -116,6 +125,10 @@
             q.difficult,
             q.subject_id,
             q.short_title,
+            <!-- PRD-B-006: 三要素外置优先, biz_text_content 命中走外置, 否则降级老字段 -->
+            COALESCE(tc_s.content, q.stem_text)         AS stem_text_resolved,
+            COALESCE(tc_a.content, q.correct_answer)    AS answer_resolved,
+            tc_e.content                                AS explain_resolved,
             q.stem_text,
             q.stem_img_url,
             q.answer_img_url,
@@ -140,6 +153,9 @@
             UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
             q.update_by
         FROM biz_question q
+        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
+        LEFT JOIN biz_text_content tc_a ON tc_a.question_id = q.id AND tc_a.content_type = 'A'
+        LEFT JOIN biz_text_content tc_e ON tc_e.question_id = q.id AND tc_e.content_type = 'E'
         WHERE q.id = #{id}
     </select>
 
@@ -156,6 +172,10 @@
             q.difficult,
             q.subject_id,
             q.short_title,
+            <!-- PRD-B-006: 同 selectQuestionDetailById 拼三要素外置, 试卷预览/PDF 导出也吃到 -->
+            COALESCE(tc_s.content, q.stem_text)         AS stem_text_resolved,
+            COALESCE(tc_a.content, q.correct_answer)    AS answer_resolved,
+            tc_e.content                                AS explain_resolved,
             q.stem_text,
             q.stem_img_url,
             q.answer_img_url,
@@ -180,6 +200,9 @@
             UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
             q.update_by
         FROM biz_question q
+        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
+        LEFT JOIN biz_text_content tc_a ON tc_a.question_id = q.id AND tc_a.content_type = 'A'
+        LEFT JOIN biz_text_content tc_e ON tc_e.question_id = q.id AND tc_e.content_type = 'E'
         WHERE q.id IN
         <foreach collection="ids" item="qid" open="(" separator="," close=")">
             #{qid}

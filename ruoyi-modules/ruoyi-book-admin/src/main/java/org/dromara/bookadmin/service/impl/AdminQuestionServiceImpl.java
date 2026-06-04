@@ -11,6 +11,7 @@ import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
 import org.dromara.book.domain.entity.BizSubject;
+import org.dromara.book.domain.entity.BizTextContent;
 import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
@@ -21,6 +22,7 @@ import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
+import org.dromara.book.mapper.BizTextContentMapper;
 import org.dromara.admincommon.service.IAdminFileUploadService;
 import org.dromara.bookadmin.domain.bo.AdminQuestionEditBo;
 import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
@@ -81,6 +83,8 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
     private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
     private final BizSubjectMapper bizSubjectMapper;
+    /** 三要素长文本外置 Mapper（PRD-B-006 收尾增量 — 题干/答案/解析 upsert）。 */
+    private final BizTextContentMapper bizTextContentMapper;
     private final AdminPaperQuestionRefMapper adminPaperQuestionRefMapper;
     /** admin 自有 freeTag 字典 + 关联表写 Mapper（V-6 波 2b 新增）。 */
     private final AdminFreeTagWriteMapper adminFreeTagWriteMapper;
@@ -353,13 +357,85 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             }
         }
 
-        // ===== Step 2：知识点全量替换（仅 U 轨；S 轨不动 — 防污染标准库） =====
+        // ===== Step 2：三要素长文本外置 upsert + FK 回写（PRD-B-006 收尾增量） =====
+        // 题干(S) / 答案(A) / 解析(E) 三态对称, upsert 到 biz_text_content,
+        // 再单独 UPDATE biz_question 回写三个 FK。stem_text 双写已在 Step 1 落 biz_question.stem_text。
+        Long stemTcId    = upsertTextContent(questionId, "S", bo.getStemText());
+        Long answerTcId  = upsertTextContent(questionId, "A", bo.getAnswerText());
+        Long explainTcId = upsertTextContent(questionId, "E", bo.getExplainText());
+        syncTextContentFks(questionId, stemTcId, answerTcId, explainTcId);
+
+        // ===== Step 3：知识点全量替换（仅 U 轨；S 轨不动 — 防污染标准库） =====
         writeKnowledgesUOnly(questionId, bo.getQuestionKnowledges());
 
-        // ===== Step 3：标签全量替换（含字典自动建 + 冗余串已在 Step 1 同步） =====
+        // ===== Step 4：标签全量替换（含字典自动建 + 冗余串已在 Step 1 同步） =====
         writeFreeTags(questionId, bo.getTagNames());
 
         return questionId;
+    }
+
+    /**
+     * upsert biz_text_content (PRD-B-006 收尾增量)：
+     * <ul>
+     *   <li>{@code content} 空/null → 删除该 (questionId, contentType) 行, 返 null</li>
+     *   <li>已存在 → UPDATE content</li>
+     *   <li>不存在 → INSERT, 返新 id</li>
+     * </ul>
+     *
+     * <p>UNIQUE KEY (question_id, content_type) 保证一题一类型最多一行。
+     *
+     * @param questionId  题目 ID（非 null）
+     * @param contentType 'S' 题干 / 'A' 答案 / 'E' 解析
+     * @param content     长文本（null/空 → 删行）
+     * @return 当前生效行的 id；删行或本来就无 → null
+     */
+    private Long upsertTextContent(Long questionId, String contentType, String content) {
+        QueryWrapper<BizTextContent> qw = new QueryWrapper<>();
+        qw.eq("question_id", questionId).eq("content_type", contentType);
+        BizTextContent existing = bizTextContentMapper.selectOne(qw);
+
+        boolean isEmpty = content == null || content.isEmpty();
+        if (isEmpty) {
+            // 删除该行（如果存在）— content 为空时不该留外置行污染查询
+            if (existing != null) {
+                bizTextContentMapper.deleteById(existing.getId());
+            }
+            return null;
+        }
+
+        if (existing != null) {
+            // UPDATE 现有行的 content；create_time 不动
+            BizTextContent toUpdate = new BizTextContent();
+            toUpdate.setId(existing.getId());
+            toUpdate.setContent(content);
+            toUpdate.setUpdateTime(new Date());
+            bizTextContentMapper.updateById(toUpdate);
+            return existing.getId();
+        }
+
+        // INSERT 新行
+        BizTextContent entity = new BizTextContent();
+        entity.setQuestionId(questionId);
+        entity.setContentType(contentType);
+        entity.setContent(content);
+        // create_time / update_time 由 MetaObjectHandler @TableField(fill) 自动填充
+        bizTextContentMapper.insert(entity);
+        return entity.getId();
+    }
+
+    /**
+     * 把三要素 FK 一次性同步回 biz_question（PRD-B-006 收尾增量）。
+     *
+     * <p>三个 FK 可独立为 null（content 为空时 upsert 返 null），UPDATE 时一律 SET 为传入值
+     * （包括 null）— 让 biz_question 的 FK 状态完整反映 biz_text_content 当前事实。
+     */
+    private void syncTextContentFks(Long questionId, Long stemTcId, Long answerTcId, Long explainTcId) {
+        UpdateWrapper<BizQuestion> w = new UpdateWrapper<>();
+        w.eq("id", questionId)
+            .set("stem_text_content_id", stemTcId)
+            .set("answer_text_content_id", answerTcId)
+            .set("analyze_text_content_id", explainTcId);
+        bizQuestionMapper.update(null, w);
     }
 
     /**
