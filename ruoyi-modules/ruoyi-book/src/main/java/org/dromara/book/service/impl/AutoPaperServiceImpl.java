@@ -182,7 +182,9 @@ public class AutoPaperServiceImpl implements IAutoPaperService {
                 createBo.setQuestionIds(questionIds);
                 CreateExamPaperVo created = paperLibraryService.createExamPaperForTeacher(createBo, bo.getTeacherId());
                 vo.setPaperId(created.getPaperId());
-                vo.setPaperUrl(frontBaseUrl + "/papers/source/" + created.getPaperId());
+                // 🔴 book-ui 用 hash 路由（createWebHashHistory），深链必须带 /#，
+                //    否则浏览器把 /papers/source/{id} 当真实路径请求 → 命中不到路由 404。
+                vo.setPaperUrl(frontBaseUrl + "/#/papers/source/" + created.getPaperId());
                 log.info("[AI组卷] 已落库 paperId={} teacherId={} 题数={}", created.getPaperId(), bo.getTeacherId(), questionIds.size());
             }
         }
