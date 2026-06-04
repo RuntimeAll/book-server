@@ -9,9 +9,9 @@
 
     <!--
       实时三表 JOIN 聚合:
-        biz_question_free_tag qft         -- 题↔标签关联
-        JOIN biz_question_knowledge qk    -- 题↔知识点关联
-        JOIN biz_free_tag ft              -- 取 tag 文本名
+        biz_question_free_tag qft         (题↔标签关联)
+        JOIN biz_question_knowledge qk    (题↔知识点关联)
+        JOIN biz_free_tag ft              (取 tag 文本名)
 
       WHERE qk.knowledge_id LIKE CONCAT(subjectId, '%') — 任意 level 1-5 ID 前缀子树聚合.
       索引: biz_question_knowledge 主键 (question_id, knowledge_id) + 各表 PK, left-anchored
@@ -19,6 +19,10 @@
 
       字段 alias COUNT(DISTINCT ...) AS coCount 保持驼峰(resultType 走 VO 自动映射).
       同 coCount 用 tag_id ASC 兜底稳定排序, 防分页或重复请求 order 抖动.
+
+      注: 上方注释里原本 SQL 风格 "-- 注释" 违反 XML 规范 ("--" 不允许出现在 <!.. ..>),
+          导致 SAXParser 报 lineNumber=12 columnNumber=45, BE 启动 sqlSessionFactory bean
+          创建失败. 改成括号说明文本绕开. 沉淀到 backend-dev skill BE 启动失败 4 类根因.
     -->
     <select id="selectTopBySubject"
             resultType="org.dromara.bookadmin.domain.vo.TagWithCoCountVo">
