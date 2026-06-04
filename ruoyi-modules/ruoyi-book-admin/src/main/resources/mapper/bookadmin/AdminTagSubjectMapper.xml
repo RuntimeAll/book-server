@@ -20,9 +20,10 @@
       字段 alias COUNT(DISTINCT ...) AS coCount 保持驼峰(resultType 走 VO 自动映射).
       同 coCount 用 tag_id ASC 兜底稳定排序, 防分页或重复请求 order 抖动.
 
-      注: 上方注释里原本 SQL 风格 "-- 注释" 违反 XML 规范 ("--" 不允许出现在 <!.. ..>),
-          导致 SAXParser 报 lineNumber=12 columnNumber=45, BE 启动 sqlSessionFactory bean
-          创建失败. 改成括号说明文本绕开. 沉淀到 backend-dev skill BE 启动失败 4 类根因.
+      注: 上方注释里原本 SQL 风格的"行内注释" (双连字符前缀) 违反 XML 规范
+          (双连字符序列不允许出现在 XML 注释段内), 导致 SAXParser 报错, BE 启动
+          sqlSessionFactory bean 创建失败. 改成括号说明文本绕开.
+          沉淀到 backend-dev skill BE 启动失败 4 类根因.
     -->
     <select id="selectTopBySubject"
             resultType="org.dromara.bookadmin.domain.vo.TagWithCoCountVo">
