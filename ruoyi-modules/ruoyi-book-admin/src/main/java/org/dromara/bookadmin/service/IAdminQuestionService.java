@@ -6,6 +6,7 @@ import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.SubjectNodeVo;
 import org.dromara.bookadmin.domain.bo.AdminQuestionPageBo;
+import org.dromara.bookadmin.domain.vo.TagWithCoCountVo;
 
 import java.util.List;
 import java.util.Map;
@@ -191,5 +192,51 @@ public interface IAdminQuestionService {
      * @return tag 候选列表（按 use_count 倒序）
      */
     List<Map<String, Object>> adminFreeTagSearch(String keyword, Integer limit);
+
+
+    /**
+     * 按学科节点(任意 level 1-5)反推共现 top N 标签 — 实时算(PRD-B-006 收尾·修正方案).
+     *
+     * <p>2026-06-04 用户拍板推翻 V8/V9 预聚合方案(biz_tag_knowledge 已 V10 DROP), 改实时三表 JOIN.
+     * 推翻原因: 实测实时 SQL 仅 7ms 与预聚合等价, 预聚合反带数据漂移 + 重复存储 + 维护成本.
+     *
+     * <p>数据源(实时算): {@code biz_question_free_tag qft JOIN biz_question_knowledge qk
+     * JOIN biz_free_tag ft}, 用 {@code qk.knowledge_id LIKE CONCAT(subjectId, '%')} 前缀匹配
+     * 任意 level 子树.
+     *
+     * <p>业务场景: admin 列表页"标签筛选"弹层 — 用户先选了一个"前置学科节点"(任意 level,
+     * 学段/学科/教材/章节/知识点均可)再看候选标签, 通过本端点拿该子树下"共现题数最多"的 top N
+     * 个标签, 避免全字典枚举.
+     *
+     * <p>SQL 等效:
+     * <pre>{@code
+     * SELECT qft.tag_id AS tagId,
+     *        ft.name    AS tagName,
+     *        COUNT(DISTINCT qft.question_id) AS coCount
+     *   FROM biz_question_free_tag qft
+     *   JOIN biz_question_knowledge qk ON qk.question_id = qft.question_id
+     *   JOIN biz_free_tag ft ON ft.id = qft.tag_id
+     *  WHERE qk.knowledge_id LIKE CONCAT(?, '%')
+     *  GROUP BY qft.tag_id, ft.name
+     *  ORDER BY coCount DESC, qft.tag_id ASC
+     *  LIMIT ?
+     * }</pre>
+     *
+     * <p>性能: dev 库实测 level 2 节点 (3071001) 6.5ms / (3120004) 2.7ms, 完全满足 admin 弹层延迟预算.
+     * 同时比预聚合多出"任意 level 子树聚合"能力 — 预聚合只能 knowledge_id 等值, 不能跨子树.
+     *
+     * <p>入参兜底:
+     * <ul>
+     *   <li>{@code subjectId} null / 空 / 纯空格 → 抛 {@code ServiceException("subjectId 不能为空")}</li>
+     *   <li>{@code topN} null / ≤ 0 → 默认 50; &gt; 200 → clamp 200(防 FE 误传巨值打 DB)</li>
+     * </ul>
+     *
+     * <p>返结构: {@code [{tagId, tagName, coCount}, ...]}(按 coCount 倒序, 同 coCount 按 tagId 升序).
+     *
+     * @param subjectId biz_subject.id(任意 level 1-5, varchar 编码) — 必填, 按 ID 前缀匹配子树
+     * @param topN      返回上限(null / ≤ 0 → 50; &gt; 200 → 200)
+     * @return tag 候选列表
+     */
+    List<TagWithCoCountVo> queryTagsBySubject(String subjectId, Integer topN);
 
 }

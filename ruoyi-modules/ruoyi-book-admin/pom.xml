@@ -85,6 +85,12 @@
             <version>${revision}</version>
         </dependency>
 
+        <!-- 通用 AI / LLM 底座（PRD-B-006 骨架；PRD-B-007 在此模块填业务调用 + ocr 通过 admin-common 间接传递） -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-ai</artifactId>
+        </dependency>
+
     </dependencies>
 
 </project>
