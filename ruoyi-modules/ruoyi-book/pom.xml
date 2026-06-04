@@ -71,18 +71,6 @@
             <artifactId>ruoyi-system</artifactId>
         </dependency>
 
-        <!-- 通用 AI / LLM 底座（PRD-B-006 骨架；PRD-B-007 起业务方注入使用） -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-ai</artifactId>
-        </dependency>
-
-        <!-- 通用 OCR 底座（PRD-B-006 骨架；PRD-B-007 起业务方注入使用） -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-ocr</artifactId>
-        </dependency>
-
     </dependencies>
 
 </project>

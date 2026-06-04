@@ -111,12 +111,6 @@
             <artifactId>ruoyi-ai</artifactId>
         </dependency>
 
-        <!--  通用 OCR 底座（PRD-B-006 骨架；PRD-B-007 填 TextinOcrProvider 实现） -->
-        <dependency>
-            <groupId>org.dromara</groupId>
-            <artifactId>ruoyi-ocr</artifactId>
-        </dependency>
-
         <dependency>
             <groupId>de.codecentric</groupId>
             <artifactId>spring-boot-admin-starter-client</artifactId>

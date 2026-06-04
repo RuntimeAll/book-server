@@ -1,9 +1,9 @@
-package org.dromara.ocr.provider;
+package org.dromara.admincommon.ocr.provider;
 
-import org.dromara.ocr.provider.model.OcrCapability;
-import org.dromara.ocr.provider.model.OcrHealthStatus;
-import org.dromara.ocr.provider.model.OcrRequest;
-import org.dromara.ocr.provider.model.OcrResult;
+import org.dromara.admincommon.ocr.provider.model.OcrCapability;
+import org.dromara.admincommon.ocr.provider.model.OcrHealthStatus;
+import org.dromara.admincommon.ocr.provider.model.OcrRequest;
+import org.dromara.admincommon.ocr.provider.model.OcrResult;
 
 import java.util.Set;
 

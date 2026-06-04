@@ -1,4 +1,4 @@
-package org.dromara.ocr.provider.model;
+package org.dromara.admincommon.ocr.provider.model;
 
 /**
  * OCR provider 能力声明 — provider 实现类通过 {@link org.dromara.ocr.provider.IOcrProvider#capabilities()}

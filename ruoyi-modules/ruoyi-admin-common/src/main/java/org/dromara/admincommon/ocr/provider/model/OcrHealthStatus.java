@@ -1,4 +1,4 @@
-package org.dromara.ocr.provider.model;
+package org.dromara.admincommon.ocr.provider.model;
 
 /**
  * OCR provider 健康状态。

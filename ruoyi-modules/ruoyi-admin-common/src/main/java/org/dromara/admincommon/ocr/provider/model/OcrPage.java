@@ -1,4 +1,4 @@
-package org.dromara.ocr.provider.model;
+package org.dromara.admincommon.ocr.provider.model;
 
 import lombok.Data;
 

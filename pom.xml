@@ -378,13 +378,6 @@
                 <version>${revision}</version>
             </dependency>
 
-            <!--  通用 OCR 底座模块（PRD-B-006 骨架；PRD-B-007 填 TextinOcrProvider 实现）  -->
-            <dependency>
-                <groupId>org.dromara</groupId>
-                <artifactId>ruoyi-ocr</artifactId>
-                <version>${revision}</version>
-            </dependency>
-
         </dependencies>
     </dependencyManagement>
 

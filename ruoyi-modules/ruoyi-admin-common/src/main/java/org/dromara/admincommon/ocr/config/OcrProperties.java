@@ -1,4 +1,4 @@
-package org.dromara.ocr.config;
+package org.dromara.admincommon.ocr.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
