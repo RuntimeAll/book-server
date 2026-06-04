@@ -32,7 +32,7 @@ snail-job:
 api-decrypt:
   enabled: false
 
---- # captcha 验证码 dev 期临时关闭（V0.1 联调验收用，无人工交互的 curl 自验需要）
+--- # captcha 验证码 —— 🔴 本地 dev 关闭（联调免人工填码）。线上 prod 默认开启（见 application-prod.yml 显式声明）。部署务必确认 prod=true。
 captcha:
   enable: false
 
@@ -276,3 +276,24 @@ justauth:
       client-id: 10**********6
       client-secret: 1f7d08**********5b7**********29e
       redirect-uri: ${justauth.address}/social-callback?source=gitea
+
+--- # AI 模块占位 (PRD-B-006 骨架; PRD-B-007 填 provider 实现)
+ai:
+  enabled: false
+  default-alias:
+  fail-over:
+    enabled: false
+    max-attempts: 3
+  aliases: {}
+  providers: {}
+
+--- # OCR 模块占位 (PRD-B-006 骨架; PRD-B-007 填 TextinOcrProvider 实现)
+ocr:
+  default-provider:
+  textin:
+    endpoint:
+    app-id:
+    secret-code:
+    formula-level: 1
+    get-image: objects
+    timeout: 120s

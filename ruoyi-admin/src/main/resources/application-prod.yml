@@ -1,6 +1,10 @@
 --- # 临时文件存储位置 避免临时文件被系统清理报错
 spring.servlet.multipart.location: /ruoyi/server/temp
 
+--- # captcha 验证码 —— 🔴 线上默认开启（安全需求 / PRD-A-005）。与 application-dev.yml 的 false 对称：本地关、线上开。
+captcha:
+  enable: true
+
 --- # 监控中心配置
 spring.boot.admin.client:
   # 增加客户端开关
@@ -271,3 +275,24 @@ justauth:
       client-id: 10**********6
       client-secret: 1f7d08**********5b7**********29e
       redirect-uri: ${justauth.address}/social-callback?source=gitea
+
+--- # AI 模块占位 (PRD-B-006 骨架; PRD-B-007 填 provider 实现 + 真实凭据)
+ai:
+  enabled: false
+  default-alias:
+  fail-over:
+    enabled: false
+    max-attempts: 3
+  aliases: {}
+  providers: {}
+
+--- # OCR 模块占位 (PRD-B-006 骨架; PRD-B-007 填 TextinOcrProvider 实现 + 真实凭据)
+ocr:
+  default-provider:
+  textin:
+    endpoint:
+    app-id:
+    secret-code:
+    formula-level: 1
+    get-image: objects
+    timeout: 120s

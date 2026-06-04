@@ -1,15 +1,29 @@
 package org.dromara.book.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.entity.BizQuestionFavorite;
 import org.dromara.book.domain.vo.FavoriteToggleVo;
+import org.dromara.book.domain.vo.FreeTagVo;
+import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.mapper.BizQuestionFavoriteMapper;
+import org.dromara.book.mapper.BizQuestionFreeTagMapper;
+import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.service.IFavoriteService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 题目收藏 Service 实现。
@@ -31,6 +45,12 @@ import java.util.Date;
 public class FavoriteServiceImpl implements IFavoriteService {
 
     private final BizQuestionFavoriteMapper bizQuestionFavoriteMapper;
+    private final BizQuestionMapper bizQuestionMapper;
+    private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
+
+    /** misikt 默认每页 10，pageNum 兜底 1（与题库 page 对齐） */
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int DEFAULT_PAGE_NUM = 1;
 
     @Override
     public boolean isFavorite(Long userId, Long questionId) {
@@ -83,5 +103,59 @@ public class FavoriteServiceImpl implements IFavoriteService {
                 .eq(BizQuestionFavorite::getUserId, userId)
                 .eq(BizQuestionFavorite::getQuestionId, questionId)
         );
+    }
+
+    /**
+     * PRD-A-005 T5 — 分页查当前用户收藏题。
+     *
+     * <p>复用题库现成的 {@link QuestionItemVo} + {@link MisiktPageVo}（FE 直接复用 QuestionCard）。
+     * mapper INNER JOIN biz_question_favorite 限当前 userId（防越权），folderId 非空再过滤。
+     * is_favorite 恒 1（已是收藏列表）；freeTags 二次批量回填，与题库 page 同款（免 N+1）。
+     */
+    @Override
+    public MisiktPageVo<QuestionItemVo> page(Long userId, Integer pageNum, Integer pageSize, Long folderId) {
+        if (userId == null) {
+            // 防越权兜底：理论上 @SaCheckLogin 已拦，此处返空页不抛错
+            return MisiktPageVo.of(new Page<>(DEFAULT_PAGE_NUM, DEFAULT_PAGE_SIZE));
+        }
+        int pn = (pageNum == null || pageNum <= 0) ? DEFAULT_PAGE_NUM : pageNum;
+        int ps = (pageSize == null || pageSize <= 0) ? DEFAULT_PAGE_SIZE : pageSize;
+
+        Page<QuestionItemVo> mpPage = new Page<>(pn, ps);
+        IPage<QuestionItemVo> result = bizQuestionMapper.selectFavoritePage(mpPage, userId, folderId);
+
+        // 回填 freeTags（X 卡段② 结构化标签，FE 卡片渲染用；knowledges 收藏卡片非必须不回填）
+        List<QuestionItemVo> records = result.getRecords();
+        if (records != null && !records.isEmpty()) {
+            List<Long> ids = records.stream().map(QuestionItemVo::getId).collect(Collectors.toList());
+            Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
+            for (QuestionItemVo vo : records) {
+                vo.setFreeTags(ftMap.getOrDefault(vo.getId(), Collections.emptyList()));
+            }
+        }
+        return MisiktPageVo.of(result);
+    }
+
+    /**
+     * 批量按 question_id 拉 freeTags 并按 questionId 分组（与 QuestionServiceImpl 同款，X 卡段②）。
+     */
+    private Map<Long, List<FreeTagVo>> loadFreeTagsByQuestionIds(Collection<Long> questionIds) {
+        if (questionIds == null || questionIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<BizQuestionFreeTagMapper.FreeTagWithQid> all =
+            bizQuestionFreeTagMapper.selectGroupedByQuestionIds(questionIds);
+        if (all == null || all.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, List<FreeTagVo>> grouped = new HashMap<>();
+        for (BizQuestionFreeTagMapper.FreeTagWithQid row : all) {
+            FreeTagVo pure = new FreeTagVo();
+            pure.setId(row.getId());
+            pure.setName(row.getName());
+            pure.setPosition(row.getPosition());
+            grouped.computeIfAbsent(row.getQuestionId(), k -> new ArrayList<>()).add(pure);
+        }
+        return grouped;
     }
 }

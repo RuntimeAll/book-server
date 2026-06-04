@@ -18,6 +18,7 @@
         <module>ruoyi-book</module>
         <module>ruoyi-admin-common</module>
         <module>ruoyi-book-admin</module>
+        <module>ruoyi-ai</module>
     </modules>
 
     <artifactId>ruoyi-modules</artifactId>

@@ -371,6 +371,13 @@
                 <version>${revision}</version>
             </dependency>
 
+            <!--  通用 AI / LLM 底座模块（PRD-B-006 骨架；PRD-B-007 填 provider 实现）  -->
+            <dependency>
+                <groupId>org.dromara</groupId>
+                <artifactId>ruoyi-ai</artifactId>
+                <version>${revision}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 

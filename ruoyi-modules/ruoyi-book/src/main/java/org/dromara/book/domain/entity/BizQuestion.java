@@ -59,9 +59,18 @@ public class BizQuestion implements Serializable {
     private String shortTitle;
 
     /**
-     * 题干文本（LaTeX 源 / 纯文本）
+     * 题干文本（LaTeX 源 / 纯文本）— PRD-B-006 后保留双写过渡，不 DROP；
+     * 长文本"外置"事实来源走 {@link #stemTextContentId} -> biz_text_content.content。
      */
     private String stemText;
+
+    /**
+     * 题干文本外置 FK -> biz_text_content.id（PRD-B-006 收尾增量新增）。
+     *
+     * <p>非空时优先以 biz_text_content.content 为事实来源；为 null 时降级走 {@link #stemText}（兼容旧数据）。
+     * V9 ETL 已把 29233 行旧 stem_text 迁出并回填本 FK。
+     */
+    private Long stemTextContentId;
 
     /**
      * 题干图 URL（DB 列 stem_img_url，VO 输出 stemImg 去 _url 后缀）
@@ -104,6 +113,14 @@ public class BizQuestion implements Serializable {
     private String correctAnswer;
 
     /**
+     * 答案文本外置 FK -> biz_text_content.id（PRD-B-006 收尾增量新增）。
+     *
+     * <p>大块答案文本（解题步骤 / 长答案）落 biz_text_content content_type='A'，
+     * {@link #correctAnswer} 保留短文本（A/B/C/D / 短填空）。
+     */
+    private Long answerTextContentId;
+
+    /**
      * 评分标准 JSON（主观题）
      */
     private String scoreStdJson;
@@ -124,7 +141,8 @@ public class BizQuestion implements Serializable {
     private String examPaperName;
 
     /**
-     * 解析文本内容 ID（保留字段不用）
+     * 解析文本外置 FK -> biz_text_content.id（misikt 抓包遗留字段，
+     * PRD-B-006 后正式启用 — content_type='E' 解析）。
      */
     private Long analyzeTextContentId;
 

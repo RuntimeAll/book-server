@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  PRD-B-006 收尾·修正方案 — 按学科节点(任意 level) ID 前缀实时聚合 top N 共现标签.
+  替代 V8/V9 预聚合方案(已 V10 DROP biz_tag_knowledge), 三表实时 JOIN,
+  实测 dev 库 ≤ 10ms, 性能等价预聚合还多出"任意 level 子树聚合"能力.
+-->
+<mapper namespace="org.dromara.bookadmin.mapper.AdminTagSubjectMapper">
+
+    <!--
+      实时三表 JOIN 聚合:
+        biz_question_free_tag qft         (题↔标签关联)
+        JOIN biz_question_knowledge qk    (题↔知识点关联)
+        JOIN biz_free_tag ft              (取 tag 文本名)
+
+      WHERE qk.knowledge_id LIKE CONCAT(subjectId, '%') — 任意 level 1-5 ID 前缀子树聚合.
+      索引: biz_question_knowledge 主键 (question_id, knowledge_id) + 各表 PK, left-anchored
+            LIKE 命中 B-tree range, 无 filesort.
+
+      字段 alias COUNT(DISTINCT ...) AS coCount 保持驼峰(resultType 走 VO 自动映射).
+      同 coCount 用 tag_id ASC 兜底稳定排序, 防分页或重复请求 order 抖动.
+
+      注: 上方注释里原本 SQL 风格的"行内注释" (双连字符前缀) 违反 XML 规范
+          (双连字符序列不允许出现在 XML 注释段内), 导致 SAXParser 报错, BE 启动
+          sqlSessionFactory bean 创建失败. 改成括号说明文本绕开.
+          沉淀到 backend-dev skill BE 启动失败 4 类根因.
+    -->
+    <select id="selectTopBySubject"
+            resultType="org.dromara.bookadmin.domain.vo.TagWithCoCountVo">
+        SELECT
+            qft.tag_id  AS tagId,
+            ft.name     AS tagName,
+            COUNT(DISTINCT qft.question_id) AS coCount
+        FROM biz_question_free_tag qft
+        JOIN biz_question_knowledge qk ON qk.question_id = qft.question_id
+        JOIN biz_free_tag ft ON ft.id = qft.tag_id
+        WHERE qk.knowledge_id LIKE CONCAT(#{subjectId}, '%')
+        GROUP BY qft.tag_id, ft.name
+        ORDER BY coCount DESC, qft.tag_id ASC
+        LIMIT #{topN}
+    </select>
+
+</mapper>

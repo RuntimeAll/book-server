@@ -3,9 +3,11 @@ package org.dromara.book.service;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.bo.UpdateExamPaperBo;
 import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PaperCategoryNodeVo;
+import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.domain.vo.PaperListItemVo;
 
 import java.util.List;
@@ -76,4 +78,39 @@ public interface IPaperLibraryService {
      * @return 新建试卷 ID + 题目数
      */
     CreateExamPaperVo createExamPaperForTeacher(CreateExamPaperBo bo, Long teacherId);
+
+    /**
+     * PRD-A-005 T3 — 编辑试卷（POST /teacher/exam/paper/update）。
+     *
+     * <p>业务流（@Transactional 整体回滚）：
+     * <ol>
+     *   <li>校验 paperId 存在（不存在抛 ServiceException）</li>
+     *   <li>删该 paperId 旧 biz_paper_question 全部行</li>
+     *   <li>按 bo.questions 批量重插（section_id / question_id / sort / score）</li>
+     *   <li>重算并更新 biz_paper.question_count（题数）+ score（各题 score 之和）；
+     *       name / paperCategoryId 如传则一并更新</li>
+     * </ol>
+     *
+     * <p>questions = 该卷编辑后的最终完整题集（按 sort 升序）。
+     *
+     * @param bo 编辑入参（paperId + name? + paperCategoryId? + questions[]）
+     * @return 更新后的试卷详情 {@link PaperDetailVo}（复用 detail 查询）
+     */
+    PaperDetailVo updateExamPaper(UpdateExamPaperBo bo);
+
+    /**
+     * PRD-A-005 收尾（A-试卷删除）— 删除试卷（POST /teacher/exam/paper/delete）。
+     *
+     * <p>业务流（@Transactional 整体回滚 + TenantHelper.ignore(DataPermissionHelper.ignore(...))
+     * 包裹，三表无 tenant_id 列规避多租户拦截器注入报错）：
+     * <ol>
+     *   <li>owner 校验：查该 paper 的 create_by，≠ 当前登录 userId 抛 ServiceException（公共卷/他人卷一律拒绝）</li>
+     *   <li>级联物理删 biz_paper_question（该卷全部）</li>
+     *   <li>级联物理删 biz_paper_section（该卷全部）</li>
+     *   <li>物理删 biz_paper 本体</li>
+     * </ol>
+     *
+     * @param paperId 试卷 ID
+     */
+    void deleteExamPaper(Long paperId);
 }

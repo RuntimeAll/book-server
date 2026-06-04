@@ -41,6 +41,22 @@ public interface BizQuestionMapper extends BaseMapperPlus<BizQuestion, BizQuesti
                                              @Param("currentUserId") Long currentUserId);
 
     /**
+     * PRD-A-005 T5 — 收藏分页查询（GET /teacher/qd/favorite/page）。
+     *
+     * <p>INNER JOIN biz_question_favorite 只出 {@code currentUserId} 已收藏题（防越权）；
+     * folderId 非空再按收藏夹过滤。复用 {@link QuestionItemVo}（与题库 page 同一 VO，方便 FE 复用 QuestionCard）。
+     * is_favorite 恒 1。knowledges / freeTags 由 Service 二次填充（与 page 同款）。
+     *
+     * @param page          MyBatis-Plus 分页对象
+     * @param currentUserId 当前登录用户 ID（Service 注入；@SaCheckLogin 兜底，不容 null）
+     * @param folderId      收藏夹 ID（可空，null 时不按夹过滤）
+     * @return 分页 VO（QuestionItemVo，is_favorite 恒 1）
+     */
+    IPage<QuestionItemVo> selectFavoritePage(IPage<QuestionItemVo> page,
+                                             @Param("currentUserId") Long currentUserId,
+                                             @Param("folderId") Long folderId);
+
+    /**
      * 单题详情查询（不含 questionKnowledges / questionStdKnowledges，由 Service 二次填充）。
      *
      * @param id 题目 ID

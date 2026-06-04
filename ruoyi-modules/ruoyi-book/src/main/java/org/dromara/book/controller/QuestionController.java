@@ -1,8 +1,10 @@
 package org.dromara.book.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
@@ -74,6 +76,21 @@ public class QuestionController {
     public R<ExamDataVo> genExamData() {
         Long userId = LoginHelper.getUserId();
         return R.ok(questionService.genExamData(userId));
+    }
+
+    /**
+     * POST /teacher/question/replace — PRD-A-007 T1 换一题。
+     *
+     * <p>入参：{@code {"currentQuestionId":Long, "excludeIds":Long[]}}（excludeIds = 本卷已有全部题 id）。
+     * 响应（envelope 拆后）：一道 {@link QuestionDetailVo}（与 listByIds 单元素同构）或 null。
+     * FE 收到 null 时提示"暂无可替换的同类题"，不报错。
+     *
+     * <p>挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包 envelope。
+     */
+    @SaCheckLogin
+    @PostMapping("/replace")
+    public R<QuestionDetailVo> replace(@RequestBody @Valid ReplaceQuestionBo bo) {
+        return R.ok(questionService.replaceQuestion(bo));
     }
 
     /**

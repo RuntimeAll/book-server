@@ -272,3 +272,29 @@ warm-flow:
   node-tooltip: true
   # 默认Authorization，如果有多个token，用逗号分隔
   token-name: ${sa-token.token-name},clientid
+
+--- # AI 模块占位 (PRD-B-006 骨架; PRD-B-007 填 provider 实现)
+ai:
+  # 总开关 — B-006 期 false 空跑; B-007 填实现后改 true
+  enabled: false
+  # 默认模型别名 — B-006 期空; B-007 填 CLAUDE_FAST 等
+  default-alias:
+  fail-over:
+    enabled: false
+    max-attempts: 3
+  # 别名映射 — key=别名(如 CLAUDE_FAST), value=providerName#modelName
+  aliases: {}
+  # provider 列表 — key=provider name(如 lk888), value=配置
+  providers: {}
+
+--- # OCR 模块占位 (PRD-B-006 骨架; PRD-B-007 填 TextinOcrProvider 实现)
+ocr:
+  # 默认 provider — B-006 期空; B-007 填 textin
+  default-provider:
+  textin:
+    endpoint:
+    app-id:
+    secret-code:
+    formula-level: 1
+    get-image: objects
+    timeout: 120s

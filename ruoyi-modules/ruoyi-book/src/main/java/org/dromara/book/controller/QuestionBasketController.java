@@ -43,6 +43,12 @@ public class QuestionBasketController {
      * POST /teacher/question/addBasket/{id} — 加筐。
      *
      * <p>INSERT IGNORE — 复合主键 (user_id, question_id) 防重；重复加不报错。
+     *
+     * <p>🔴 鉴权 = 仅 {@code @SaCheckLogin}（登录即可）。加入试题栏是教师组卷的核心高频动作，
+     * 不作权限受限点 —— 早前（PRD-A-005 T2）误把本端点当"页面级权限示范受限点"叠加
+     * {@code @SaCheckRole("teacher")}，导致 superadmin 等未绑 teacher 角色的登录用户点
+     * "全部加入试题栏"被 403 拦死（FE 全局拦截器报"系统内部错误"）。权限机制示范改由
+     * 前端路由守卫 /admin/console（meta.roles=superadmin）承担，不再用核心业务端点硬造受限点。
      */
     @SaCheckLogin
     @PostMapping("/addBasket/{id}")

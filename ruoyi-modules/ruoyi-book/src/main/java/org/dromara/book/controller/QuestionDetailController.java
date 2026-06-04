@@ -2,10 +2,15 @@ package org.dromara.book.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
+import org.dromara.book.domain.bo.QuestionFolderBo;
+import org.dromara.book.domain.vo.QuestionFolderVo;
 import org.dromara.book.domain.vo.QuestionPaperVo;
 import org.dromara.book.service.IQuestionDetailService;
+import org.dromara.book.service.IQuestionFolderService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Collections;
@@ -38,6 +43,7 @@ import java.util.Map;
 public class QuestionDetailController {
 
     private final IQuestionDetailService questionDetailService;
+    private final IQuestionFolderService questionFolderService;
 
     /**
      * GET /teacher/qd/papers/{id} — 该题出现在哪些卷（B-6 真实查询）。
@@ -74,22 +80,59 @@ public class QuestionDetailController {
     }
 
     /**
-     * GET /teacher/center/q-folder/tree — 收藏夹分类树 mock 单条"我的试题"（B-8）。
+     * GET /teacher/center/q-folder/tree — 收藏夹列表（PRD-A-005 收尾 B-收藏夹 CRUD 实装）。
      *
-     * <p>本卡接受 mock 单条；后续收藏夹 CRUD 实装时改走 service 查 biz_question_folder。
+     * <p>查 biz_question_folder（user_id=登录用户，按 sort/create_time 排序），每夹带 count
+     * （关联 biz_question_favorite 该 folder_id 的收藏数）；首位恒带默认夹 {id:0,name:"我的试题"}。
      *
-     * @return {@code [{id, name, pid, count, children:[]}]} — 单条 mock
+     * @return {@link QuestionFolderVo} 列表（id/name/pid/count/sort/createTime/children）
      */
     @SaCheckLogin
     @GetMapping("/teacher/center/q-folder/tree")
-    public List<Map<String, Object>> folderTree() {
-        Map<String, Object> root = new LinkedHashMap<>(5);
-        root.put("id", 0L);
-        root.put("name", "我的试题");
-        root.put("pid", 0L);
-        root.put("count", 0);
-        root.put("children", Collections.emptyList());
-        return Collections.singletonList(root);
+    public List<QuestionFolderVo> folderTree() {
+        return questionFolderService.folderTree();
+    }
+
+    /**
+     * POST /teacher/center/q-folder/create — 新建收藏夹（限当前用户）。
+     *
+     * <p>请求 body：{@code {"name":"夹名", "pid":0}}（pid 可选，缺省 0）。
+     * user_id 一律取登录态，绝不信任前端。
+     *
+     * @return 新建夹 id
+     */
+    @SaCheckLogin
+    @PostMapping("/teacher/center/q-folder/create")
+    public Long createFolder(@RequestBody QuestionFolderBo bo) {
+        return questionFolderService.createFolder(bo);
+    }
+
+    /**
+     * POST /teacher/center/q-folder/rename — 改名（仅名称可改，限本人夹）。
+     *
+     * <p>请求 body：{@code {"id":123, "name":"新夹名"}}。先校验 user_id=登录用户防越权。
+     *
+     * @return null（advice 包 envelope code:1）
+     */
+    @SaCheckLogin
+    @PostMapping("/teacher/center/q-folder/rename")
+    public Object renameFolder(@RequestBody QuestionFolderBo bo) {
+        questionFolderService.renameFolder(bo);
+        return null;
+    }
+
+    /**
+     * POST /teacher/center/q-folder/delete — 删除收藏夹（限本人夹）。
+     *
+     * <p>请求 body：{@code {"id":123}}。该夹下收藏题 folder_id 重置为 0（归默认夹，不丢收藏）。
+     *
+     * @return null（advice 包 envelope code:1）
+     */
+    @SaCheckLogin
+    @PostMapping("/teacher/center/q-folder/delete")
+    public Object deleteFolder(@RequestBody QuestionFolderBo bo) {
+        questionFolderService.deleteFolder(bo);
+        return null;
     }
 
     /**

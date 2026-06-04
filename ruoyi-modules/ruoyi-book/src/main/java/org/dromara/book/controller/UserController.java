@@ -8,8 +8,14 @@ import org.dromara.book.domain.bo.RegisterTeacherBo;
 import org.dromara.book.domain.bo.UpdateProfileBo;
 import org.dromara.book.domain.vo.CurrentUserVo;
 import org.dromara.book.service.IUserService;
+import org.dromara.common.core.constant.GlobalConstants;
 import org.dromara.common.core.domain.R;
+import org.dromara.common.core.exception.user.CaptchaException;
+import org.dromara.common.core.exception.user.CaptchaExpireException;
+import org.dromara.common.core.utils.StringUtils;
+import org.dromara.common.redis.utils.RedisUtils;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.dromara.common.web.config.properties.CaptchaProperties;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,6 +38,7 @@ import java.util.Map;
 public class UserController {
 
     private final IUserService userService;
+    private final CaptchaProperties captchaProperties;
 
     /**
      * POST /teacher/user/current — 拉当前登录教师信息。
@@ -69,11 +76,16 @@ public class UserController {
      *
      * <p>用 {@code @SaIgnore} 让 Sa-Token 全局拦截器跳过本方法（注册时未登录是常态）。
      *
-     * <p>入参：userName(4-20) / password(6-20) / nickName?(≤30)
+     * <p>入参：userName(4-20) / password(6-20) / nickName?(≤30) / code? / uuid?
      * <p>出参：{"userId": <Long>}
+     *
+     * <p>验证码（PRD-A-005 T1）：开关 {@code captcha.enable=true} 时先校验 code+uuid
+     * （复用若依 Redis 链路：key {@code captcha_codes:{uuid}} 取出比对），开关关时跳过。
      *
      * <p>错误：
      * <ul>
+     *   <li>验证码过期/缺失 → 400 "验证码已失效"（CaptchaExpireException）</li>
+     *   <li>验证码错误 → 400 "验证码错误"（CaptchaException）</li>
      *   <li>用户名已被占 → 400 业务异常 "用户名 X 已被注册"</li>
      *   <li>校验失败 → 400 含字段提示（@Valid 抛 MethodArgumentNotValidException）</li>
      *   <li>teacher 角色未配置 → 500 "教师角色未配置..."</li>
@@ -82,10 +94,33 @@ public class UserController {
     @SaIgnore
     @PostMapping("/register")
     public R<Map<String, Object>> register(@Valid @RequestBody RegisterTeacherBo bo) {
+        // 验证码开关（配置文件 captcha.enable，非 DB）；开则校验，关则跳过
+        if (Boolean.TRUE.equals(captchaProperties.getEnable())) {
+            validateCaptcha(bo.getCode(), bo.getUuid());
+        }
         Long userId = userService.register(bo);
         Map<String, Object> resp = new HashMap<>(2);
         resp.put("userId", userId);
         resp.put("userName", bo.getUserName());
         return R.ok("注册成功", resp);
+    }
+
+    /**
+     * 图形验证码校验 —— 复用若依 {@code SysRegisterService.validateCaptcha} 同款逻辑：
+     * Redis key {@code GlobalConstants.CAPTCHA_CODE_KEY + uuid} 取出比对（取后即删，一次性）。
+     *
+     * <p>注册场景不写 LogininforEvent（登录日志对注册无意义），其余与若依一致：
+     * 取空（含未传/已过期）→ {@link CaptchaExpireException}；不匹配 → {@link CaptchaException}。
+     */
+    private void validateCaptcha(String code, String uuid) {
+        String verifyKey = GlobalConstants.CAPTCHA_CODE_KEY + StringUtils.blankToDefault(uuid, "");
+        String captcha = RedisUtils.getCacheObject(verifyKey);
+        RedisUtils.deleteObject(verifyKey);
+        if (captcha == null) {
+            throw new CaptchaExpireException();
+        }
+        if (!StringUtils.equalsIgnoreCase(code, captcha)) {
+            throw new CaptchaException();
+        }
     }
 }

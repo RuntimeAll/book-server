@@ -151,6 +151,7 @@
         <result property="questionCount" column="question_count"/>
         <result property="examYear" column="exam_year"/>
         <result property="paperType" column="paper_type"/>
+        <result property="createBy" column="create_by"/>
     </resultMap>
 
     <!-- 试卷大题分组 ResultMap（PaperSectionVo） -->
@@ -203,6 +204,16 @@
     <!--
       E 卡段② 第 1 步 — 试卷详情卷头查询。
       过滤 status='1'，不存在 / 草稿 / 软删 → null。
+
+      🔴 2026-06-03 修：detail（只读查看 / 组卷工作台拉题）去掉所有权越权块。
+      此前（PRD-A-005 收尾）给 detail 叠了 `create_by=#{currentUserId} OR subject_id LIKE 3001/3003/3004`
+      越权判定，结果误伤两类正常场景：
+        ① 组卷工作台对试卷篮内每张卷调本接口拉题，篮里 subject_id=5000*/null（非公共树前缀）
+           且非本人的卷被判 null → "N 张卷加载失败，已跳过"、试卷篮清不掉（用户实测 588 张 5000* 卷受影响）；
+        ② 查看他人 / 其他学科公共卷内容（只读）被无谓拦截。
+      正确边界：查看试卷内容是只读动作（misikt 行为 = 任何登录老师都能查看任意卷去组卷），
+      所有权锁死只在写接口（updateExamPaper / deleteExamPaper 已做 create_by owner 校验）。
+      故 detail 仅留 status='1'，不做归属过滤。currentUserId 参数保留（mapper 签名不变，SQL 不再引用，无副作用）。
     -->
     <!--
       ⚠️ 多 @Param 方法（paperId:Long + currentUserId:String）禁声明 parameterType。
@@ -220,12 +231,12 @@
             p.suggest_time  AS suggest_time,
             p.question_count AS question_count,
             p.exam_year     AS exam_year,
-            p.paper_type    AS paper_type
+            p.paper_type    AS paper_type,
+            p.create_by     AS create_by
         FROM biz_paper p
         WHERE p.id = #{paperId}
           AND p.status = '1'
-          AND ( p.create_by = #{currentUserId} OR p.is_share = 1 )
-    </select>
+</select>
 
     <!--
       E 卡段② 第 2 步 — 试卷大题分组查询。

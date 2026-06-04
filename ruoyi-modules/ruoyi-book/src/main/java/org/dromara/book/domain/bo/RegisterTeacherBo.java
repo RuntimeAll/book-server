@@ -36,4 +36,15 @@ public class RegisterTeacherBo implements Serializable {
     /** 真名 / 昵称（可选 — 不传时默认用 userName） */
     @Size(max = 30, message = "真名不超过 30 字符")
     private String nickName;
+
+    /**
+     * 图形验证码（PRD-A-005 T1）。
+     *
+     * <p>开关 {@code captcha.enable=true} 时必填，由后端复用若依 captcha 链路校验
+     * （Redis key {@code captcha_codes:{uuid}} 取出比对）；开关关时本字段忽略。
+     */
+    private String code;
+
+    /** 验证码唯一标识（对应 {@code GET /auth/code} 返回的 uuid），开关开时必填。 */
+    private String uuid;
 }

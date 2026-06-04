@@ -3,6 +3,8 @@ package org.dromara.book.controller;
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.vo.FavoriteToggleVo;
+import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.service.IFavoriteService;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -11,6 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -38,6 +41,29 @@ import java.util.Map;
 public class FavoriteController {
 
     private final IFavoriteService favoriteService;
+
+    /**
+     * GET /teacher/qd/favorite/page — 分页查当前用户收藏题（PRD-A-005 T5）。
+     *
+     * <p>入参 query string {@code pageNum / pageSize / folderId?}；userId 走 {@code LoginHelper.getUserId()}
+     * 不从外部传（防越权）。出参复用题库题 VO {@link QuestionItemVo} + 分页包装 {@link MisiktPageVo}，
+     * 方便 FE 复用 QuestionCard 渲染。命中 {@link MisiktEnvelopeAdvice} 自动包 envelope。
+     *
+     * <p>⚠️ {@code /page} 是静态路径，Spring 优先匹配于 {@code /{id}}（路径变量），不会冲突。
+     *
+     * @param pageNum  页码（默认 1）
+     * @param pageSize 每页条数（默认 10）
+     * @param folderId 收藏夹 id（可空，不传则不按夹过滤）
+     * @return misikt 风格分页 VO（收藏题列表）
+     */
+    @SaCheckLogin
+    @GetMapping("/page")
+    public MisiktPageVo<QuestionItemVo> page(@RequestParam(value = "pageNum", required = false) Integer pageNum,
+                                             @RequestParam(value = "pageSize", required = false) Integer pageSize,
+                                             @RequestParam(value = "folderId", required = false) Long folderId) {
+        Long userId = LoginHelper.getUserId();
+        return favoriteService.page(userId, pageNum, pageSize, folderId);
+    }
 
     /**
      * GET /teacher/qd/favorite/{id} — 当前用户对该题是否已收藏。

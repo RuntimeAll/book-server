@@ -1,5 +1,6 @@
 package org.dromara.book.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -7,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.bo.UpdateExamPaperBo;
 import org.dromara.book.domain.entity.BizPaper;
 import org.dromara.book.domain.entity.BizPaperCategory;
 import org.dromara.book.domain.entity.BizPaperQuestion;
@@ -14,14 +16,18 @@ import org.dromara.book.domain.entity.BizPaperSection;
 import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PaperCategoryNodeVo;
+import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.domain.vo.PaperListItemVo;
 import org.dromara.book.mapper.BizPaperCategoryMapper;
 import org.dromara.book.mapper.BizPaperMapper;
 import org.dromara.book.mapper.BizPaperQuestionMapper;
 import org.dromara.book.mapper.BizPaperSectionMapper;
+import org.dromara.book.service.IPaperDetailService;
 import org.dromara.book.service.IPaperLibraryService;
 import org.dromara.common.core.exception.ServiceException;
+import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,6 +61,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
     private final BizPaperMapper bizPaperMapper;
     private final BizPaperSectionMapper bizPaperSectionMapper;
     private final BizPaperQuestionMapper bizPaperQuestionMapper;
+    private final IPaperDetailService paperDetailService;
 
     /** Q 卡默认 section title — FE 不展示，仅满足 biz_paper_question.section_id NOT NULL 约束 */
     private static final String DEFAULT_SECTION_TITLE = "题目";
@@ -188,15 +195,15 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         QueryWrapper<PaperListItemVo> wrapper = new QueryWrapper<>();
         wrapper.eq("p.status", "1");
 
-        // scope 分流：'mine' → 只看自己的；其余（含 'public' / 缺省 / 非法）→ 公共卷
-        // 安全默认：缺省 / 非法 scope 走 public，绝不返回他人私卷
+        // scope 分流：'mine' → 只看自己创建的；其余（'public' / 缺省）→ 公共卷库，按分类树归属过滤
+        // 🔴 2026-06-02 修：原 public 分支叠加 is_share=1 是错的 —— 622 份卷挂公共试卷(3001)分类下、
+        // 但 is_share 全 0（导入数据沿用 misikt 原始 create_by，非本系统老师），叠加 is_share=1 → 全被错杀，公共卷库全空。
+        // misikt 公共卷库语义 = 按 paper_category 分类树（subject_id 前缀，见下方），不是 is_share 开关。
         if ("mine".equals(bo.getScope())) {
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
             wrapper.eq("p.create_by", currentUserIdStr);
-        } else {
-            // 公共卷（scope=public 或缺省）：只看 is_share=1，不加 create_by 条件
-            wrapper.eq("p.is_share", 1);
         }
+        // else 公共卷库：不加 is_share / create_by 归属过滤，靠下方 subject_id 分类前缀筛
 
         if (bo.getName() != null && !bo.getName().isEmpty()) {
             wrapper.like("p.name", bo.getName());
@@ -289,5 +296,156 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         bizPaperQuestionMapper.insertBatch(pqList);
 
         return new CreateExamPaperVo(newPaperId, qCount);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public PaperDetailVo updateExamPaper(UpdateExamPaperBo bo) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录用户不能编辑试卷");
+        }
+        if (bo.getPaperId() == null) {
+            throw new ServiceException("试卷ID不能为空");
+        }
+        if (bo.getQuestions() == null || bo.getQuestions().isEmpty()) {
+            throw new ServiceException("题目列表不能为空");
+        }
+
+        Long paperId = bo.getPaperId();
+
+        // biz_paper / biz_paper_question 走手动 wrapper 隔离、无 @DataPermission 注解，
+        // 注解式数据权限拦截器不会注入 AND create_by=登录id；此处 ignore 包裹作防御（无注解时为 no-op），
+        // 规避 PRD-A-002 沉淀的「数据权限拦截致写 0 行静默假成功」坑。
+        //
+        // 🔴 再叠一层 TenantHelper.ignore（PRD-A-005 G4 修复）：BaseMapper 继承方法
+        // selectById / updateById 的 mappedStatementId namespace 落在 BaseMapper（非
+        // BizPaperMapper），故 BizPaperMapper 类级 @InterceptorIgnore(tenantLine) 命中不到
+        // 这两个继承方法 → 多租户拦截器仍对 biz_paper 注入 AND tenant_id=? → 该表无此列报
+        // SQLSyntaxErrorException 致整事务回滚。TenantHelper.ignore 走线程级 ThreadLocal
+        // IgnoreStrategy，在 SQL 执行时刻判断、对继承方法同样生效，补上类级注解盲区。
+        // 与 DataPermissionHelper.ignore 写 IgnoreStrategy 不同字段、可叠加、互不覆盖。
+        // 覆盖事务全链路：selectById 校验存在 + delete + insertBatch + updateById 重算。
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 1. 校验 paperId 存在
+            BizPaper existing = bizPaperMapper.selectById(paperId);
+            if (existing == null) {
+                throw new ServiceException("试卷不存在: " + paperId);
+            }
+
+            // 1.1 owner 校验（PRD-A-005 收尾 C-权限锁死）：只能编辑本人创建的卷，公共卷/他人卷一律拒绝。
+            //     绝不信任前端，归属一律以 create_by vs LoginHelper.getUserId() 为准。
+            if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
+                throw new ServiceException("无权编辑非本人创建的试卷");
+            }
+
+            Date now = new Date();
+            String userIdStr = String.valueOf(currentUserId);
+
+            // 2. 删该 paperId 旧 biz_paper_question 全部行
+            LambdaQueryWrapper<BizPaperQuestion> delWrapper = new LambdaQueryWrapper<>();
+            delWrapper.eq(BizPaperQuestion::getPaperId, paperId);
+            bizPaperQuestionMapper.delete(delWrapper);
+
+            // 3. 按 questions 批量重插（section_id / question_id / sort / score）
+            List<UpdateExamPaperBo.UpdateExamPaperQuestionBo> items = bo.getQuestions();
+            BigDecimal totalScore = BigDecimal.ZERO;
+            List<BizPaperQuestion> pqList = new ArrayList<>(items.size());
+            for (UpdateExamPaperBo.UpdateExamPaperQuestionBo item : items) {
+                BizPaperQuestion pq = new BizPaperQuestion();
+                pq.setPaperId(paperId);
+                pq.setSectionId(item.getSectionId());
+                pq.setQuestionId(item.getQuestionId());
+                pq.setSort(item.getSort());
+                BigDecimal score = item.getScore() == null ? BigDecimal.ZERO : item.getScore();
+                pq.setScore(score);
+                totalScore = totalScore.add(score);
+                pqList.add(pq);
+            }
+            bizPaperQuestionMapper.insertBatch(pqList);
+
+            // 4. 重算并更新 biz_paper 的 question_count + 总 score（+ name / paperCategoryId / suggestTime 如传）
+            BizPaper update = new BizPaper();
+            update.setId(paperId);
+            update.setQuestionCount(items.size());
+            update.setScore(totalScore);
+            if (bo.getName() != null) {
+                update.setName(bo.getName());
+            }
+            if (bo.getPaperCategoryId() != null) {
+                update.setPaperCategoryId(bo.getPaperCategoryId());
+            }
+            // PRD-A-007 T2：suggestTime 可选，传则写 biz_paper.suggest_time
+            if (bo.getSuggestTime() != null) {
+                update.setSuggestTime(bo.getSuggestTime());
+            }
+            update.setUpdateBy(userIdStr);
+            update.setUpdateTime(now);
+            bizPaperMapper.updateById(update);
+
+            // PRD-A-007 T2：sections 可选 — 逐条更新已有 biz_paper_section 的 title/sort
+            // sectionId 非空才更新（空 = 新建，v1 本期不做）
+            if (bo.getSections() != null && !bo.getSections().isEmpty()) {
+                for (UpdateExamPaperBo.SectionBo sectionBo : bo.getSections()) {
+                    if (sectionBo.getSectionId() == null) {
+                        // 新建大题 v1 不做，跳过
+                        continue;
+                    }
+                    BizPaperSection sectionUpdate = new BizPaperSection();
+                    sectionUpdate.setId(sectionBo.getSectionId());
+                    if (sectionBo.getName() != null) {
+                        sectionUpdate.setTitle(sectionBo.getName());
+                    }
+                    if (sectionBo.getSort() != null) {
+                        sectionUpdate.setSort(sectionBo.getSort());
+                    }
+                    bizPaperSectionMapper.updateById(sectionUpdate);
+                }
+            }
+
+            // 5. 返更新后 PaperDetailVo（复用 detail 查询）
+            return paperDetailService.getPaperDetail(paperId);
+        }));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteExamPaper(Long paperId) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录用户不能删除试卷");
+        }
+        if (paperId == null) {
+            throw new ServiceException("试卷ID不能为空");
+        }
+
+        // biz_paper / biz_paper_question / biz_paper_section 三表均无 tenant_id 列，
+        // BaseMapper 继承方法（selectById / deleteById / delete 带 WHERE）会被多租户拦截器
+        // 注入 AND tenant_id=? 报 Unknown column 'tenant_id'（PRD-A-005 G4 已踩）。
+        // 故全事务体走 TenantHelper.ignore(DataPermissionHelper.ignore(...)) 线程级包裹。
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 1. owner 校验：只能删本人创建的卷，公共卷/他人卷一律拒绝
+            BizPaper existing = bizPaperMapper.selectById(paperId);
+            if (existing == null) {
+                throw new ServiceException("试卷不存在: " + paperId);
+            }
+            if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
+                throw new ServiceException("无权删除非本人创建的试卷");
+            }
+
+            // 2. 级联物理删 biz_paper_question（该卷全部题关系）
+            LambdaQueryWrapper<BizPaperQuestion> pqWrapper = new LambdaQueryWrapper<>();
+            pqWrapper.eq(BizPaperQuestion::getPaperId, paperId);
+            bizPaperQuestionMapper.delete(pqWrapper);
+
+            // 3. 级联物理删 biz_paper_section（该卷全部大题分组）
+            LambdaQueryWrapper<BizPaperSection> secWrapper = new LambdaQueryWrapper<>();
+            secWrapper.eq(BizPaperSection::getPaperId, paperId);
+            bizPaperSectionMapper.delete(secWrapper);
+
+            // 4. 物理删 biz_paper 本体
+            bizPaperMapper.deleteById(paperId);
+            return null;
+        }));
     }
 }

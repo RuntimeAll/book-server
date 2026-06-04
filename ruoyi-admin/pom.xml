@@ -105,6 +105,12 @@
             <artifactId>ruoyi-book-admin</artifactId>
         </dependency>
 
+        <!--  通用 AI / LLM 底座（PRD-B-006 骨架；PRD-B-007 填 provider 实现） -->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-ai</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>de.codecentric</groupId>
             <artifactId>spring-boot-admin-starter-client</artifactId>
