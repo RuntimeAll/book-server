@@ -8,6 +8,9 @@
     - B-6 GET /teacher/qd/papers/{id} → 题在哪些卷
     - JOIN biz_paper 取 name / exam_year
     - status='1' 过滤已发布卷（草稿/软删隐式过滤）
+    - subject_id IS NOT NULL 过滤"草稿/测试卷"（用户 2026-06-04 拍板）：
+        组卷草稿(未命名草稿)/测试卷(合卷-R5-test/回归测试卷) 的 subject_id 恒为 NULL；
+        真题卷(章节id 如 3001005004) 与正式组卷(subject_id='5000') 均非空 → 只留正式来源。
     - 按 p.create_time 倒序（misikt 推断：新卷优先）
 -->
 <mapper namespace="org.dromara.book.mapper.BizPaperQuestionMapper">
@@ -29,6 +32,8 @@
         JOIN biz_paper p ON p.id = pq.paper_id
         WHERE pq.question_id = #{questionId}
           AND p.status = '1'
+          AND p.subject_id IS NOT NULL
+          AND p.subject_id != ''
         ORDER BY p.create_time DESC, pq.sort ASC
     </select>
 
