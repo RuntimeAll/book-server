@@ -77,7 +77,7 @@ public class PaperDetailServiceImpl implements IPaperDetailService {
 
         // step 3 — 所有题（含 sectionId，按 pq.sort ASC）
         List<BizPaperMapper.QuestionWithSectionId> rawQuestions =
-            bizPaperMapper.selectQuestionsByPaperIdWithSection(paperId);
+            bizPaperMapper.selectQuestionsByPaperIdWithSection(paperId, currentUserId);
 
         // step 4 — 批量回填 freeTags + questionKnowledges
         if (rawQuestions != null && !rawQuestions.isEmpty()) {

@@ -87,9 +87,11 @@ public interface BizPaperMapper extends BaseMapperPlus<BizPaper, BizPaper> {
      * 内部类（携带 sectionId 字段），让 Service 端按 section_id 分组到对应 section。
      *
      * @param paperId 试卷 id
+     * @param currentUserId 当前登录用户 id（LEFT JOIN biz_question_favorite 算 isFavorite，源页星标真态用）
      * @return 题列表（含 sectionId）
      */
-    List<QuestionWithSectionId> selectQuestionsByPaperIdWithSection(@Param("paperId") Long paperId);
+    List<QuestionWithSectionId> selectQuestionsByPaperIdWithSection(@Param("paperId") Long paperId,
+                                                                    @Param("currentUserId") String currentUserId);
 
     /**
      * 内部容器：{@link PaperSourceQuestionVo} + sectionId（仅供 Service 端按 section 分组，不向外暴露）。

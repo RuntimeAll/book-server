@@ -197,6 +197,8 @@
         <result property="scoreStd" column="score_std_json"/>
         <result property="sort" column="pq_sort"/>
         <result property="pqScore" column="pq_score"/>
+        <!-- 源页星标真态：LEFT JOIN biz_question_favorite 算（当前用户已收藏=1） -->
+        <result property="isFavorite" column="is_favorite"/>
         <!-- E 卡段② 专属：section_id 用于 Service 端按 section 分组 -->
         <result property="sectionId" column="pq_section_id"/>
     </resultMap>
@@ -259,8 +261,12 @@
       跟 selectQuestionsByPaperId 唯一区别：多 SELECT pq.section_id AS pq_section_id（用于 Service 端按 section 分组）。
       字段口径完全对齐 BizQuestionMapper 与 PaperSourceQuestionMap。
     -->
+    <!--
+      ⚠️ 多 @Param（paperId:Long + currentUserId:String）禁声明 parameterType（同 selectPaperDetailHeader 坑）：
+      声明 parameterType="java.lang.Long" 会让所有内联 #{} 按 Long 解析 javaType → #{currentUserId}(String) 被强转炸。
+      不声明 → 走 ParamMap 按运行时值类型设参，各归各位。
+    -->
     <select id="selectQuestionsByPaperIdWithSection"
-            parameterType="java.lang.Long"
             resultMap="PaperDetailQuestionMap">
         SELECT
             q.id,
@@ -293,9 +299,13 @@
             q.update_by,
             pq.sort       AS pq_sort,
             pq.score      AS pq_score,
-            pq.section_id AS pq_section_id
+            pq.section_id AS pq_section_id,
+            (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
         FROM biz_paper_question pq
         JOIN biz_question q ON q.id = pq.question_id
+        LEFT JOIN biz_question_favorite f
+          ON f.question_id = q.id
+         AND f.user_id = #{currentUserId}
         WHERE pq.paper_id = #{paperId}
           AND q.status = '1'
         ORDER BY pq.sort ASC
