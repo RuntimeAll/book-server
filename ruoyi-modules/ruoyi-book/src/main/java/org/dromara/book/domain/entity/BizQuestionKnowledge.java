@@ -15,9 +15,11 @@ import java.util.Date;
  *
  * <p>U/S 双轨：
  * <ul>
- *   <li>{@code source='U'} 用户标注：列表 + 详情都返；含 {@code knowledgeVideo}</li>
- *   <li>{@code source='S'} 标准库标注：仅详情返；不含 {@code knowledgeVideo}</li>
+ *   <li>{@code source='U'} 用户标注：列表 + 详情都返</li>
+ *   <li>{@code source='S'} 标准库标注：仅详情返</li>
  * </ul>
+ *
+ * <p>🔴 PRD-B-013 减法：biz_subject 删 2 个媒体字段，本实体不变（关联表无此字段）。
  *
  * @author backend-dev
  */

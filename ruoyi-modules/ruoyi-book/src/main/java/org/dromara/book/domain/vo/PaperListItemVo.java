@@ -20,17 +20,18 @@ import java.util.Date;
  *   <li>{@code paperType} Integer — misikt 真响应 1 / 2 整数</li>
  *   <li>{@code createUser} Long — misikt 真响应小整数（D 卡 ETL admin id）；Q 卡后 RuoYi 雪花 19 位 user_id 需 Long 容纳（详 Q 卡 hotfix 沉淀）</li>
  *   <li>{@code finishTime} 恒 null（DB 无此列 — misikt 真响应也都 null）</li>
- *   <li>{@code hgScore} / {@code directoryName} / {@code frameTextContentId} 大多 null（透传 DB 原值）</li>
  *   <li>{@code sort} Integer — DB INT，通常 = id</li>
  * </ul>
+ *
+ * <p>🔴 PRD-B-013 减法：删除 biz_paper 3 字段（详见 PRD-B-013 §scope.A）。
  *
  * @author backend-dev
  */
 @Data
 @JsonPropertyOrder({
     "id", "name", "questionCount", "score", "suggestTime",
-    "createTime", "finishTime", "hgScore", "createUser", "directoryName",
-    "subjectId", "paperType", "frameTextContentId", "status", "sort"
+    "createTime", "finishTime", "createUser",
+    "subjectId", "paperType", "status", "sort"
 })
 public class PaperListItemVo implements Serializable {
 
@@ -59,9 +60,6 @@ public class PaperListItemVo implements Serializable {
     /** 完成时间，DB 无此字段，恒 null */
     private String finishTime;
 
-    /** 合格分（DB DECIMAL，misikt 真响应一般 null） */
-    private Integer hgScore;
-
     /**
      * 创建人 id，DB biz_paper.create_by VARCHAR(64) → Long。
      * D 卡 ETL admin id 是小整数（misikt 真响应口径 Integer），Q 卡 RuoYi 注册 user_id 是雪花 19 位（超 Integer.MAX）。
@@ -69,17 +67,11 @@ public class PaperListItemVo implements Serializable {
      */
     private Long createUser;
 
-    /** 目录名（misikt 真响应一般 null） */
-    private String directoryName;
-
     /** 卷分类 id（biz_paper.subject_id） */
     private String subjectId;
 
     /** 卷类型 1=日常 2=月考 6=专题 */
     private Integer paperType;
-
-    /** 资源帧文本内容 id（misikt 业务字段，一般 null） */
-    private Long frameTextContentId;
 
     /** 状态：misikt 真响应 1 整数（DB CHAR(1) '0'/'1'/'2' → Integer 对齐） */
     private Integer status;

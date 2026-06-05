@@ -18,11 +18,12 @@ import java.util.Date;
  * <ul>
  *   <li>DB {@code stem_img_url / answer_img_url / explain_img_url / file_bin_url} 加 {@code _url} 后缀，
  *       Java 字段对应 {@code stemImgUrl} 等驼峰，VO 输出去 {@code _url} 后缀为 {@code stemImg}（misikt 风格）</li>
- *   <li>DB {@code video_url} → Java {@code videoUrl} → VO {@code videoUrl}（misikt 自己保留 Url 后缀）</li>
- *   <li>DB {@code is_share TINYINT} → Java {@code Integer isShare} → VO {@code isShare} INT 0/1（归一化）</li>
  *   <li>DB {@code create_time DATETIME} → Java {@code Date createTime} → VO {@code Long createTime} ms timestamp（归一化）</li>
  *   <li>DB {@code status CHAR(1)}：'0' 草稿 / '1' 已发布 / '2' 软删</li>
  * </ul>
+ *
+ * <p>🔴 PRD-B-013 减法：删除 10 死字段（详见 PRD-B-013 §scope.A — biz_question 段），
+ * 均为 misikt 复刻期残留 + 错设计字段，N1 录题地基清理。
  *
  * @author backend-dev
  */
@@ -53,11 +54,6 @@ public class BizQuestion implements Serializable {
      * 章节-知识点编码（biz_subject.id 任意层级）
      */
     private String subjectId;
-
-    /**
-     * 题目简短标题
-     */
-    private String shortTitle;
 
     /**
      * 题干文本（LaTeX 源 / 纯文本）— PRD-B-006 后保留双写过渡，不 DROP；
@@ -98,33 +94,12 @@ public class BizQuestion implements Serializable {
     private String fileBinUrl;
 
     /**
-     * 视频讲解 URL（DB 列 video_url，VO 输出 videoUrl — misikt 自己保留 Url 后缀）
-     */
-    @TableField("video_url")
-    private String videoUrl;
-
-    /**
-     * 选项 JSON [{"key":"A","content":"..."}]（V0.1 未必有数据）
-     */
-    private String optionsJson;
-
-    /**
-     * 正确答案（A/B/C/D 或文本）
-     */
-    private String correctAnswer;
-
-    /**
      * 答案文本外置 FK -> biz_text_content.id（PRD-B-006 收尾增量新增）。
      *
-     * <p>大块答案文本（解题步骤 / 长答案）落 biz_text_content content_type='A'，
-     * {@link #correctAnswer} 保留短文本（A/B/C/D / 短填空）。
+     * <p>大块答案文本（解题步骤 / 长答案）落 biz_text_content content_type='A'；
+     * 短答案（A/B/C/D / 短填空）历史走 biz_question 短答案列（PRD-B-013 已删）。
      */
     private Long answerTextContentId;
-
-    /**
-     * 评分标准 JSON（主观题）
-     */
-    private String scoreStdJson;
 
     /**
      * 出处年份
@@ -151,31 +126,6 @@ public class BizQuestion implements Serializable {
      * 自由标签（逗号分隔）
      */
     private String freeTag;
-
-    /**
-     * 标准知识点字符串冗余
-     */
-    private String questionStdKnowledgeStr;
-
-    /**
-     * 去重分类（similar / duplicate / variant）
-     */
-    private String dedupKind;
-
-    /**
-     * 是否共享 0/1（归一化 INT）
-     */
-    private Integer isShare;
-
-    /**
-     * 是否重复 0/1
-     */
-    private Integer isRepeat;
-
-    /**
-     * 重复题目原 ID
-     */
-    private Long repeatQuestionId;
 
     /**
      * 题目格式版本码（默认 1010）

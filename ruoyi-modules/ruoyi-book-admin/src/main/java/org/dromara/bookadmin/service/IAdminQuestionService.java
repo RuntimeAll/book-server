@@ -113,10 +113,11 @@ public interface IAdminQuestionService {
      * <p>校验（PRD §3.1 + §6 R7）：
      * <ul>
      *   <li>questionType ∈ {1,2,3,4,5} / difficult ∈ {1..4} / subjectId 存在</li>
-     *   <li>选择题 (type=1)：optionsJson ≥ 2 + correctAnswer ∈ keys</li>
      *   <li>questionKnowledges.size ≥ 1，每个 knowledgeId 在 biz_subject 存在</li>
      *   <li>stemText 与 stemImgUrl 至少有一个非空（PRD §6 R7）</li>
      * </ul>
+     *
+     * <p>🔴 PRD-B-013: 选择题选项/答案校验已删除（字段下线，选择题录入降级到 PRD-B-014）。
      *
      * <p>knowledge source 强制 'U'：防 FE 误传 'S' 污染标准库知识点（PRD §3.5）。
      *

@@ -11,7 +11,8 @@
     countByUser                        — 角标数量
     selectBasketQuestionsByUser        — JOIN biz_question 拉整套题字段（复用 page 端点 ResultMap 风格）
 
-  字段命名 / DB 映射规则跟 BizQuestionMapper.xml 一致（stem_img_url → stemImg / is_share INT / create_time ms）。
+  字段命名 / DB 映射规则跟 BizQuestionMapper.xml 一致（stem_img_url → stemImg / create_time ms）。
+  🔴 PRD-B-013 减法：删除 5 列（详见 PRD-B-013 §scope.A — biz_question 字段段）。
 -->
 <mapper namespace="org.dromara.book.mapper.BizQuestionBasketMapper">
 
@@ -21,18 +22,13 @@
         <result property="questionType" column="question_type"/>
         <result property="difficult" column="difficult"/>
         <result property="subjectId" column="subject_id"/>
-        <result property="shortTitle" column="short_title"/>
         <result property="stemText" column="stem_text"/>
         <result property="stemImg" column="stem_img_url"/>
         <result property="freeTag" column="free_tag"/>
-        <result property="correctAnswer" column="correct_answer"/>
         <result property="score" column="score_val"/>
         <result property="examYear" column="exam_year"/>
         <result property="examPaperId" column="exam_paper_id"/>
         <result property="examPaperName" column="exam_paper_name"/>
-        <result property="isShare" column="is_share"/>
-        <result property="isRepeat" column="is_repeat"/>
-        <result property="repeatQuestionId" column="repeat_question_id"/>
         <result property="status" column="status"/>
         <result property="createUser" column="create_user"/>
         <result property="createBy" column="create_by"/>
@@ -85,18 +81,13 @@
             q.question_type,
             q.difficult,
             q.subject_id,
-            q.short_title,
             q.stem_text,
             q.stem_img_url,
             q.free_tag,
-            q.correct_answer,
             0 AS score_val,
             q.exam_year,
             q.exam_paper_id,
             q.exam_paper_name,
-            q.is_share,
-            q.is_repeat,
-            q.repeat_question_id,
             q.status,
             q.create_user,
             q.create_by,

@@ -37,17 +37,8 @@ public class QuestionKnowledgeVo implements Serializable {
     private String knowledgeName;
 
     /**
-     * 知识点配图 URL（仅叶子）
-     */
-    private String knowledgeImg;
-
-    /**
-     * 知识点微课视频 URL（U 轨返；S 轨理论上不返但本工程统一返，FE 不强校验）
-     */
-    private String knowledgeVideo;
-
-    /**
-     * 关联记录创建时间（datetime → string，misikt 抓包恒 null；本工程返 null 兼容）
+     * 关联记录创建时间（datetime → string，misikt 抓包恒 null；本工程返 null 兼容）。
+     * 🔴 PRD-B-013 减法：删除知识点配图/视频字段（biz_subject 同步 DROP）。
      */
     private String createTime;
 }

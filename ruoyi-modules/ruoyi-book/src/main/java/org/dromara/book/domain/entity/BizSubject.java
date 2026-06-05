@@ -52,21 +52,6 @@ public class BizSubject implements Serializable {
     private Integer sort;
 
     /**
-     * 知识点配图（仅叶子）
-     */
-    private String knowledgeImg;
-
-    /**
-     * 知识点微课视频 URL（仅叶子）
-     */
-    private String knowledgeVideo;
-
-    /**
-     * 是否共享：0 / 1（misikt 抓包出现 STRING / INT 漂移，DB 用 TINYINT 归一化）
-     */
-    private Integer isShare;
-
-    /**
      * 状态 '0' 正常 / '1' 停用
      */
     private String status;

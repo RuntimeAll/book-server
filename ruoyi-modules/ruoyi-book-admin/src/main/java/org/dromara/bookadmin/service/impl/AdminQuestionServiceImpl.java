@@ -4,8 +4,6 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.entity.BizQuestion;
@@ -97,12 +95,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final AdminTagSubjectMapper adminTagSubjectMapper;
     /** admin 端通用文件上传 Service（H1 卡补丁抽离 — V-4 fileUpload 委托）。 */
     private final IAdminFileUploadService adminFileUploadService;
-
-    /**
-     * Jackson ObjectMapper（V-6 — biz_question.options_json 序列化）。
-     * 静态共享避免重复创建；ObjectMapper 是线程安全的（配置不变情况下）。
-     */
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** misikt 默认每页 10，pageIndex 兜底 1（与教师端一致）。 */
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -304,20 +296,17 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         String currentUserName = LoginHelper.getUsername();
 
         // ===== Step 1：INSERT/UPDATE biz_question（含 free_tag 冗余串同步） =====
+        // 🔴 PRD-B-013: 删除 4 列写入（详见 PRD-B-013 §scope.A）
         Long questionId;
         if (isCreate) {
             BizQuestion entity = new BizQuestion();
             entity.setQuestionType(bo.getQuestionType());
             entity.setDifficult(bo.getDifficult());
             entity.setSubjectId(bo.getSubjectId());
-            entity.setShortTitle(bo.getShortTitle());
             entity.setStemText(bo.getStemText());
             entity.setStemImgUrl(bo.getStemImgUrl());
             entity.setAnswerImgUrl(bo.getAnswerImgUrl());
             entity.setExplainImgUrl(bo.getExplainImgUrl());
-            entity.setOptionsJson(serializeOptionsJson(bo.getOptionsJson()));
-            entity.setCorrectAnswer(bo.getCorrectAnswer());
-            entity.setScoreStdJson(bo.getScoreStdJson());
             entity.setFreeTag(joinFreeTag(bo.getTagNames()));
             // 新建时 status='0' 草稿（PRD §3.8 状态机）；status='1' 走 publish 端点
             entity.setStatus("0");
@@ -347,14 +336,10 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
                 .set("question_type", bo.getQuestionType())
                 .set("difficult", bo.getDifficult())
                 .set("subject_id", bo.getSubjectId())
-                .set("short_title", bo.getShortTitle())
                 .set("stem_text", bo.getStemText())
                 .set("stem_img_url", bo.getStemImgUrl())
                 .set("answer_img_url", bo.getAnswerImgUrl())
                 .set("explain_img_url", bo.getExplainImgUrl())
-                .set("options_json", serializeOptionsJson(bo.getOptionsJson()))
-                .set("correct_answer", bo.getCorrectAnswer())
-                .set("score_std_json", bo.getScoreStdJson())
                 .set("free_tag", joinFreeTag(bo.getTagNames()))
                 .set("update_by", currentUserName)
                 .set("update_time", new Date());
@@ -472,26 +457,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         if (stemTextEmpty && stemImgEmpty) {
             throw new ServiceException("题干文本与题干图至少需要填一个");
         }
-        // 选择题 (type=1)：必须有 ≥ 2 个选项 + correctAnswer ∈ optionsJson[*].key
-        if (bo.getQuestionType() == 1) {
-            List<Map<String, Object>> options = bo.getOptionsJson();
-            if (options == null || options.size() < 2) {
-                throw new ServiceException("选择题至少需要 2 个选项");
-            }
-            if (bo.getCorrectAnswer() == null || bo.getCorrectAnswer().isEmpty()) {
-                throw new ServiceException("选择题必须指定正确答案");
-            }
-            Set<String> keys = new LinkedHashSet<>();
-            for (Map<String, Object> opt : options) {
-                Object k = opt.get("key");
-                if (k != null) {
-                    keys.add(String.valueOf(k));
-                }
-            }
-            if (!keys.contains(bo.getCorrectAnswer())) {
-                throw new ServiceException("正确答案不在选项 key 列表中: " + bo.getCorrectAnswer());
-            }
-        }
+        // 🔴 PRD-B-013: 选择题选项/答案校验已删除（字段不再录入；选择题录入降级到 PRD-B-014）。
         // 知识点至少 1 个 + 每个 knowledgeId 在 biz_subject 存在
         List<AdminQuestionEditBo.QuestionKnowledgeItem> kns = bo.getQuestionKnowledges();
         if (kns == null || kns.isEmpty()) {
@@ -504,22 +470,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             if (bizSubjectMapper.selectById(k.getKnowledgeId()) == null) {
                 throw new ServiceException("知识点不存在: " + k.getKnowledgeId());
             }
-        }
-    }
-
-    /**
-     * 序列化 optionsJson List → String（落 biz_question.options_json MySQL JSON 列）。
-     *
-     * @return null（入参 null/空） 或 JSON 字符串
-     */
-    private String serializeOptionsJson(List<Map<String, Object>> options) {
-        if (options == null || options.isEmpty()) {
-            return null;
-        }
-        try {
-            return OBJECT_MAPPER.writeValueAsString(options);
-        } catch (JsonProcessingException e) {
-            throw new ServiceException("optionsJson 序列化失败: " + e.getMessage());
         }
     }
 
@@ -676,9 +626,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         vo.setTitle(displayName);
         vo.setLevel(e.getLevel());
         vo.setSort(e.getSort());
-        vo.setKnowledgeImg(e.getKnowledgeImg());
-        vo.setKnowledgeVideo(e.getKnowledgeVideo());
-        vo.setIsShare(e.getIsShare());
+        // PRD-B-013: biz_subject 删除知识点配图/视频/共享标记，VO 同步无字段
         vo.setCreateTime(e.getCreateTime() == null ? null : e.getCreateTime().getTime());
         vo.setKey(e.getId());
         vo.setValue(e.getId());
