@@ -296,7 +296,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         String currentUserName = LoginHelper.getUsername();
 
         // ===== Step 1：INSERT/UPDATE biz_question（含 free_tag 冗余串同步） =====
-        // 🔴 PRD-B-013: 删除历史 4 列写入（短标题 / 选项 JSON / 短答案 / 评分标准）
+        // 🔴 PRD-B-013: 删除 4 列写入（详见 PRD-B-013 §scope.A）
         Long questionId;
         if (isCreate) {
             BizQuestion entity = new BizQuestion();
@@ -626,6 +626,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         vo.setTitle(displayName);
         vo.setLevel(e.getLevel());
         vo.setSort(e.getSort());
+        // PRD-B-013: biz_subject 删除知识点配图/视频/共享标记，VO 同步无字段
         vo.setCreateTime(e.getCreateTime() == null ? null : e.getCreateTime().getTime());
         vo.setKey(e.getId());
         vo.setValue(e.getId());

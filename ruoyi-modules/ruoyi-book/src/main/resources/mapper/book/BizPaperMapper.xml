@@ -23,6 +23,8 @@
 
   注：本 mapper 的 PaperSourceQuestionMap 自包含定义（不跨 namespace extends），
   避免 MyBatis mapper 文件加载顺序导致 incomplete ResultMap 解析失败。
+
+  🔴 PRD-B-013 减法：删除 biz_question 8 列 + biz_paper 3 列（详见 PRD-B-013 §scope.A）映射与 SELECT 列。
 -->
 <mapper namespace="org.dromara.book.mapper.BizPaperMapper">
 
@@ -56,7 +58,7 @@
         <result property="createTime" column="create_time_ms"/>
         <result property="updateTime" column="update_time_ms"/>
         <result property="updateBy" column="update_by"/>
-        <!-- QuestionDetailVo 详情字段 -->
+        <!-- QuestionDetailVo 详情字段（PRD-B-013 已删 4 字段映射） -->
         <result property="answerImg" column="answer_img_url"/>
         <result property="explainImg" column="explain_img_url"/>
         <result property="fileBin" column="file_bin_url"/>
@@ -165,6 +167,7 @@
         <result property="createTime" column="create_time_ms"/>
         <result property="updateTime" column="update_time_ms"/>
         <result property="updateBy" column="update_by"/>
+        <!-- QuestionDetailVo 详情字段（PRD-B-013 已删 4 字段映射） -->
         <result property="answerImg" column="answer_img_url"/>
         <result property="explainImg" column="explain_img_url"/>
         <result property="fileBin" column="file_bin_url"/>
@@ -284,6 +287,8 @@
         create_by VARCHAR(64) → Integer (CAST AS SIGNED)
         create_time DATETIME  → Date（@JsonFormat YYYY-MM-DD 序列化）
         finish_time           → 不存在该列，VO 恒 null
+
+      🔴 PRD-B-013 减法：删除 biz_paper 3 列映射（详见 PRD-B-013 §scope.A）。
     -->
     <resultMap id="PaperListItemMap" type="org.dromara.book.domain.vo.PaperListItemVo">
         <id property="id" column="id"/>

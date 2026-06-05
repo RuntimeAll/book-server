@@ -71,6 +71,7 @@ public interface BizPaperBasketMapper extends BaseMapperPlus<BizPaperBasket, Biz
      * <p>仅返已发布卷（biz_paper.status='1'）— 软删 / 草稿不在筐内可见列表。
      * 字段映射 / CAST 口径完全对齐 {@code BizPaperMapper.xml} 的 PaperListItemMap
      * （score/status/create_by 强转 Integer 对齐 misikt 真响应字节级口径）。
+     * 🔴 PRD-B-013: biz_paper 3 列已 DROP（详见 PRD-B-013 §scope.A）。
      *
      * @param userId 用户 ID
      * @return 试卷 VO 列表

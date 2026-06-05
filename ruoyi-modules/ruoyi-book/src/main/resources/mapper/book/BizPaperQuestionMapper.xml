@@ -8,7 +8,19 @@
     - B-6 GET /teacher/qd/papers/{id} → 题在哪些卷
     - JOIN biz_paper 取 name / exam_year
     - status='1' 过滤已发布卷（草稿/软删隐式过滤）
+    - subject_id IS NOT NULL 过滤"草稿/测试卷"（用户 2026-06-04 拍板）：
+        组卷草稿(未命名草稿)/测试卷(合卷-R5-test/回归测试卷) 的 subject_id 恒为 NULL；
+        真题卷(章节id 如 3001005004) 与正式组卷(subject_id='5000') 均非空 → 只留正式来源。
     - 按 p.create_time 倒序（misikt 推断：新卷优先）
+
+  🔴 2026-06-05 补「题目来源卷」(用户排查 36799 收录为 0)：
+    收录情况此前只查 biz_paper_question(组卷收录)，完全没纳入题目自存的来源卷
+    biz_question.exam_paper_id/exam_paper_name（题卡「来源」行用的就是它）。
+    实测：20725 题有 exam_paper_id，2% 的来源卷没被任何 biz_paper_question 收录(如 36799：
+    来源卷 1360 不在 pq，pq 里仅 3 张草稿被上面 subject_id 过滤掉 → 收录 0)，导致明明有来源却空。
+    修法 = UNION 题目来源卷(ord=0 排首位，名字取 exam_paper_name 与题卡来源一致) + 组卷真卷收录
+    (ord=1，排除来源卷 paper_id 去重)。来源卷悬空 id(库无对应卷,占比~32%)仍显示名字，
+    点击跳 source 页若不存在则走空状态(优雅降级，与题卡来源同源不更差)。
 -->
 <mapper namespace="org.dromara.book.mapper.BizPaperQuestionMapper">
 
@@ -20,16 +32,39 @@
     </resultMap>
 
     <select id="selectPapersByQuestionId" resultMap="QuestionPaperMap">
-        SELECT
-            pq.paper_id   AS exam_paper_id,
-            p.name        AS exam_paper_name,
-            p.exam_year   AS exam_year,
-            pq.sort       AS sort
-        FROM biz_paper_question pq
-        JOIN biz_paper p ON p.id = pq.paper_id
-        WHERE pq.question_id = #{questionId}
-          AND p.status = '1'
-        ORDER BY p.create_time DESC, pq.sort ASC
+        SELECT u.exam_paper_id, u.exam_paper_name, u.exam_year, u.sort
+        FROM (
+            <!-- ① 题目来源卷（biz_question 自存，与题卡「来源」一致；ord=0 排首位） -->
+            SELECT
+                q.exam_paper_id   AS exam_paper_id,
+                q.exam_paper_name AS exam_paper_name,
+                q.exam_year       AS exam_year,
+                0                 AS sort,
+                0                 AS ord,
+                q.create_time     AS ct
+            FROM biz_question q
+            WHERE q.id = #{questionId}
+              AND q.exam_paper_id IS NOT NULL
+              AND q.exam_paper_name IS NOT NULL
+              AND q.exam_paper_name != ''
+            UNION
+            <!-- ② 组卷真卷收录（排除来源卷 paper_id 去重；草稿/测试卷 subject_id NULL 仍过滤） -->
+            SELECT
+                pq.paper_id   AS exam_paper_id,
+                p.name        AS exam_paper_name,
+                p.exam_year   AS exam_year,
+                pq.sort       AS sort,
+                1             AS ord,
+                p.create_time AS ct
+            FROM biz_paper_question pq
+            JOIN biz_paper p ON p.id = pq.paper_id
+            WHERE pq.question_id = #{questionId}
+              AND p.status = '1'
+              AND p.subject_id IS NOT NULL
+              AND p.subject_id != ''
+              AND pq.paper_id &lt;&gt; IFNULL((SELECT exam_paper_id FROM biz_question WHERE id = #{questionId}), -1)
+        ) u
+        ORDER BY u.ord ASC, u.ct DESC, u.sort ASC
     </select>
 
 </mapper>

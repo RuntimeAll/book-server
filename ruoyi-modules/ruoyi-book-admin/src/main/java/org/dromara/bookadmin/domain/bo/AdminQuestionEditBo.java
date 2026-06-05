@@ -23,7 +23,7 @@ import java.util.List;
  *   <li>{@code questionKnowledges} — at least 1（U 轨）；item 含 {@code knowledgeId} + {@code source}（service 层强制 'U'）</li>
  * </ul>
  *
- * <p>🔴 PRD-B-013 减法：删掉历史 4 个死字段（短标题 / 选项 / 答案 / 评分标准）。
+ * <p>🔴 PRD-B-013 减法：删除 4 字段（详见 PRD-B-013 §scope.B 后端段）。
  * 选择题录入分支降级（→ PRD-B-014 真题录入做新方案）。
  *
  * @author backend-dev (H1 卡段② BE 波 2b)
@@ -71,7 +71,7 @@ public class AdminQuestionEditBo implements Serializable {
      * 答案文本（PRD-B-006 收尾增量新增 — 与 {@link #stemText} 对称）。
      *
      * <p>长文本外置存储到 {@code biz_text_content content_type='A'}。
-     * 🔴 PRD-B-013：历史短答案列已 DROP，所有答案文本统一走外置 'A' 列。
+     * 🔴 PRD-B-013：短答案列已 DROP，所有答案文本统一走外置 'A' 列。
      */
     private String answerText;
 

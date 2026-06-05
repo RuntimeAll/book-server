@@ -24,6 +24,8 @@ import java.util.List;
  * key / value / level / sort（Lombok @Data 不保字段顺序但 Jackson 默认按声明顺序 —
  * 用 @JsonPropertyOrder 兜底）。
  *
+ * <p>🔴 PRD-B-013 减法：删除共享标记字段（biz_paper_category 此列同步 DROP）。
+ *
  * @author backend-dev
  */
 @Data

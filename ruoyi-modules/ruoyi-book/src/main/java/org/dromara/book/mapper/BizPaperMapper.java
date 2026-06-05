@@ -87,9 +87,11 @@ public interface BizPaperMapper extends BaseMapperPlus<BizPaper, BizPaper> {
      * 内部类（携带 sectionId 字段），让 Service 端按 section_id 分组到对应 section。
      *
      * @param paperId 试卷 id
+     * @param currentUserId 当前登录用户 id（LEFT JOIN biz_question_favorite 算 isFavorite，源页星标真态用）
      * @return 题列表（含 sectionId）
      */
-    List<QuestionWithSectionId> selectQuestionsByPaperIdWithSection(@Param("paperId") Long paperId);
+    List<QuestionWithSectionId> selectQuestionsByPaperIdWithSection(@Param("paperId") Long paperId,
+                                                                    @Param("currentUserId") String currentUserId);
 
     /**
      * 内部容器：{@link PaperSourceQuestionVo} + sectionId（仅供 Service 端按 section 分组，不向外暴露）。
@@ -114,6 +116,7 @@ public interface BizPaperMapper extends BaseMapperPlus<BizPaper, BizPaper> {
      * <p>走 MyBatis-Plus 分页插件（@Param(Constants.WRAPPER) 注入 ${ew.customSqlSegment}）。
      * 字段类型按 misikt 真响应口径 CAST：score DECIMAL → Integer，
      * status CHAR(1) → Integer，create_by VARCHAR → Integer，create_time DATETIME 透传 Date。
+     * 🔴 PRD-B-013: biz_paper 3 列已 DROP（详见 PRD-B-013 §scope.A）。
      *
      * @param page    MyBatis-Plus 分页对象
      * @param wrapper Wrapper 注入 WHERE 条件（name LIKE / subject_id 前缀 / status / orderBy）

@@ -17,6 +17,8 @@ import java.util.List;
  *   <li>key / value 复用 id（misikt 给 Ant Tree 用，FE 不依赖也无害）</li>
  * </ul>
  *
+ * <p>🔴 PRD-B-013 减法：删除知识点配图/视频/共享标记 3 字段（biz_subject 同步 DROP）。
+ *
  * @author backend-dev
  */
 @Data

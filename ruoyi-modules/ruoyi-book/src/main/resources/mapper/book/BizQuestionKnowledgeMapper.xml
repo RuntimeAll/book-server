@@ -7,7 +7,8 @@
   V0.1 落点：
     - source='U' 用户标注 ⇒ questionKnowledges（page + select 都返）
     - source='S' 标准库标注 ⇒ questionStdKnowledges（仅 select 返）
-    - LEFT JOIN biz_subject 取 name（PRD-B-013 已删多余配图与微课字段）
+    - LEFT JOIN biz_subject 取 name
+  🔴 PRD-B-013 减法：biz_subject 删除知识点配图 / 视频列，本 mapper 同步移除 join 列与映射。
 -->
 <mapper namespace="org.dromara.book.mapper.BizQuestionKnowledgeMapper">
 

@@ -17,6 +17,8 @@
     create_by VARCHAR(64)→ Integer / Long (CAST AS SIGNED)
     create_time DATETIME → Date（@JsonFormat YYYY-MM-DD 序列化在 VO 上）
 
+  🔴 PRD-B-013 减法：删除 biz_paper 3 列映射与 SELECT 列（详见 PRD-B-013 §scope.A）。
+
   ResultMap 自包含定义（不跨 mapper.xml 引用，跟 BizQuestionBasketMapper.xml 同款策略，
   避免 MyBatis mapper 文件加载顺序导致 incomplete ResultMap 解析失败）。
 -->

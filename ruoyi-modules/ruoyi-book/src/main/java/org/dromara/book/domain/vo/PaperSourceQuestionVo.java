@@ -19,6 +19,8 @@ import java.math.BigDecimal;
  *   <li>{@code pqScore} 取自 biz_paper_question.score（DECIMAL(5,2)，真分值）</li>
  * </ul>
  *
+ * <p>🔴 PRD-B-013 减法：父类 QuestionDetailVo 已删 3 个详情专属字段（详见 PRD-B-013 §scope.B）。
+ *
  * @author backend-dev
  */
 @Data
