@@ -47,7 +47,6 @@ import java.util.Set;
  * <ul>
  *   <li>lazyTree：拉全表 → 内存建树 → 3 根（按 misikt 真响应排序 3003 / 3001 / 3004 / 等 sort）</li>
  *   <li>page：MyBatis-Plus Page + QueryWrapper（name LIKE / subject_id 前缀 / status='1'）</li>
- *   <li>isShare 字段口径：DB TINYINT → 响应 STRING '0'/'1'（misikt 风格）</li>
  *   <li>3001 根节点 parentId override 为 "1"（misikt 真响应历史遗留 bug，字节级对齐）</li>
  * </ul>
  *
@@ -124,7 +123,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
 
     /**
      * 单实体 → VO。字段口径按 misikt 真响应字节级：
-     * isShare INT → STRING '0'/'1'；3001 根节点 parentId override '1'。
+     * 3001 根节点 parentId override '1'。
      */
     private PaperCategoryNodeVo toVo(BizPaperCategory e) {
         PaperCategoryNodeVo vo = new PaperCategoryNodeVo();
@@ -136,8 +135,6 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             vo.setParentId(e.getParentId());
         }
         vo.setTitle(e.getName());
-        // isShare DB TINYINT → STRING '0'/'1'（misikt 风格）
-        vo.setIsShare(e.getIsShare() == null ? "0" : String.valueOf(e.getIsShare()));
         vo.setKey(e.getId());
         vo.setValue(e.getId());
         vo.setLevel(null);                 // misikt 真响应恒 null
@@ -196,14 +193,13 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         wrapper.eq("p.status", "1");
 
         // scope 分流：'mine' → 只看自己创建的；其余（'public' / 缺省）→ 公共卷库，按分类树归属过滤
-        // 🔴 2026-06-02 修：原 public 分支叠加 is_share=1 是错的 —— 622 份卷挂公共试卷(3001)分类下、
-        // 但 is_share 全 0（导入数据沿用 misikt 原始 create_by，非本系统老师），叠加 is_share=1 → 全被错杀，公共卷库全空。
-        // misikt 公共卷库语义 = 按 paper_category 分类树（subject_id 前缀，见下方），不是 is_share 开关。
+        // 🔴 2026-06-02 修(PRD-B-013 后): 公共卷库语义 = 按 paper_category 分类树（subject_id 前缀），
+        // 历史「共享开关」字段已在 PRD-B-013 V15 DROP 清掉，绝不依赖。
         if ("mine".equals(bo.getScope())) {
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
             wrapper.eq("p.create_by", currentUserIdStr);
         }
-        // else 公共卷库：不加 is_share / create_by 归属过滤，靠下方 subject_id 分类前缀筛
+        // else 公共卷库：不加 create_by 归属过滤，靠下方 subject_id 分类前缀筛
 
         if (bo.getName() != null && !bo.getName().isEmpty()) {
             wrapper.like("p.name", bo.getName());
@@ -264,7 +260,6 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         paper.setQuestionCount(qCount);
         paper.setScore(BigDecimal.ZERO);
         paper.setPaperType(1);
-        paper.setIsShare(0);
         paper.setStatus("1");
         paper.setSort(0);
         paper.setCreateBy(userIdStr);

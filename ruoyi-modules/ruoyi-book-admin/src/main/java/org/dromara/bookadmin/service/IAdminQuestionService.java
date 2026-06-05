@@ -113,7 +113,7 @@ public interface IAdminQuestionService {
      * <p>校验（PRD §3.1 + §6 R7）：
      * <ul>
      *   <li>questionType ∈ {1,2,3,4,5} / difficult ∈ {1..4} / subjectId 存在</li>
-     *   <li>选择题 (type=1)：optionsJson ≥ 2 + correctAnswer ∈ keys</li>
+     *   <li>选择题 (type=1)：PRD-B-013 后选项 + 答案录入分支降级，由 PRD-B-014 真题录入做新方案</li>
      *   <li>questionKnowledges.size ≥ 1，每个 knowledgeId 在 biz_subject 存在</li>
      *   <li>stemText 与 stemImgUrl 至少有一个非空（PRD §6 R7）</li>
      * </ul>

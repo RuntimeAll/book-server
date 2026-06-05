@@ -46,9 +46,6 @@ public class BizPaper implements Serializable {
     @TableField("paper_category_id")
     private String paperCategoryId;
 
-    @TableField("directory_name")
-    private String directoryName;
-
     @TableField("question_count")
     private Integer questionCount;
 
@@ -58,20 +55,11 @@ public class BizPaper implements Serializable {
     @TableField("suggest_time")
     private Integer suggestTime;
 
-    @TableField("hg_score")
-    private BigDecimal hgScore;
-
     @TableField("paper_type")
     private Integer paperType;
 
-    @TableField("frame_text_content_id")
-    private Long frameTextContentId;
-
     @TableField("exam_year")
     private String examYear;
-
-    @TableField("is_share")
-    private Integer isShare;
 
     @TableField("status")
     private String status;

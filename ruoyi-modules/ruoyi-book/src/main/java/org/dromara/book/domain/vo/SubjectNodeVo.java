@@ -12,7 +12,6 @@ import java.util.List;
  * <p>字段命名按 misikt 风格（驼峰）+ 本工程归一化口径：
  * <ul>
  *   <li>name + title 双字段冗余 — 派活 prompt 要求 name，FE TS interface 用 title，全返兼容</li>
- *   <li>isShare 归一化 INT 0/1（不复刻 misikt STRING/INT 漂移）</li>
  *   <li>createTime 归一化 BIGINT ms timestamp（不复刻 misikt STRING/BIGINT 漂移）</li>
  *   <li>nodeDataSum 固定 null（misikt 抓包总是 null — 该字段在 misikt 实际未启用）</li>
  *   <li>key / value 复用 id（misikt 给 Ant Tree 用，FE 不依赖也无害）</li>
@@ -49,21 +48,6 @@ public class SubjectNodeVo implements Serializable {
      * 同层排序
      */
     private Integer sort;
-
-    /**
-     * 知识点配图（仅叶子）
-     */
-    private String knowledgeImg;
-
-    /**
-     * 知识点微课视频 URL（仅叶子）
-     */
-    private String knowledgeVideo;
-
-    /**
-     * 是否共享 0/1（归一化 INT）
-     */
-    private Integer isShare;
 
     /**
      * 创建时间（毫秒 timestamp，归一化 BIGINT ms）
