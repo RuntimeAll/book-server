@@ -55,7 +55,7 @@ public interface IPaperLibraryService {
      * <p>业务流（@Transactional 整体回滚）：
      * <ol>
      *   <li>INSERT biz_paper（status='1' 发布，create_by=String.valueOf(currentUserId)，paper_type=1 手工，
-     *       question_count = questionIds.size()，score=0，sort=0，is_share=0）</li>
+     *       question_count = questionIds.size()，score=0，sort=0）</li>
      *   <li>INSERT biz_paper_section 默认 section（title="题目"，sort=1）</li>
      *   <li>批量 INSERT biz_paper_question（sort 按 questionIds 顺序 1/2/3...，score=0）</li>
      * </ol>

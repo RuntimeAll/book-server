@@ -310,14 +310,10 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             entity.setQuestionType(bo.getQuestionType());
             entity.setDifficult(bo.getDifficult());
             entity.setSubjectId(bo.getSubjectId());
-            entity.setShortTitle(bo.getShortTitle());
             entity.setStemText(bo.getStemText());
             entity.setStemImgUrl(bo.getStemImgUrl());
             entity.setAnswerImgUrl(bo.getAnswerImgUrl());
             entity.setExplainImgUrl(bo.getExplainImgUrl());
-            entity.setOptionsJson(serializeOptionsJson(bo.getOptionsJson()));
-            entity.setCorrectAnswer(bo.getCorrectAnswer());
-            entity.setScoreStdJson(bo.getScoreStdJson());
             entity.setFreeTag(joinFreeTag(bo.getTagNames()));
             // 新建时 status='0' 草稿（PRD §3.8 状态机）；status='1' 走 publish 端点
             entity.setStatus("0");
@@ -347,14 +343,10 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
                 .set("question_type", bo.getQuestionType())
                 .set("difficult", bo.getDifficult())
                 .set("subject_id", bo.getSubjectId())
-                .set("short_title", bo.getShortTitle())
                 .set("stem_text", bo.getStemText())
                 .set("stem_img_url", bo.getStemImgUrl())
                 .set("answer_img_url", bo.getAnswerImgUrl())
                 .set("explain_img_url", bo.getExplainImgUrl())
-                .set("options_json", serializeOptionsJson(bo.getOptionsJson()))
-                .set("correct_answer", bo.getCorrectAnswer())
-                .set("score_std_json", bo.getScoreStdJson())
                 .set("free_tag", joinFreeTag(bo.getTagNames()))
                 .set("update_by", currentUserName)
                 .set("update_time", new Date());
@@ -472,26 +464,9 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         if (stemTextEmpty && stemImgEmpty) {
             throw new ServiceException("题干文本与题干图至少需要填一个");
         }
-        // 选择题 (type=1)：必须有 ≥ 2 个选项 + correctAnswer ∈ optionsJson[*].key
-        if (bo.getQuestionType() == 1) {
-            List<Map<String, Object>> options = bo.getOptionsJson();
-            if (options == null || options.size() < 2) {
-                throw new ServiceException("选择题至少需要 2 个选项");
-            }
-            if (bo.getCorrectAnswer() == null || bo.getCorrectAnswer().isEmpty()) {
-                throw new ServiceException("选择题必须指定正确答案");
-            }
-            Set<String> keys = new LinkedHashSet<>();
-            for (Map<String, Object> opt : options) {
-                Object k = opt.get("key");
-                if (k != null) {
-                    keys.add(String.valueOf(k));
-                }
-            }
-            if (!keys.contains(bo.getCorrectAnswer())) {
-                throw new ServiceException("正确答案不在选项 key 列表中: " + bo.getCorrectAnswer());
-            }
-        }
+        // PRD-B-013 减法：选择题选项/答案分支降级 — 死字段 options_json / correct_answer 已 DROP，
+        // 选择题录入待 PRD-B-014 真题录入卡重新设计（走 biz_text_content 派生表 type=A）。
+        // 本卡前 admin 暂不支持选择题选项/答案的结构化录入，FE 已加 ElAlert 警告。
         // 知识点至少 1 个 + 每个 knowledgeId 在 biz_subject 存在
         List<AdminQuestionEditBo.QuestionKnowledgeItem> kns = bo.getQuestionKnowledges();
         if (kns == null || kns.isEmpty()) {
@@ -504,22 +479,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             if (bizSubjectMapper.selectById(k.getKnowledgeId()) == null) {
                 throw new ServiceException("知识点不存在: " + k.getKnowledgeId());
             }
-        }
-    }
-
-    /**
-     * 序列化 optionsJson List → String（落 biz_question.options_json MySQL JSON 列）。
-     *
-     * @return null（入参 null/空） 或 JSON 字符串
-     */
-    private String serializeOptionsJson(List<Map<String, Object>> options) {
-        if (options == null || options.isEmpty()) {
-            return null;
-        }
-        try {
-            return OBJECT_MAPPER.writeValueAsString(options);
-        } catch (JsonProcessingException e) {
-            throw new ServiceException("optionsJson 序列化失败: " + e.getMessage());
         }
     }
 
@@ -676,9 +635,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         vo.setTitle(displayName);
         vo.setLevel(e.getLevel());
         vo.setSort(e.getSort());
-        vo.setKnowledgeImg(e.getKnowledgeImg());
-        vo.setKnowledgeVideo(e.getKnowledgeVideo());
-        vo.setIsShare(e.getIsShare());
         vo.setCreateTime(e.getCreateTime() == null ? null : e.getCreateTime().getTime());
         vo.setKey(e.getId());
         vo.setValue(e.getId());

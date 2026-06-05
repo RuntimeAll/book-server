@@ -5,7 +5,6 @@ import lombok.Data;
 import java.io.Serial;
 import java.io.Serializable;
 import java.util.List;
-import java.util.Map;
 
 /**
  * /admin/question/edit 新建/编辑统一入参 BO（H1 卡段② BE 波 2b — V-1 + V-6）。
@@ -20,12 +19,13 @@ import java.util.Map;
  *   <li>{@code difficult} — 1..4（注意 DB 字段名是 difficult 不是 difficulty）</li>
  *   <li>{@code subjectId} — biz_subject.id（章节-知识点编码）</li>
  *   <li>{@code stemText} / {@code stemImgUrl} — 至少有一个非空（PRD §6 R7）</li>
- *   <li>{@code optionsJson} — 选择题 (type=1) 必填且 size ≥ 2；Jackson 序列化为 JSON 字符串落 DB JSON 列</li>
- *   <li>{@code correctAnswer} — 选择题必填且必须 ∈ optionsJson[*].key</li>
- *   <li>{@code scoreStdJson} — OOS-3 本卡不录入，默认 null（保留入参兼容性）</li>
  *   <li>{@code tagNames} — 字符串数组，BE 维护 biz_question_free_tag + biz_free_tag 字典 + 冗余串</li>
  *   <li>{@code questionKnowledges} — at least 1（U 轨）；item 含 {@code knowledgeId} + {@code source}（service 层强制 'U'）</li>
  * </ul>
+ *
+ * <p>🔴 PRD-B-013 减法：删 {@code shortTitle} / {@code optionsJson} / {@code correctAnswer} / {@code scoreStdJson} 4 死字段
+ *   （DB 列 short_title / options_json / correct_answer / score_std_json 已 DROP；
+ *    选择题录入分支降级到 PRD-B-014 真题录入卡重做，本卡仅清地基）。
  *
  * @author backend-dev (H1 卡段② BE 波 2b)
  */
@@ -56,11 +56,6 @@ public class AdminQuestionEditBo implements Serializable {
     private String subjectId;
 
     /**
-     * 题目简短标题（可空）
-     */
-    private String shortTitle;
-
-    /**
      * 题干文本（PRD §6 R7：与 stemImgUrl 至少有一个非空）。
      *
      * <p>PRD-B-006 收尾增量起：长文本外置存储到 {@code biz_text_content content_type='S'}，
@@ -76,8 +71,7 @@ public class AdminQuestionEditBo implements Serializable {
     /**
      * 答案文本（PRD-B-006 收尾增量新增 — 与 {@link #stemText} 对称）。
      *
-     * <p>长文本外置存储到 {@code biz_text_content content_type='A'}；
-     * 短答案（A/B/C/D / 短填空）仍走 {@link #correctAnswer}。
+     * <p>长文本外置存储到 {@code biz_text_content content_type='A'}（答案唯一来源）。
      */
     private String answerText;
 
@@ -98,23 +92,6 @@ public class AdminQuestionEditBo implements Serializable {
      * 解析图 URL（可空）
      */
     private String explainImgUrl;
-
-    /**
-     * 选项 JSON（List of {key,content}）— questionType=1 选择题必填 ≥ 2 项。
-     *
-     * <p>Jackson 序列化为字符串后落 biz_question.options_json (MySQL JSON 列)。
-     */
-    private List<Map<String, Object>> optionsJson;
-
-    /**
-     * 正确答案（选择题为 A/B/C/D；其他题型为文本）
-     */
-    private String correctAnswer;
-
-    /**
-     * 评分标准 JSON（OOS-3 本卡不录入，默认 null）
-     */
-    private String scoreStdJson;
 
     /**
      * 自由标签数组（FE 传字符串数组）。

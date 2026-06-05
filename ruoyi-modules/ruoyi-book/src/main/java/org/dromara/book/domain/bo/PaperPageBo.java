@@ -46,7 +46,8 @@ public class PaperPageBo implements Serializable {
     /**
      * 卷库视图范围（scope 分流，前端传）：
      * <ul>
-     *   <li>{@code "public"} — 公共卷：WHERE is_share = 1（跨教师可见，绝不依赖 create_by）</li>
+     *   <li>{@code "public"} — 公共卷：按 subject_id 分类树前缀（3001/3003/3004）筛，跨教师可见
+     *       （PRD-B-013 已 DROP is_share 死字段，公共卷库语义由分类树决定）</li>
      *   <li>{@code "mine"}   — 我的卷库：WHERE create_by = #{当前登录 userId}（绝不信任前端传的 createBy）</li>
      *   <li>缺省 / 非法值   — 按 "public" 处理（安全默认，绝不暴露他人私卷）</li>
      * </ul>

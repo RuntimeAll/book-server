@@ -7,8 +7,7 @@
   V0.1 落点：
     - source='U' 用户标注 ⇒ questionKnowledges（page + select 都返）
     - source='S' 标准库标注 ⇒ questionStdKnowledges（仅 select 返）
-    - LEFT JOIN biz_subject 取 name / knowledge_img / knowledge_video
-    - S 轨理论上不返 knowledgeVideo，本工程统一返 — FE 不强校验，不影响契约
+    - LEFT JOIN biz_subject 取 name（PRD-B-013 已删 knowledge_img / knowledge_video 死字段）
 -->
 <mapper namespace="org.dromara.book.mapper.BizQuestionKnowledgeMapper">
 
@@ -17,8 +16,6 @@
         <result property="questionId" column="question_id"/>
         <result property="knowledgeId" column="knowledge_id"/>
         <result property="knowledgeName" column="knowledge_name"/>
-        <result property="knowledgeImg" column="knowledge_img"/>
-        <result property="knowledgeVideo" column="knowledge_video"/>
         <result property="createTime" column="create_time_str"/>
     </resultMap>
 
@@ -28,8 +25,6 @@
             qk.question_id,
             qk.knowledge_id,
             s.name             AS knowledge_name,
-            s.knowledge_img    AS knowledge_img,
-            s.knowledge_video  AS knowledge_video,
             DATE_FORMAT(qk.create_time, '%Y-%m-%dT%H:%i:%s.000Z') AS create_time_str
         FROM biz_question_knowledge qk
         LEFT JOIN biz_subject s ON s.id = qk.knowledge_id

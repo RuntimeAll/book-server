@@ -38,7 +38,4 @@ public class BizPaperCategory implements Serializable {
 
     /** 同层排序（asc） */
     private Integer sort;
-
-    /** 是否共享 0/1（DB TINYINT，misikt 真响应需归一化为 STRING '0'/'1'） */
-    private Integer isShare;
 }

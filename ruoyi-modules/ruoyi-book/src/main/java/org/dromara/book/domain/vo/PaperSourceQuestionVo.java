@@ -15,8 +15,6 @@ import java.math.BigDecimal;
  *
  * <p>字段约束：
  * <ul>
- *   <li>{@code optionsJson} 沿用父类 String 透传（FE 自行 JSON.parse，BE 不反序列化）</li>
- *   <li>{@code scoreStd} 沿用父类 String 透传（虽然原卷预览 FE 当前不用，但保留契约一致）</li>
  *   <li>{@code sort} 取自 biz_paper_question.sort（NOT NULL，升序排）</li>
  *   <li>{@code pqScore} 取自 biz_paper_question.score（DECIMAL(5,2)，真分值）</li>
  * </ul>

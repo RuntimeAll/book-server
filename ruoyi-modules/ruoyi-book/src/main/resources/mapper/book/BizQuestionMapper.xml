@@ -9,8 +9,6 @@
     answer_img_url     → answerImg
     explain_img_url    → explainImg
     file_bin_url       → fileBin
-    video_url          → videoUrl   (misikt 自己保留 Url 后缀)
-    is_share TINYINT   → isShare INT 0/1
     create_time / update_time DATETIME → createTime / updateTime BIGINT ms timestamp
       —— UNIX_TIMESTAMP(t)*1000 直接出 long
 -->
@@ -22,18 +20,13 @@
         <result property="questionType" column="question_type"/>
         <result property="difficult" column="difficult"/>
         <result property="subjectId" column="subject_id"/>
-        <result property="shortTitle" column="short_title"/>
         <result property="stemText" column="stem_text"/>
         <result property="stemImg" column="stem_img_url"/>
         <result property="freeTag" column="free_tag"/>
-        <result property="correctAnswer" column="correct_answer"/>
         <result property="score" column="score_val"/>
         <result property="examYear" column="exam_year"/>
         <result property="examPaperId" column="exam_paper_id"/>
         <result property="examPaperName" column="exam_paper_name"/>
-        <result property="isShare" column="is_share"/>
-        <result property="isRepeat" column="is_repeat"/>
-        <result property="repeatQuestionId" column="repeat_question_id"/>
         <result property="status" column="status"/>
         <result property="createUser" column="create_user"/>
         <result property="createBy" column="create_by"/>
@@ -48,7 +41,7 @@
       详情 ResultMap（extends QuestionItemMap 加详情字段）。
       PRD-B-006 收尾增量后：
         - stemText 优先用 biz_text_content S 外置, 兜底走 biz_question.stem_text(老数据)
-        - answer  优先用 biz_text_content A 外置, 兜底走 biz_question.correct_answer(短答案)
+        - answer  唯一来源 = biz_text_content A 外置(PRD-B-013 删 correct_answer 死字段)
         - explain 唯一来源 = biz_text_content E 外置(老数据无解析文本)
       列别名 stem_text_resolved / answer_resolved / explain_resolved 由 SELECT 端的 COALESCE 拼好喂进来。
     -->
@@ -60,9 +53,6 @@
         <result property="explain" column="explain_resolved"/>
         <result property="explainImg" column="explain_img_url"/>
         <result property="fileBin" column="file_bin_url"/>
-        <result property="videoUrl" column="video_url"/>
-        <result property="optionsJson" column="options_json"/>
-        <result property="scoreStd" column="score_std_json"/>
     </resultMap>
 
     <!--
@@ -74,18 +64,13 @@
         q.question_type,
         q.difficult,
         q.subject_id,
-        q.short_title,
         q.stem_text,
         q.stem_img_url,
         q.free_tag,
-        q.correct_answer,
         0 AS score_val,
         q.exam_year,
         q.exam_paper_id,
         q.exam_paper_name,
-        q.is_share,
-        q.is_repeat,
-        q.repeat_question_id,
         q.status,
         q.create_user,
         q.create_by,
@@ -136,7 +121,7 @@
     </select>
 
     <!--
-      单题详情 — 含详情字段（answer/explain/file/video/optionsJson/scoreStd）。
+      单题详情 — 含详情字段（answer/explain/file）。
       不限 status（详情可看草稿/已发/软删；V0.1 实数据全 '1'）。
     -->
     <select id="selectQuestionDetailById"
@@ -147,28 +132,20 @@
             q.question_type,
             q.difficult,
             q.subject_id,
-            q.short_title,
-            <!-- PRD-B-006: 三要素外置优先, biz_text_content 命中走外置, 否则降级老字段 -->
+            <!-- PRD-B-006: 三要素外置优先, biz_text_content 命中走外置, 否则降级老 stem_text -->
             COALESCE(tc_s.content, q.stem_text)         AS stem_text_resolved,
-            COALESCE(tc_a.content, q.correct_answer)    AS answer_resolved,
+            tc_a.content                                AS answer_resolved,
             tc_e.content                                AS explain_resolved,
             q.stem_text,
             q.stem_img_url,
             q.answer_img_url,
             q.explain_img_url,
             q.file_bin_url,
-            q.video_url,
-            q.options_json,
-            q.correct_answer,
-            q.score_std_json,
             q.free_tag,
             0 AS score_val,
             q.exam_year,
             q.exam_paper_id,
             q.exam_paper_name,
-            q.is_share,
-            q.is_repeat,
-            q.repeat_question_id,
             q.status,
             q.create_user,
             q.create_by,
@@ -194,28 +171,20 @@
             q.question_type,
             q.difficult,
             q.subject_id,
-            q.short_title,
             <!-- PRD-B-006: 同 selectQuestionDetailById 拼三要素外置, 试卷预览/PDF 导出也吃到 -->
             COALESCE(tc_s.content, q.stem_text)         AS stem_text_resolved,
-            COALESCE(tc_a.content, q.correct_answer)    AS answer_resolved,
+            tc_a.content                                AS answer_resolved,
             tc_e.content                                AS explain_resolved,
             q.stem_text,
             q.stem_img_url,
             q.answer_img_url,
             q.explain_img_url,
             q.file_bin_url,
-            q.video_url,
-            q.options_json,
-            q.correct_answer,
-            q.score_std_json,
             q.free_tag,
             0 AS score_val,
             q.exam_year,
             q.exam_paper_id,
             q.exam_paper_name,
-            q.is_share,
-            q.is_repeat,
-            q.repeat_question_id,
             q.status,
             q.create_user,
             q.create_by,

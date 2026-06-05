@@ -13,14 +13,12 @@ import java.util.List;
  * <ul>
  *   <li>{@code stemImg} 不带 _url 后缀（DB 列是 stem_img_url）</li>
  *   <li>{@code answerImg / explainImg / fileBin} 同上</li>
- *   <li>{@code videoUrl} 保留 Url 后缀（misikt 自己不一致）</li>
  *   <li>{@code difficult} 不是 difficulty（1-4 星）</li>
- *   <li>{@code isShare} INT 0/1（归一化）</li>
  *   <li>{@code createTime} BIGINT ms timestamp（归一化）</li>
  *   <li>{@code questionKnowledges} 列表 + 详情都返（source='U'）</li>
  * </ul>
  *
- * <p>page 不返：{@code answer / explain / fileBin / videoUrl / questionStdKnowledges}（详情专属字段）。
+ * <p>page 不返：{@code answer / explain / fileBin / questionStdKnowledges}（详情专属字段）。
  * 但因为 mapper.xml 用同一个 ResultMap 简化复用 — 详情字段在 page SQL 里不 SELECT，序列化时为 null 由 FE 容忍。
  *
  * @author backend-dev
@@ -49,11 +47,6 @@ public class QuestionItemVo implements Serializable {
     private String subjectId;
 
     /**
-     * 题目简短标题
-     */
-    private String shortTitle;
-
-    /**
      * 题干文本
      */
     private String stemText;
@@ -67,11 +60,6 @@ public class QuestionItemVo implements Serializable {
      * 自由标签
      */
     private String freeTag;
-
-    /**
-     * 正确答案（选择题字母 / 文本）
-     */
-    private String correctAnswer;
 
     /**
      * 分值（page 阶段恒 0，真分值在 biz_paper_question）
@@ -92,21 +80,6 @@ public class QuestionItemVo implements Serializable {
      * 出处试卷名
      */
     private String examPaperName;
-
-    /**
-     * 是否共享 0/1
-     */
-    private Integer isShare;
-
-    /**
-     * 是否重复 0/1
-     */
-    private Integer isRepeat;
-
-    /**
-     * 重复源题 ID
-     */
-    private Long repeatQuestionId;
 
     /**
      * 状态 '0' / '1' / '2'（INT 化也兼容 — 这里走原 CHAR 透传）

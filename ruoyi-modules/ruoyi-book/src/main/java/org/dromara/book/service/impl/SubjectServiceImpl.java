@@ -94,9 +94,6 @@ public class SubjectServiceImpl implements ISubjectService {
         vo.setTitle(displayName);           // 兼容字段，FE TS interface 用 title
         vo.setLevel(e.getLevel());
         vo.setSort(e.getSort());
-        vo.setKnowledgeImg(e.getKnowledgeImg());
-        vo.setKnowledgeVideo(e.getKnowledgeVideo());
-        vo.setIsShare(e.getIsShare());      // 已 INT 0/1
         vo.setCreateTime(e.getCreateTime() == null ? null : e.getCreateTime().getTime());  // 毫秒 timestamp
         vo.setKey(e.getId());
         vo.setValue(e.getId());

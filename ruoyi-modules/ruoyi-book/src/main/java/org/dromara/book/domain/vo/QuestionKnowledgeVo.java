@@ -8,7 +8,7 @@ import java.io.Serializable;
 /**
  * 题目知识点关联 VO（questionKnowledges / questionStdKnowledges 数组元素）。
  *
- * <p>来源 biz_question_knowledge LEFT JOIN biz_subject — 取 subject.name/img/video。
+ * <p>来源 biz_question_knowledge LEFT JOIN biz_subject — 取 subject.name。
  * misikt JSON 字段命名严格对齐（参 A3-question-page.json）。
  *
  * @author backend-dev
@@ -35,16 +35,6 @@ public class QuestionKnowledgeVo implements Serializable {
      * 知识点名（取自 biz_subject.name）
      */
     private String knowledgeName;
-
-    /**
-     * 知识点配图 URL（仅叶子）
-     */
-    private String knowledgeImg;
-
-    /**
-     * 知识点微课视频 URL（U 轨返；S 轨理论上不返但本工程统一返，FE 不强校验）
-     */
-    private String knowledgeVideo;
 
     /**
      * 关联记录创建时间（datetime → string，misikt 抓包恒 null；本工程返 null 兼容）

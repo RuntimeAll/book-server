@@ -114,7 +114,7 @@ public interface BizPaperMapper extends BaseMapperPlus<BizPaper, BizPaper> {
      * D 卡卷库视觉级还原 — 分页查询试卷列表（POST /teacher/exam/paper/page）。
      *
      * <p>走 MyBatis-Plus 分页插件（@Param(Constants.WRAPPER) 注入 ${ew.customSqlSegment}）。
-     * 字段类型按 misikt 真响应口径 CAST：score / hgScore DECIMAL → Integer，
+     * 字段类型按 misikt 真响应口径 CAST：score DECIMAL → Integer，
      * status CHAR(1) → Integer，create_by VARCHAR → Integer，create_time DATETIME 透传 Date。
      *
      * @param page    MyBatis-Plus 分页对象
