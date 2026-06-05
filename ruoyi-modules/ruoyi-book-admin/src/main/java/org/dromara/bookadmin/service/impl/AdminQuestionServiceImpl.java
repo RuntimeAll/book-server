@@ -4,8 +4,6 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.entity.BizQuestion;
@@ -97,12 +95,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
     private final AdminTagSubjectMapper adminTagSubjectMapper;
     /** admin 端通用文件上传 Service（H1 卡补丁抽离 — V-4 fileUpload 委托）。 */
     private final IAdminFileUploadService adminFileUploadService;
-
-    /**
-     * Jackson ObjectMapper（V-6 — biz_question.options_json 序列化）。
-     * 静态共享避免重复创建；ObjectMapper 是线程安全的（配置不变情况下）。
-     */
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /** misikt 默认每页 10，pageIndex 兜底 1（与教师端一致）。 */
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -304,6 +296,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         String currentUserName = LoginHelper.getUsername();
 
         // ===== Step 1：INSERT/UPDATE biz_question（含 free_tag 冗余串同步） =====
+        // 🔴 PRD-B-013: 删除 4 列写入（详见 PRD-B-013 §scope.A）
         Long questionId;
         if (isCreate) {
             BizQuestion entity = new BizQuestion();
@@ -464,9 +457,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         if (stemTextEmpty && stemImgEmpty) {
             throw new ServiceException("题干文本与题干图至少需要填一个");
         }
-        // PRD-B-013 减法：选择题选项/答案分支降级 — 死字段 options_json / correct_answer 已 DROP，
-        // 选择题录入待 PRD-B-014 真题录入卡重新设计（走 biz_text_content 派生表 type=A）。
-        // 本卡前 admin 暂不支持选择题选项/答案的结构化录入，FE 已加 ElAlert 警告。
+        // 🔴 PRD-B-013: 选择题选项/答案校验已删除（字段不再录入；选择题录入降级到 PRD-B-014）。
         // 知识点至少 1 个 + 每个 knowledgeId 在 biz_subject 存在
         List<AdminQuestionEditBo.QuestionKnowledgeItem> kns = bo.getQuestionKnowledges();
         if (kns == null || kns.isEmpty()) {
@@ -635,6 +626,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         vo.setTitle(displayName);
         vo.setLevel(e.getLevel());
         vo.setSort(e.getSort());
+        // PRD-B-013: biz_subject 删除知识点配图/视频/共享标记，VO 同步无字段
         vo.setCreateTime(e.getCreateTime() == null ? null : e.getCreateTime().getTime());
         vo.setKey(e.getId());
         vo.setValue(e.getId());

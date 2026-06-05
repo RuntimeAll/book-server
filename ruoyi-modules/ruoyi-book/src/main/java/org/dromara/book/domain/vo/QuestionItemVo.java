@@ -21,6 +21,8 @@ import java.util.List;
  * <p>page 不返：{@code answer / explain / fileBin / questionStdKnowledges}（详情专属字段）。
  * 但因为 mapper.xml 用同一个 ResultMap 简化复用 — 详情字段在 page SQL 里不 SELECT，序列化时为 null 由 FE 容忍。
  *
+ * <p>🔴 PRD-B-013 减法：删除 5 个 misikt 复刻期残留字段（详见 PRD-B-013 §scope.B 后端段）。
+ *
  * @author backend-dev
  */
 @Data

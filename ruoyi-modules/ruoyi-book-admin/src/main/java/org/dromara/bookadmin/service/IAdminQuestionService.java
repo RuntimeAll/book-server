@@ -117,8 +117,7 @@ public interface IAdminQuestionService {
      *   <li>stemText 与 stemImgUrl 至少有一个非空（PRD §6 R7）</li>
      * </ul>
      *
-     * <p>🔴 PRD-B-013 减法：选择题选项/答案结构化录入已下线（死字段 options_json / correct_answer 已 DROP），
-     *   留 PRD-B-014 真题录入卡走 biz_text_content type=A 重做。
+     * <p>🔴 PRD-B-013: 选择题选项/答案校验已删除（字段下线，选择题录入降级到 PRD-B-014）。
      *
      * <p>knowledge source 强制 'U'：防 FE 误传 'S' 污染标准库知识点（PRD §3.5）。
      *

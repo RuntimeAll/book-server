@@ -12,6 +12,7 @@
     selectBasketQuestionsByUser        — JOIN biz_question 拉整套题字段（复用 page 端点 ResultMap 风格）
 
   字段命名 / DB 映射规则跟 BizQuestionMapper.xml 一致（stem_img_url → stemImg / create_time ms）。
+  🔴 PRD-B-013 减法：删除 5 列（详见 PRD-B-013 §scope.A — biz_question 字段段）。
 -->
 <mapper namespace="org.dromara.book.mapper.BizQuestionBasketMapper">
 

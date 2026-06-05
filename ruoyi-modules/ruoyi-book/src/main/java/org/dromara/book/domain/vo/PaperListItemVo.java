@@ -23,6 +23,8 @@ import java.util.Date;
  *   <li>{@code sort} Integer — DB INT，通常 = id</li>
  * </ul>
  *
+ * <p>🔴 PRD-B-013 减法：删除 biz_paper 3 字段（详见 PRD-B-013 §scope.A）。
+ *
  * @author backend-dev
  */
 @Data

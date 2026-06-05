@@ -94,6 +94,7 @@ public class SubjectServiceImpl implements ISubjectService {
         vo.setTitle(displayName);           // 兼容字段，FE TS interface 用 title
         vo.setLevel(e.getLevel());
         vo.setSort(e.getSort());
+        // PRD-B-013: biz_subject 删除知识点配图/视频/共享标记，VO 同步无字段
         vo.setCreateTime(e.getCreateTime() == null ? null : e.getCreateTime().getTime());  // 毫秒 timestamp
         vo.setKey(e.getId());
         vo.setValue(e.getId());

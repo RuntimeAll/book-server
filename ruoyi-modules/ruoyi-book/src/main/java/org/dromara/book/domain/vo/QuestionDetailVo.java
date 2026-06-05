@@ -11,13 +11,15 @@ import java.util.List;
  *
  * <p>继承 {@link QuestionItemVo} 复用列表字段，新增详情专属字段：
  * <ul>
- *   <li>{@code answer} 答案文本（biz_text_content type=A 优先）</li>
+ *   <li>{@code answer} 答案文本（来源 biz_text_content content_type='A'，PRD-B-013 后唯一来源）</li>
  *   <li>{@code answerImg} 答案图 URL（DB 列 answer_img_url）</li>
- *   <li>{@code explain} 解析文本（biz_text_content type=E）</li>
+ *   <li>{@code explain} 解析文本（来源 biz_text_content content_type='E'）</li>
  *   <li>{@code explainImg} 解析图 URL（DB 列 explain_img_url）</li>
  *   <li>{@code fileBin} 笔迹数据 URL（DB 列 file_bin_url）</li>
  *   <li>{@code questionStdKnowledges} 标准库标注知识点（source='S'，仅详情返）</li>
  * </ul>
+ *
+ * <p>🔴 PRD-B-013 减法：删除 3 个详情专属字段（详见 PRD-B-013 §scope.B 后端段）。
  *
  * @author backend-dev
  */
@@ -29,7 +31,7 @@ public class QuestionDetailVo extends QuestionItemVo {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 答案文本（V0.1 实数据未必有 — biz_text_content 外置 type=A）
+     * 答案文本（biz_text_content content_type='A' — PRD-B-013 减法后唯一来源）
      */
     private String answer;
 
@@ -39,7 +41,7 @@ public class QuestionDetailVo extends QuestionItemVo {
     private String answerImg;
 
     /**
-     * 解析文本（biz_text_content 外置 type=E）
+     * 解析文本（biz_text_content content_type='E'）
      */
     private String explain;
 

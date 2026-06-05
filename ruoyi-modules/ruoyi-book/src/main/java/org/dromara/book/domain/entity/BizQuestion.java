@@ -8,6 +8,7 @@ import lombok.Data;
 
 import java.io.Serial;
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.Date;
 
 /**
@@ -20,6 +21,9 @@ import java.util.Date;
  *   <li>DB {@code create_time DATETIME} → Java {@code Date createTime} → VO {@code Long createTime} ms timestamp（归一化）</li>
  *   <li>DB {@code status CHAR(1)}：'0' 草稿 / '1' 已发布 / '2' 软删</li>
  * </ul>
+ *
+ * <p>🔴 PRD-B-013 减法：删除 10 死字段（详见 PRD-B-013 §scope.A — biz_question 段），
+ * 均为 misikt 复刻期残留 + 错设计字段，N1 录题地基清理。
  *
  * @author backend-dev
  */
@@ -92,7 +96,8 @@ public class BizQuestion implements Serializable {
     /**
      * 答案文本外置 FK -> biz_text_content.id（PRD-B-006 收尾增量新增）。
      *
-     * <p>大块答案文本（解题步骤 / 长答案）落 biz_text_content content_type='A'。
+     * <p>大块答案文本（解题步骤 / 长答案）落 biz_text_content content_type='A'；
+     * 短答案（A/B/C/D / 短填空）历史走 biz_question 短答案列（PRD-B-013 已删）。
      */
     private Long answerTextContentId;
 
@@ -138,6 +143,56 @@ public class BizQuestion implements Serializable {
      * 创建用户 BIGINT（跟 create_by VARCHAR 历史并存）
      */
     private Long createUser;
+
+    /**
+     * 基础分值 DECIMAL(5,2)（PRD-B-012 标注维度地基新增）
+     */
+    private BigDecimal baseScore;
+
+    /**
+     * 是否已收藏 0/1（PRD-B-012 新增）
+     */
+    private Integer isCollected;
+
+    /**
+     * 导入来源（PRD-B-012 新增）
+     */
+    private String importSource;
+
+    /**
+     * 导入批次 ID（PRD-B-012 新增）
+     */
+    private String importBatchId;
+
+    /**
+     * 区域编码（PRD-B-012 新增）
+     */
+    private String regionCode;
+
+    /**
+     * 来源类型（PRD-B-012 新增）
+     */
+    private Integer sourceType;
+
+    /**
+     * 母题 ID（变式关系 PRD-B-012 新增）
+     */
+    private Long motherQuestionId;
+
+    /**
+     * 变式关系（PRD-B-012 新增）
+     */
+    private String variantRelation;
+
+    /**
+     * 标注版本（PRD-B-012 新增）
+     */
+    private Integer annotateVersion;
+
+    /**
+     * 标注状态（PRD-B-012 新增）
+     */
+    private Integer annotateStatus;
 
     @TableField(fill = FieldFill.INSERT)
     private Date createTime;

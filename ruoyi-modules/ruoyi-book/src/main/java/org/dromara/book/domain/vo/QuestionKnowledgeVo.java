@@ -8,7 +8,7 @@ import java.io.Serializable;
 /**
  * 题目知识点关联 VO（questionKnowledges / questionStdKnowledges 数组元素）。
  *
- * <p>来源 biz_question_knowledge LEFT JOIN biz_subject — 取 subject.name。
+ * <p>来源 biz_question_knowledge LEFT JOIN biz_subject — 取 subject.name/img/video。
  * misikt JSON 字段命名严格对齐（参 A3-question-page.json）。
  *
  * @author backend-dev
@@ -37,7 +37,8 @@ public class QuestionKnowledgeVo implements Serializable {
     private String knowledgeName;
 
     /**
-     * 关联记录创建时间（datetime → string，misikt 抓包恒 null；本工程返 null 兼容）
+     * 关联记录创建时间（datetime → string，misikt 抓包恒 null；本工程返 null 兼容）。
+     * 🔴 PRD-B-013 减法：删除知识点配图/视频字段（biz_subject 同步 DROP）。
      */
     private String createTime;
 }

@@ -116,6 +116,7 @@ public interface BizPaperMapper extends BaseMapperPlus<BizPaper, BizPaper> {
      * <p>走 MyBatis-Plus 分页插件（@Param(Constants.WRAPPER) 注入 ${ew.customSqlSegment}）。
      * 字段类型按 misikt 真响应口径 CAST：score DECIMAL → Integer，
      * status CHAR(1) → Integer，create_by VARCHAR → Integer，create_time DATETIME 透传 Date。
+     * 🔴 PRD-B-013: biz_paper 3 列已 DROP（详见 PRD-B-013 §scope.A）。
      *
      * @param page    MyBatis-Plus 分页对象
      * @param wrapper Wrapper 注入 WHERE 条件（name LIKE / subject_id 前缀 / status / orderBy）

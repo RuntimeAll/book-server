@@ -50,6 +50,9 @@ import java.util.Set;
  *   <li>3001 根节点 parentId override 为 "1"（misikt 真响应历史遗留 bug，字节级对齐）</li>
  * </ul>
  *
+ * <p>🔴 PRD-B-013 减法：共享标记列已 DROP（biz_paper / biz_paper_category），原 public 分支/toVo 内相关
+ * 逻辑同步清除；公共卷库归属唯独靠 subject_id 分类前缀（3001/3003/3004）。
+ *
  * @author backend-dev
  */
 @Service
@@ -124,6 +127,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
     /**
      * 单实体 → VO。字段口径按 misikt 真响应字节级：
      * 3001 根节点 parentId override '1'。
+     * 🔴 PRD-B-013 减法：共享标记列已 DROP，VO 同步删除该字段。
      */
     private PaperCategoryNodeVo toVo(BizPaperCategory e) {
         PaperCategoryNodeVo vo = new PaperCategoryNodeVo();
@@ -193,8 +197,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         wrapper.eq("p.status", "1");
 
         // scope 分流：'mine' → 只看自己创建的；其余（'public' / 缺省）→ 公共卷库，按分类树归属过滤
-        // 🔴 2026-06-02 修：公共卷库语义 = 按 paper_category 分类树（subject_id 前缀，见下方），不是 is_share 开关
-        //   （PRD-B-013 已 DROP biz_paper.is_share 死字段）。
+        // 🔴 PRD-B-013: 共享标记列已 DROP；公共卷库语义 = 按 paper_category 分类树（subject_id 前缀）。
         if ("mine".equals(bo.getScope())) {
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
             wrapper.eq("p.create_by", currentUserIdStr);
