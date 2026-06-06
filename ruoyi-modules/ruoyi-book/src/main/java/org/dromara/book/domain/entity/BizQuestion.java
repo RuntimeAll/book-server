@@ -194,6 +194,60 @@ public class BizQuestion implements Serializable {
      */
     private Integer annotateStatus;
 
+    /**
+     * ①知识点 ID（关联现有知识点树）—— PRD-C-006 V16 新增，AI 打标维度 1。
+     */
+    private String dim1KpId;
+
+    /**
+     * ②题型 1选择/4填空/5解答/6证明 —— V16 新增（dim2_qtype TINYINT），AI 打标维度 2。
+     */
+    private Integer dim2Qtype;
+
+    /**
+     * ③思维方法数组（JSON 列 dim3_skill，如 {@code ["分类讨论","数形结合"]}）—— V16 新增。
+     *
+     * <p>🔴 探针期用 String 存原始 JSON 文本（不上 typeHandler，PRD-C-007 T1 范式）。
+     */
+    private String dim3Skill;
+
+    /**
+     * ④难度 1-4（dim4_difficulty TINYINT）—— V16 新增，AI 打标维度 4。
+     */
+    private Integer dim4Difficulty;
+
+    /**
+     * ⑤图形/情境结构指纹（dim5_structure VARCHAR(255)）—— V16 新增，AI 打标维度 5。
+     */
+    private String dim5Structure;
+
+    /**
+     * 辅标签 JSON（aux_tags：错因/情境/考查角度/母题）—— V16 新增。
+     *
+     * <p>🔴 探针期用 String 存原始 JSON 文本（不上 typeHandler）。
+     */
+    private String auxTags;
+
+    /**
+     * AI 打标状态机（label_status TINYINT）：0未标 / 1AI已标 / 2已审核 / 3争议 —— V16 新增。
+     */
+    private Integer labelStatus;
+
+    /**
+     * AI 自评置信度 0-1（label_confidence DECIMAL(4,3)）—— V16 新增。
+     */
+    private BigDecimal labelConfidence;
+
+    /**
+     * AI 模型名或人员（labeled_by VARCHAR(64)）—— V16 新增。
+     */
+    private String labeledBy;
+
+    /**
+     * 打标时间（labeled_at DATETIME）—— V16 新增，update_label 服务端取 now。
+     */
+    private Date labeledAt;
+
     @TableField(fill = FieldFill.INSERT)
     private Date createTime;
 

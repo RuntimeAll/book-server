@@ -2,6 +2,7 @@ package org.dromara.book.service;
 
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
@@ -82,4 +83,18 @@ public interface IQuestionService {
      * @return 草稿 VO（sections 按 questionType 顺序，空筐返 sections=[]）
      */
     ExamDataVo genExamData(Long userId);
+
+    /**
+     * PRD-C-007 T1 — 题目 5 维度打标回写（POST /teacher/question/update-label）。
+     *
+     * <p>仅 UPDATE 打标列（dim1_kp_id / dim2_qtype / dim3_skill / dim4_difficulty / dim5_structure /
+     * aux_tags / label_status / label_confidence / labeled_by / labeled_at），不碰题干/答案。
+     * labeled_at 服务端取 now。dim3_skill / aux_tags 由 service 序列化为 JSON 文本落库。
+     *
+     * <p>🔴 必须 {@code DataPermissionHelper.ignore} 包裹 —— biz_question 老题 create_user=2 ≠ 登录 id，
+     * 数据权限拦截器会注入 {@code AND create_by=登录id} → 0 行静默假成功（PRD-A-002 实战坑）。
+     *
+     * @param bo 打标入参（questionId 必填，dim 与 label 维度值）
+     */
+    void updateLabel(UpdateLabelBo bo);
 }

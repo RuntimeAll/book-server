@@ -5,8 +5,10 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
@@ -20,10 +22,13 @@ import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.service.IQuestionBasketService;
 import org.dromara.book.service.IQuestionService;
+import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
+
+import java.util.Date;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -287,6 +292,46 @@ public class QuestionServiceImpl implements IQuestionService {
 
         vo.setSections(sections);
         return vo;
+    }
+
+    /**
+     * PRD-C-007 T1 — 题目 5 维度打标回写。
+     *
+     * <p>🔴 数据权限坑（PRD-A-002 致命实战）：biz_question 老题 create_user=2（misikt 复刻），
+     * 登录 id≠create_by → RuoYi 数据权限拦截器注入 {@code AND create_by=登录id} → 0 行静默假成功。
+     * 故全程 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹
+     * （biz_question 无 tenant_id，同 replaceQuestion 处理；BaseMapper 继承方法走线程级 ignore）。
+     *
+     * <p>仅 {@code set} 打标列，不碰题干/答案。dim3_skill / aux_tags JSON 列探针期存 JSON 文本
+     * （null 时显式 set null，保持可清空语义）。labeled_at 取 now（不收 body）。
+     */
+    @Override
+    public void updateLabel(UpdateLabelBo bo) {
+        if (bo == null || bo.getQuestionId() == null) {
+            return;
+        }
+
+        // JSON 列序列化（探针期存原始 JSON 文本，不上 typeHandler）
+        String dim3SkillJson = bo.getDim3Skill() == null ? null : JsonUtils.toJsonString(bo.getDim3Skill());
+        String auxTagsJson = bo.getAuxTags() == null ? null : JsonUtils.toJsonString(bo.getAuxTags());
+
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            LambdaUpdateWrapper<BizQuestion> uw = new LambdaUpdateWrapper<>();
+            uw.eq(BizQuestion::getId, bo.getQuestionId())
+              .set(BizQuestion::getDim1KpId, bo.getDim1KpId())
+              .set(BizQuestion::getDim2Qtype, bo.getDim2Qtype())
+              .set(BizQuestion::getDim3Skill, dim3SkillJson)
+              .set(BizQuestion::getDim4Difficulty, bo.getDim4Difficulty())
+              .set(BizQuestion::getDim5Structure, bo.getDim5Structure())
+              .set(BizQuestion::getAuxTags, auxTagsJson)
+              .set(BizQuestion::getLabelStatus, bo.getLabelStatus())
+              .set(BizQuestion::getLabelConfidence, bo.getLabelConfidence())
+              .set(BizQuestion::getLabeledBy, bo.getLabeledBy())
+              .set(BizQuestion::getLabeledAt, new Date());
+            // mapper.update(null, wrapper)：entity 传 null，全部更新列走 wrapper.set 显式指定
+            bizQuestionMapper.update(null, uw);
+            return null;
+        }));
     }
 
     /**

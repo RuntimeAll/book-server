@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
@@ -13,6 +14,7 @@ import org.dromara.book.service.IQuestionService;
 import org.dromara.common.core.domain.R;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -111,5 +113,25 @@ public class QuestionController {
             throw new ServiceException("单次最多 100 题导出");
         }
         return R.ok(questionService.listByIds(ids));
+    }
+
+    /**
+     * POST /teacher/question/update-label — PRD-C-007 T1 题目 5 维度打标回写。
+     *
+     * <p>由 teacher-copilot LangGraph persist 节点调用（双头鉴权 + camelCase body）。
+     * 挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包成 {@code {code:1,message,response}}。
+     *
+     * <p>入参（{@link UpdateLabelBo}）：questionId(必填) / dim1KpId / dim2Qtype / dim3Skill[list] /
+     * dim4Difficulty / dim5Structure / auxTags(obj) / labelStatus(1或2,必填) / labelConfidence(0-1) / labeledBy。
+     * labeled_at 服务端取 now。仅 UPDATE 打标列，不碰题干/答案。
+     *
+     * <p>🔴 service 走 {@code DataPermissionHelper.ignore} —— 否则 biz_question 老题
+     * create_user=2 ≠ 登录 id 被数据权限拦截器拦成 0 行静默假成功（PRD-A-002 坑）。
+     */
+    @SaCheckLogin
+    @PostMapping("/update-label")
+    public R<Void> updateLabel(@Validated @RequestBody UpdateLabelBo bo) {
+        questionService.updateLabel(bo);
+        return R.ok("操作成功");
     }
 }
