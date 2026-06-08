@@ -1,6 +1,5 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Constants;
@@ -8,7 +7,6 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.vo.QuestionItemVo;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 import java.util.Collection;
 import java.util.List;
@@ -22,8 +20,7 @@ import java.util.List;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizQuestionMapper extends BaseMapperPlus<BizQuestion, BizQuestion> {
+public interface BizQuestionMapper extends BizBaseMapper<BizQuestion> {
 
     /**
      * 分页查询题目列表（不含 questionKnowledges，由 Service 二次填充）。

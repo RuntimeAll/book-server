@@ -1,11 +1,9 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 import java.util.Collection;
 import java.util.List;
@@ -19,8 +17,7 @@ import java.util.List;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizQuestionKnowledgeMapper extends BaseMapperPlus<BizQuestionKnowledge, BizQuestionKnowledge> {
+public interface BizQuestionKnowledgeMapper extends BizBaseMapper<BizQuestionKnowledge> {
 
     /**
      * 按题目 ID 集合 + source 批量查关联知识点（含 biz_subject 关联取 name/img/video）。

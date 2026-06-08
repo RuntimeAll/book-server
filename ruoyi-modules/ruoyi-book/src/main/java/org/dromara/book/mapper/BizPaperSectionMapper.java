@@ -1,9 +1,7 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.dromara.book.domain.entity.BizPaperSection;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 /**
  * 试卷题目分组 Mapper（biz_paper_section） — Q 卡 createExamPaper 端点写入用。
@@ -15,6 +13,5 @@ import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizPaperSectionMapper extends BaseMapperPlus<BizPaperSection, BizPaperSection> {
+public interface BizPaperSectionMapper extends BizBaseMapper<BizPaperSection> {
 }

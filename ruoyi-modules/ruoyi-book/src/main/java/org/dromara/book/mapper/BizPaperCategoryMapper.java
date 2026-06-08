@@ -1,9 +1,7 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.dromara.book.domain.entity.BizPaperCategory;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 /**
  * 试卷分类树 Mapper（biz_paper_category）— D 卡卷库视觉级还原。
@@ -17,6 +15,5 @@ import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizPaperCategoryMapper extends BaseMapperPlus<BizPaperCategory, BizPaperCategory> {
+public interface BizPaperCategoryMapper extends BizBaseMapper<BizPaperCategory> {
 }

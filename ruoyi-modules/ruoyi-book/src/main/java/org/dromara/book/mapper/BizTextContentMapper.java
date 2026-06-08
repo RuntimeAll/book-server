@@ -1,9 +1,7 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.dromara.book.domain.entity.BizTextContent;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 /**
  * 题目三要素长文本外置 Mapper（biz_text_content）— PRD-B-006 收尾增量。
@@ -17,6 +15,5 @@ import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
  * @author backend-dev (PRD-B-006)
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizTextContentMapper extends BaseMapperPlus<BizTextContent, BizTextContent> {
+public interface BizTextContentMapper extends BizBaseMapper<BizTextContent> {
 }
