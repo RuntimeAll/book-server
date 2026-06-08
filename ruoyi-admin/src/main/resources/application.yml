@@ -91,12 +91,16 @@ spring:
     deserialization:
       # 允许对象忽略json中不存在的属性
       fail_on_unknown_properties: false
-  # Flyway DB 迁移 (PRD-A-012 F-1): dev 期 baseline-on-migrate=true 让本机已有 V1-V16 表跳过重跑;
-  # prod 期首次接入须先手跑 baseline 脚本写入 history 表, 详见 artifacts/Flyway-prod-baseline-SOP.md
+  # Flyway DB 迁移 (PRD-A-012 F-1, G8 修复 2026-06-09):
+  # 🔴 baseline-version=16, baseline-on-migrate=false — 已有库 (dev/prod) 都通过
+  # artifacts/Flyway-prod-baseline-SOP.md (或同步的 V_flyway_baseline_init.sql) 手动把
+  # flyway_schema_history 灌满 V1-V16 success=1, BE 启动只 validate 16 个 migration 不重跑.
+  # 原 baseline-version=0 是 bug — 让 Flyway 把已经手动应用过的 V1-V5 文件再跑一次,
+  # 撞上 V6 INSERT 冲突 success=0 卡死, 后续 V7-V16 全部 skip 不写 history (G8 红).
   flyway:
     enabled: true
-    baseline-on-migrate: true
-    baseline-version: 0
+    baseline-on-migrate: false
+    baseline-version: 16
     locations: classpath:db/migration
     table: flyway_schema_history
     validate-on-migrate: true

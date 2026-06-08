@@ -1,16 +1,16 @@
 --- # 临时文件存储位置 避免临时文件被系统清理报错
 spring.servlet.multipart.location: /ruoyi/server/temp
 
---- # Flyway 迁移 (PRD-A-012 F-1, prod):
+--- # Flyway 迁移 (PRD-A-012 F-1, G8 修复 2026-06-09 root cause):
 # 首次接入步骤详见 artifacts/Flyway-prod-baseline-SOP.md
 # - 步骤 1: 升级前手跑 V_flyway_baseline_init.sql 在 prod DB 建 flyway_schema_history + 标记 V1-V16 success
-# - 步骤 2: baseline 完毕后改本字段为 baseline-on-migrate: false (避免重复 baseline)
-# - 现 dev 与首次 prod 仍走 true (兼容已有 schema)
+# - 步骤 2: baseline 完毕后保持 baseline-on-migrate=false + baseline-version=16 (本配置, 不再改)
+# - dev + prod 均走 false (已存量 schema 必须先 SOP 手动 baseline, 否则启动期 flyway 重跑 V1 DROP TABLE 炸库)
 spring:
   flyway:
     enabled: true
-    baseline-on-migrate: true
-    baseline-version: 0
+    baseline-on-migrate: false
+    baseline-version: 16
     locations: classpath:db/migration
     table: flyway_schema_history
     validate-on-migrate: true

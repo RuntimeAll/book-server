@@ -1,4 +1,5 @@
---- # 监控中心配置
+--- # 监控中心配置 (PRD-A-012 G3 修: dev 也不再用开源默认 ruoyi:123456 — 走 ${ENV:default} 占位符,
+# 默认值为 dev 强随机串非 123456, 让 `curl -u ruoyi:123456 /actuator/env` 必 401 / actuator 鉴权不破)
 spring.boot.admin.client:
   # 增加客户端开关
   enabled: true
@@ -8,8 +9,8 @@ spring.boot.admin.client:
     metadata:
       username: ${spring.boot.admin.client.username}
       userpassword: ${spring.boot.admin.client.password}
-  username: @monitor.username@
-  password: @monitor.password@
+  username: ${MONITOR_USERNAME:admin}
+  password: ${MONITOR_PASSWORD:0Pg0y65vxiLyyH9y2m0Q}
 
 --- # snail-job 配置
 snail-job:
@@ -36,12 +37,14 @@ api-decrypt:
 captcha:
   enable: false
 
---- # Flyway 迁移 (PRD-A-012 F-1, dev: 主 yml 配置已生效, 本段为可观测性显式声明)
+--- # Flyway 迁移 (PRD-A-012 F-1, G8 修复 2026-06-09):
+# dev/prod 同样路径 — 已有 schema 库通过 V_flyway_baseline_init.sql 手动灌 V1-V16,
+# 启动时 Flyway 只 validate 不重跑. 与主 yml 同值, 本段为可观测性显式声明.
 spring:
   flyway:
     enabled: true
-    baseline-on-migrate: true
-    baseline-version: 0
+    baseline-on-migrate: false
+    baseline-version: 16
     locations: classpath:db/migration
     table: flyway_schema_history
     validate-on-migrate: true
