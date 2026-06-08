@@ -1,7 +1,7 @@
 # 开发环境配置
 server:
-  # 服务器的HTTP端口（B 线 admin 端 7888 / A 线用户端 8080；A/B 共 master 但目录隔离 codeplace-A vs codeplace-B，本文件端口字段长期飘 — push 前注意）
-  port: 7888
+  # 服务器的HTTP端口（A 线用户端 codeplace-A = 8080 / B 线 admin codeplace-B = 7888；A/B 共 master 但目录隔离，本文件 port 字段长期飘 — push 前注意。本地为 codeplace-A 故 8080）
+  port: 8080
   servlet:
     # 应用的访问路径
     context-path: /
@@ -91,6 +91,15 @@ spring:
     deserialization:
       # 允许对象忽略json中不存在的属性
       fail_on_unknown_properties: false
+  # Flyway DB 迁移 (PRD-A-012 F-1): dev 期 baseline-on-migrate=true 让本机已有 V1-V16 表跳过重跑;
+  # prod 期首次接入须先手跑 baseline 脚本写入 history 表, 详见 artifacts/Flyway-prod-baseline-SOP.md
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+    table: flyway_schema_history
+    validate-on-migrate: true
 
 # Sa-Token配置
 sa-token:
@@ -100,8 +109,8 @@ sa-token:
   is-concurrent: true
   # 在多人登录同一账号时，是否共用一个token (为true时所有登录共用一个token, 为false时每次登录新建一个token)
   is-share: false
-  # jwt秘钥
-  jwt-secret-key: abcdefghijklmnopqrstuvwxyz
+  # jwt秘钥 (PRD-A-012 D-1: prod 经环境变量 SA_JWT_SECRET 注入, dev 走默认占位)
+  jwt-secret-key: ${SA_JWT_SECRET:dev-only-please-set-in-prod}
 
 # security配置
 security:
@@ -166,18 +175,16 @@ mybatis-encryptor:
   publicKey:
   privateKey:
 
-# api接口加密
+# api接口加密 (PRD-A-012 D-4-a: prod 公私钥经环境变量 API_DECRYPT_PUB / API_DECRYPT_PRI 注入, dev 走默认 demo 密钥)
 api-decrypt:
   # 是否开启全局接口加密
   enabled: true
   # AES 加密头标识
   headerFlag: encrypt-key
-  # 响应加密公钥 非对称算法的公私钥 如：SM2，RSA 使用者请自行更换
-  # 对应前端解密私钥 MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAmc3CuPiGL/LcIIm7zryCEIbl1SPzBkr75E2VMtxegyZ1lYRD+7TZGAPkvIsBcaMs6Nsy0L78n2qh+lIZMpLH8wIDAQABAkEAk82Mhz0tlv6IVCyIcw/s3f0E+WLmtPFyR9/WtV3Y5aaejUkU60JpX4m5xNR2VaqOLTZAYjW8Wy0aXr3zYIhhQQIhAMfqR9oFdYw1J9SsNc+CrhugAvKTi0+BF6VoL6psWhvbAiEAxPPNTmrkmrXwdm/pQQu3UOQmc2vCZ5tiKpW10CgJi8kCIFGkL6utxw93Ncj4exE/gPLvKcT+1Emnoox+O9kRXss5AiAMtYLJDaLEzPrAWcZeeSgSIzbL+ecokmFKSDDcRske6QIgSMkHedwND1olF8vlKsJUGK3BcdtM8w4Xq7BpSBwsloE=
-  publicKey: MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAJnNwrj4hi/y3CCJu868ghCG5dUj8wZK++RNlTLcXoMmdZWEQ/u02RgD5LyLAXGjLOjbMtC+/J9qofpSGTKSx/MCAwEAAQ==
-  # 请求解密私钥 非对称算法的公私钥 如：SM2，RSA 使用者请自行更换
-  # 对应前端加密公钥 MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAKoR8mX0rGKLqzcWmOzbfj64K8ZIgOdHnzkXSOVOZbFu/TJhZ7rFAN+eaGkl3C4buccQd/EjEsj9ir7ijT7h96MCAwEAAQ==
-  privateKey: MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAqhHyZfSsYourNxaY7Nt+PrgrxkiA50efORdI5U5lsW79MmFnusUA355oaSXcLhu5xxB38SMSyP2KvuKNPuH3owIDAQABAkAfoiLyL+Z4lf4Myxk6xUDgLaWGximj20CUf+5BKKnlrK+Ed8gAkM0HqoTt2UZwA5E2MzS4EI2gjfQhz5X28uqxAiEA3wNFxfrCZlSZHb0gn2zDpWowcSxQAgiCstxGUoOqlW8CIQDDOerGKH5OmCJ4Z21v+F25WaHYPxCFMvwxpcw99EcvDQIgIdhDTIqD2jfYjPTY8Jj3EDGPbH2HHuffvflECt3Ek60CIQCFRlCkHpi7hthhYhovyloRYsM+IS9h/0BzlEAuO0ktMQIgSPT3aFAgJYwKpqRYKlLDVcflZFCKY7u3UP8iWi1Qw0Y=
+  # 响应加密公钥 (dev 默认 = open-source demo key, prod 走 env)
+  publicKey: ${API_DECRYPT_PUB:MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAJnNwrj4hi/y3CCJu868ghCG5dUj8wZK++RNlTLcXoMmdZWEQ/u02RgD5LyLAXGjLOjbMtC+/J9qofpSGTKSx/MCAwEAAQ==}
+  # 请求解密私钥 (dev 默认 = open-source demo key, prod 走 env)
+  privateKey: ${API_DECRYPT_PRI:MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAqhHyZfSsYourNxaY7Nt+PrgrxkiA50efORdI5U5lsW79MmFnusUA355oaSXcLhu5xxB38SMSyP2KvuKNPuH3owIDAQABAkAfoiLyL+Z4lf4Myxk6xUDgLaWGximj20CUf+5BKKnlrK+Ed8gAkM0HqoTt2UZwA5E2MzS4EI2gjfQhz5X28uqxAiEA3wNFxfrCZlSZHb0gn2zDpWowcSxQAgiCstxGUoOqlW8CIQDDOerGKH5OmCJ4Z21v+F25WaHYPxCFMvwxpcw99EcvDQIgIdhDTIqD2jfYjPTY8Jj3EDGPbH2HHuffvflECt3Ek60CIQCFRlCkHpi7hthhYhovyloRYsM+IS9h/0BzlEAuO0ktMQIgSPT3aFAgJYwKpqRYKlLDVcflZFCKY7u3UP8iWi1Qw0Y=}
 
 springdoc:
   api-docs:

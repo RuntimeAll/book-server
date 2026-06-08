@@ -90,8 +90,9 @@
             <properties>
                 <profiles.active>prod</profiles.active>
                 <logging.level>warn</logging.level>
-                <monitor.username>ruoyi</monitor.username>
-                <monitor.password>123456</monitor.password>
+                <!-- prod 监控凭据占位 — 真值通过 application-prod.yml 的 ${MONITOR_USERNAME}/${MONITOR_PASSWORD} 环境变量覆盖 (PRD-A-012 D-2) -->
+                <monitor.username>__SET_BY_ENV__</monitor.username>
+                <monitor.password>__SET_BY_ENV__</monitor.password>
             </properties>
         </profile>
     </profiles>

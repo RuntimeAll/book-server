@@ -36,6 +36,16 @@ api-decrypt:
 captcha:
   enable: false
 
+--- # Flyway 迁移 (PRD-A-012 F-1, dev: 主 yml 配置已生效, 本段为可观测性显式声明)
+spring:
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+    table: flyway_schema_history
+    validate-on-migrate: true
+
 --- # 数据源配置
 spring:
   datasource:
