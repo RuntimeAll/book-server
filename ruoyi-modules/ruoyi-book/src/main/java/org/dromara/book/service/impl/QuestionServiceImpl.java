@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.entity.BizQuestion;
+import org.dromara.book.domain.entity.BizQuestionKnowledge;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
 import org.dromara.book.domain.vo.FreeTagVo;
@@ -207,23 +208,32 @@ public class QuestionServiceImpl implements IQuestionService {
                 ? null : currentKnowledges.get(0).getKnowledgeId();
 
             // 步骤 1：优先 — 同 subject + 同首考点 + 同 question_type + NOT IN excludeIds
+            // 🔴 PRD-A-012 T2 B-1：原 inSql 字符串拼接 SQL 注入风险，改预查 + .in() 参数化
             Long candidateId = null;
             if (firstKnowledgeId != null && subjectId != null && questionType != null) {
-                LambdaQueryWrapper<BizQuestion> w1 = new LambdaQueryWrapper<>();
-                w1.eq(BizQuestion::getSubjectId, subjectId)
-                  .eq(BizQuestion::getQuestionType, questionType)
-                  .eq(BizQuestion::getStatus, "1")
-                  .notIn(BizQuestion::getId, excludeIds)
-                  // 过滤含同一首考点的题（通过 IN subquery）
-                  .inSql(BizQuestion::getId,
-                      "SELECT DISTINCT question_id FROM biz_question_knowledge "
-                          + "WHERE knowledge_id = '" + firstKnowledgeId.replace("'", "''") + "' "
-                          + "AND source = 'U'")
-                  .last("LIMIT 1");
-                BizQuestion candidate = bizQuestionMapper.selectOne(w1);
-                if (candidate != null) {
-                    candidateId = candidate.getId();
+                // 预查含同一首考点（source='U'）的题 ID 集合 — 参数化 LambdaQueryWrapper
+                List<Long> knowledgeQuestionIds = bizQuestionKnowledgeMapper.selectList(
+                    new LambdaQueryWrapper<BizQuestionKnowledge>()
+                        .eq(BizQuestionKnowledge::getKnowledgeId, firstKnowledgeId)
+                        .eq(BizQuestionKnowledge::getSource, "U")
+                        .select(BizQuestionKnowledge::getQuestionId)
+                ).stream().map(BizQuestionKnowledge::getQuestionId).distinct().collect(Collectors.toList());
+
+                if (!knowledgeQuestionIds.isEmpty()) {
+                    LambdaQueryWrapper<BizQuestion> w1 = new LambdaQueryWrapper<>();
+                    w1.eq(BizQuestion::getSubjectId, subjectId)
+                      .eq(BizQuestion::getQuestionType, questionType)
+                      .eq(BizQuestion::getStatus, "1")
+                      .notIn(BizQuestion::getId, excludeIds)
+                      // 参数化 .in() — 替代旧 inSql 字符串拼接
+                      .in(BizQuestion::getId, knowledgeQuestionIds)
+                      .last("LIMIT 1");
+                    BizQuestion candidate = bizQuestionMapper.selectOne(w1);
+                    if (candidate != null) {
+                        candidateId = candidate.getId();
+                    }
                 }
+                // knowledgeQuestionIds 为空 → 无同首考点候选，跳到步骤 2 兜底
             }
 
             // 步骤 2：兜底 — 同 subject + 同 question_type + NOT IN excludeIds
@@ -330,14 +340,23 @@ public class QuestionServiceImpl implements IQuestionService {
             // 见 数据建模/07-补充资料/W-6-章节树数据复刻方案-2026-05-21.md §4.1。
             //
             // SQL 注入防护：biz_subject.id 是数字串（4-15 位），强校验 ^\d+$ 拒非法输入。
+            // 🔴 PRD-A-012 T2 B-1：原 inSql 字符串拼接虽有白名单挡，但仍走参数化更彻底。
             String sid = bo.getSubjectId();
             if (!sid.matches("^\\d+$")) {
                 // 非法 subjectId 直接返空集（不报错，misikt 真站也吞）
                 w.apply("1=0");
             } else {
-                w.inSql("q.id",
-                    "SELECT DISTINCT question_id FROM biz_question_knowledge "
-                        + "WHERE knowledge_id LIKE '" + sid + "%'");
+                // 预查含该 knowledge_id 前缀（章节树前缀匹配）的 question_id 集合 — 参数化 likeRight
+                List<Long> subjectQuestionIds = bizQuestionKnowledgeMapper.selectList(
+                    new LambdaQueryWrapper<BizQuestionKnowledge>()
+                        .likeRight(BizQuestionKnowledge::getKnowledgeId, sid)
+                        .select(BizQuestionKnowledge::getQuestionId)
+                ).stream().map(BizQuestionKnowledge::getQuestionId).distinct().collect(Collectors.toList());
+                if (subjectQuestionIds.isEmpty()) {
+                    w.apply("1=0");
+                } else {
+                    w.in("q.id", subjectQuestionIds);
+                }
             }
         }
         if (bo.getQuestionType() != null) {
