@@ -113,8 +113,11 @@ sa-token:
   is-concurrent: true
   # 在多人登录同一账号时，是否共用一个token (为true时所有登录共用一个token, 为false时每次登录新建一个token)
   is-share: false
-  # jwt秘钥 (PRD-A-012 D-1: prod 经环境变量 SA_JWT_SECRET 注入, dev 走默认占位)
-  jwt-secret-key: ${SA_JWT_SECRET:dev-only-please-set-in-prod}
+  # jwt秘钥 (PRD-A-012 D-1: prod 经环境变量 SA_JWT_SECRET 注入, dev 走专用默认值, 不再是开源知名默认 abcdefghijklmnopqrstuvwxyz)
+  # 🔴 改密钥后曾撞 /auth/login 500 — 根因已查清(line-a-dev 2026-06-09): Redis 残留旧密钥签发的会话 token,
+  #    换密钥后 createLoginSession → logoutByMaxLoginCount → UserActionListener.doLogout → getExtra(旧token) 验签失败抛 SaJwtException.
+  #    已在 UserActionListener.cleanOnlineToken 加容错(解不开的旧 token 降级裸删不阻断登录), prod 首次设/轮换 SA_JWT_SECRET 也不再炸.
+  jwt-secret-key: ${SA_JWT_SECRET:dev-local-only-jwt-secret-not-for-prod-a012}
 
 # security配置
 security:
@@ -146,6 +149,28 @@ tenant:
     - sys_client
     - sys_oss_config
     - flow_spel
+    # 🔴 PRD-A-012 G4 回归根治（line-a-dev 2026-06-09）：本项目所有 biz_* 业务表均无 tenant_id 列，
+    # 是单租户教师产品。原 PRD-A-012 把 @InterceptorIgnore 从各子 mapper 上移到父接口 BizBaseMapper，
+    # 因 MyBatis-Plus 用 mapperClass.getAnnotation() 读注解、Java 接口注解不从父接口继承 → 注解失效 →
+    # 多租户拦截器对所有 biz_* 表注入 AND tenant_id → "Unknown column 'tenant_id'" 全 500。
+    # 改用 tenant.excludes 表级排除（PlusTenantLineHandler.ignoreTable 按表名精确匹配，namespace 无关、最稳）。
+    - biz_paper
+    - biz_paper_basket
+    - biz_paper_category
+    - biz_paper_question
+    - biz_paper_section
+    - biz_question
+    - biz_question_annotation
+    - biz_question_basket
+    - biz_question_favorite
+    - biz_question_folder
+    - biz_question_knowledge
+    - biz_question_note
+    - biz_subject
+    - biz_text_content
+    # XML 裸 SQL join 引用、无独立 @TableName 实体的表（DB 实测全 35 张 biz_ 表均无 tenant_id 列）
+    - biz_free_tag
+    - biz_question_free_tag
 
 # MyBatisPlus配置
 # https://baomidou.com/config/
