@@ -1,11 +1,9 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.dromara.book.domain.entity.BizQuestionBasket;
 import org.dromara.book.domain.vo.QuestionItemVo;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 import java.util.List;
 
@@ -24,8 +22,7 @@ import java.util.List;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizQuestionBasketMapper extends BaseMapperPlus<BizQuestionBasket, BizQuestionBasket> {
+public interface BizQuestionBasketMapper extends BizBaseMapper<BizQuestionBasket> {
 
     /**
      * INSERT IGNORE — 复合主键命中则忽略（防重加筐，Iron law §1.6）。

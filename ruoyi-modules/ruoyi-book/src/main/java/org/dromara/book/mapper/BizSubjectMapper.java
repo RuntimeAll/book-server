@@ -1,9 +1,7 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.dromara.book.domain.entity.BizSubject;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 /**
  * 章节-知识点树 Mapper（biz_subject）。
@@ -14,6 +12,5 @@ import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizSubjectMapper extends BaseMapperPlus<BizSubject, BizSubject> {
+public interface BizSubjectMapper extends BizBaseMapper<BizSubject> {
 }

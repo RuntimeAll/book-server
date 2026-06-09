@@ -1,11 +1,9 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.dromara.book.domain.entity.BizPaperBasket;
 import org.dromara.book.domain.vo.PaperListItemVo;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 import java.util.List;
 
@@ -28,8 +26,7 @@ import java.util.List;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizPaperBasketMapper extends BaseMapperPlus<BizPaperBasket, BizPaperBasket> {
+public interface BizPaperBasketMapper extends BizBaseMapper<BizPaperBasket> {
 
     /**
      * INSERT IGNORE — 复合主键 (user_id, paper_id) 命中则忽略（防重加筐，Iron law §1.6）。

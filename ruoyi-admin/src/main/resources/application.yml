@@ -91,6 +91,19 @@ spring:
     deserialization:
       # 允许对象忽略json中不存在的属性
       fail_on_unknown_properties: false
+  # Flyway DB 迁移 (PRD-A-012 F-1, G8 修复 2026-06-09):
+  # 🔴 baseline-version=16, baseline-on-migrate=false — 已有库 (dev/prod) 都通过
+  # artifacts/Flyway-prod-baseline-SOP.md (或同步的 V_flyway_baseline_init.sql) 手动把
+  # flyway_schema_history 灌满 V1-V16 success=1, BE 启动只 validate 16 个 migration 不重跑.
+  # 原 baseline-version=0 是 bug — 让 Flyway 把已经手动应用过的 V1-V5 文件再跑一次,
+  # 撞上 V6 INSERT 冲突 success=0 卡死, 后续 V7-V16 全部 skip 不写 history (G8 红).
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    baseline-version: 16
+    locations: classpath:db/migration
+    table: flyway_schema_history
+    validate-on-migrate: true
 
 # Sa-Token配置
 sa-token:
@@ -100,8 +113,11 @@ sa-token:
   is-concurrent: true
   # 在多人登录同一账号时，是否共用一个token (为true时所有登录共用一个token, 为false时每次登录新建一个token)
   is-share: false
-  # jwt秘钥
-  jwt-secret-key: abcdefghijklmnopqrstuvwxyz
+  # jwt秘钥 (PRD-A-012 D-1: prod 经环境变量 SA_JWT_SECRET 注入, dev 走专用默认值, 不再是开源知名默认 abcdefghijklmnopqrstuvwxyz)
+  # 🔴 改密钥后曾撞 /auth/login 500 — 根因已查清(line-a-dev 2026-06-09): Redis 残留旧密钥签发的会话 token,
+  #    换密钥后 createLoginSession → logoutByMaxLoginCount → UserActionListener.doLogout → getExtra(旧token) 验签失败抛 SaJwtException.
+  #    已在 UserActionListener.cleanOnlineToken 加容错(解不开的旧 token 降级裸删不阻断登录), prod 首次设/轮换 SA_JWT_SECRET 也不再炸.
+  jwt-secret-key: ${SA_JWT_SECRET:dev-local-only-jwt-secret-not-for-prod-a012}
 
 # security配置
 security:
@@ -144,6 +160,28 @@ tenant:
     - sys_client
     - sys_oss_config
     - flow_spel
+    # 🔴 PRD-A-012 G4 回归根治（line-a-dev 2026-06-09）：本项目所有 biz_* 业务表均无 tenant_id 列，
+    # 是单租户教师产品。原 PRD-A-012 把 @InterceptorIgnore 从各子 mapper 上移到父接口 BizBaseMapper，
+    # 因 MyBatis-Plus 用 mapperClass.getAnnotation() 读注解、Java 接口注解不从父接口继承 → 注解失效 →
+    # 多租户拦截器对所有 biz_* 表注入 AND tenant_id → "Unknown column 'tenant_id'" 全 500。
+    # 改用 tenant.excludes 表级排除（PlusTenantLineHandler.ignoreTable 按表名精确匹配，namespace 无关、最稳）。
+    - biz_paper
+    - biz_paper_basket
+    - biz_paper_category
+    - biz_paper_question
+    - biz_paper_section
+    - biz_question
+    - biz_question_annotation
+    - biz_question_basket
+    - biz_question_favorite
+    - biz_question_folder
+    - biz_question_knowledge
+    - biz_question_note
+    - biz_subject
+    - biz_text_content
+    # XML 裸 SQL join 引用、无独立 @TableName 实体的表（DB 实测全 35 张 biz_ 表均无 tenant_id 列）
+    - biz_free_tag
+    - biz_question_free_tag
 
 # MyBatisPlus配置
 # https://baomidou.com/config/
@@ -177,18 +215,16 @@ mybatis-encryptor:
   publicKey:
   privateKey:
 
-# api接口加密
+# api接口加密 (PRD-A-012 D-4-a: prod 公私钥经环境变量 API_DECRYPT_PUB / API_DECRYPT_PRI 注入, dev 走默认 demo 密钥)
 api-decrypt:
   # 是否开启全局接口加密
   enabled: true
   # AES 加密头标识
   headerFlag: encrypt-key
-  # 响应加密公钥 非对称算法的公私钥 如：SM2，RSA 使用者请自行更换
-  # 对应前端解密私钥 MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAmc3CuPiGL/LcIIm7zryCEIbl1SPzBkr75E2VMtxegyZ1lYRD+7TZGAPkvIsBcaMs6Nsy0L78n2qh+lIZMpLH8wIDAQABAkEAk82Mhz0tlv6IVCyIcw/s3f0E+WLmtPFyR9/WtV3Y5aaejUkU60JpX4m5xNR2VaqOLTZAYjW8Wy0aXr3zYIhhQQIhAMfqR9oFdYw1J9SsNc+CrhugAvKTi0+BF6VoL6psWhvbAiEAxPPNTmrkmrXwdm/pQQu3UOQmc2vCZ5tiKpW10CgJi8kCIFGkL6utxw93Ncj4exE/gPLvKcT+1Emnoox+O9kRXss5AiAMtYLJDaLEzPrAWcZeeSgSIzbL+ecokmFKSDDcRske6QIgSMkHedwND1olF8vlKsJUGK3BcdtM8w4Xq7BpSBwsloE=
-  publicKey: MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAJnNwrj4hi/y3CCJu868ghCG5dUj8wZK++RNlTLcXoMmdZWEQ/u02RgD5LyLAXGjLOjbMtC+/J9qofpSGTKSx/MCAwEAAQ==
-  # 请求解密私钥 非对称算法的公私钥 如：SM2，RSA 使用者请自行更换
-  # 对应前端加密公钥 MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAKoR8mX0rGKLqzcWmOzbfj64K8ZIgOdHnzkXSOVOZbFu/TJhZ7rFAN+eaGkl3C4buccQd/EjEsj9ir7ijT7h96MCAwEAAQ==
-  privateKey: MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAqhHyZfSsYourNxaY7Nt+PrgrxkiA50efORdI5U5lsW79MmFnusUA355oaSXcLhu5xxB38SMSyP2KvuKNPuH3owIDAQABAkAfoiLyL+Z4lf4Myxk6xUDgLaWGximj20CUf+5BKKnlrK+Ed8gAkM0HqoTt2UZwA5E2MzS4EI2gjfQhz5X28uqxAiEA3wNFxfrCZlSZHb0gn2zDpWowcSxQAgiCstxGUoOqlW8CIQDDOerGKH5OmCJ4Z21v+F25WaHYPxCFMvwxpcw99EcvDQIgIdhDTIqD2jfYjPTY8Jj3EDGPbH2HHuffvflECt3Ek60CIQCFRlCkHpi7hthhYhovyloRYsM+IS9h/0BzlEAuO0ktMQIgSPT3aFAgJYwKpqRYKlLDVcflZFCKY7u3UP8iWi1Qw0Y=
+  # 响应加密公钥 (dev 默认 = open-source demo key, prod 走 env)
+  publicKey: ${API_DECRYPT_PUB:MFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAJnNwrj4hi/y3CCJu868ghCG5dUj8wZK++RNlTLcXoMmdZWEQ/u02RgD5LyLAXGjLOjbMtC+/J9qofpSGTKSx/MCAwEAAQ==}
+  # 请求解密私钥 (dev 默认 = open-source demo key, prod 走 env)
+  privateKey: ${API_DECRYPT_PRI:MIIBVAIBADANBgkqhkiG9w0BAQEFAASCAT4wggE6AgEAAkEAqhHyZfSsYourNxaY7Nt+PrgrxkiA50efORdI5U5lsW79MmFnusUA355oaSXcLhu5xxB38SMSyP2KvuKNPuH3owIDAQABAkAfoiLyL+Z4lf4Myxk6xUDgLaWGximj20CUf+5BKKnlrK+Ed8gAkM0HqoTt2UZwA5E2MzS4EI2gjfQhz5X28uqxAiEA3wNFxfrCZlSZHb0gn2zDpWowcSxQAgiCstxGUoOqlW8CIQDDOerGKH5OmCJ4Z21v+F25WaHYPxCFMvwxpcw99EcvDQIgIdhDTIqD2jfYjPTY8Jj3EDGPbH2HHuffvflECt3Ek60CIQCFRlCkHpi7hthhYhovyloRYsM+IS9h/0BzlEAuO0ktMQIgSPT3aFAgJYwKpqRYKlLDVcflZFCKY7u3UP8iWi1Qw0Y=}
 
 springdoc:
   api-docs:

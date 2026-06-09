@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.dromara.book.domain.bo.SubjectLazyTreeBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
@@ -75,6 +76,7 @@ import java.util.stream.Collectors;
  *
  * @author backend-dev
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AdminQuestionServiceImpl implements IAdminQuestionService {
@@ -294,6 +296,19 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         boolean isCreate = bo.getId() == null;
         Long currentUserId = LoginHelper.getUserId();
         String currentUserName = LoginHelper.getUsername();
+
+        // PRD-A-012 T4: admin 改/建题入口日志（C-7）
+        List<String> changedFields = new ArrayList<>();
+        if (bo.getQuestionType() != null) changedFields.add("questionType");
+        if (bo.getDifficult() != null) changedFields.add("difficult");
+        if (bo.getSubjectId() != null) changedFields.add("subjectId");
+        if (bo.getStemText() != null) changedFields.add("stemText");
+        if (bo.getAnswerText() != null) changedFields.add("answerText");
+        if (bo.getExplainText() != null) changedFields.add("explainText");
+        if (bo.getTagNames() != null) changedFields.add("tagNames");
+        if (bo.getQuestionKnowledges() != null) changedFields.add("questionKnowledges");
+        log.info("【admin·edit-question】 adminId={}, questionId={}, action={}, changedFields={}",
+            currentUserId, bo.getId(), isCreate ? "create" : "update", changedFields);
 
         // ===== Step 1：INSERT/UPDATE biz_question（含 free_tag 冗余串同步） =====
         // 🔴 PRD-B-013: 删除 4 列写入（详见 PRD-B-013 §scope.A）

@@ -1,11 +1,35 @@
 --- # 临时文件存储位置 避免临时文件被系统清理报错
 spring.servlet.multipart.location: /ruoyi/server/temp
 
+--- # Flyway 迁移 (PRD-A-012 F-1, G8 修复 2026-06-09 root cause):
+# 首次接入步骤详见 artifacts/Flyway-prod-baseline-SOP.md
+# - 步骤 1: 升级前手跑 V_flyway_baseline_init.sql 在 prod DB 建 flyway_schema_history + 标记 V1-V16 success
+# - 步骤 2: baseline 完毕后保持 baseline-on-migrate=false + baseline-version=16 (本配置, 不再改)
+# - dev + prod 均走 false (已存量 schema 必须先 SOP 手动 baseline, 否则启动期 flyway 重跑 V1 DROP TABLE 炸库)
+spring:
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    baseline-version: 16
+    locations: classpath:db/migration
+    table: flyway_schema_history
+    validate-on-migrate: true
+
+--- # Actuator 监控端点 (PRD-A-012 D-2: prod 收窄 expose 仅 health/info, 关闭 env/heapdump/beans/configprops 等敏感端点)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
+
 --- # captcha 验证码 —— 🔴 线上默认开启（安全需求 / PRD-A-005）。与 application-dev.yml 的 false 对称：本地关、线上开。
 captcha:
   enable: true
 
---- # 监控中心配置
+--- # 监控中心配置 (PRD-A-012 D-2: prod 真凭据通过环境变量 MONITOR_USERNAME/MONITOR_PASSWORD 注入, 不再走 @monitor.x@ 占位)
 spring.boot.admin.client:
   # 增加客户端开关
   enabled: true
@@ -15,24 +39,19 @@ spring.boot.admin.client:
     metadata:
       username: ${spring.boot.admin.client.username}
       userpassword: ${spring.boot.admin.client.password}
-  username: @monitor.username@
-  password: @monitor.password@
+  username: ${MONITOR_USERNAME:admin}
+  password: ${MONITOR_PASSWORD:__please_set_via_env__}
 
---- # snail-job 配置
+--- # snail-job 配置 (PRD-A-012 D-3: prod 关掉 — 用户证实未在使用, 仅 RuoYi demo 自带 4 个示例任务 / token 走 env 占位防未来开)
 snail-job:
-  enabled: true
-  # 需要在 SnailJob 后台组管理创建对应名称的组,然后创建任务的时候选择对应的组,才能正确分派任务
+  enabled: false
   group: "ruoyi_group"
-  # SnailJob 接入验证令牌 详见 script/sql/ry_job.sql `sj_group_config`表
-  token: "SJ_cKqBTPzCsWA3VyuCfFoccmuIEGXjr5KT"
+  token: ${SNAIL_JOB_TOKEN:placeholder}
   server:
     host: 127.0.0.1
     port: 17888
-  # 命名空间UUID 详见 script/sql/ry_job.sql `sj_namespace`表`unique_id`字段
   namespace: ${spring.profiles.active}
-  # 随主应用端口漂移
   port: 2${server.port}
-  # 客户端ip指定
   host:
 
 --- # 数据源配置 (prod 凭据从环境变量注入，真值落 部署空间/prod/)
@@ -193,87 +212,83 @@ sms:
       signature: 您的短信签名
       sdk-app-id: 您的sdkAppId
 
---- # 三方授权
+--- # 三方授权 (PRD-A-012 D-4-b: prod 整段关 — 用户证实 14 家三方登录全不用; client-secret 全改占位防框架启动 bean 装配失败)
 justauth:
+  enabled: false
   # 前端外网访问地址
   address: http://localhost:80
   type:
     maxkey:
-      # maxkey 服务器地址
-      # 注意 如下均配置均不需要修改 maxkey 已经内置好了数据
       server-url: http://sso.maxkey.top
-      client-id: 876892492581044224
-      client-secret: x1Y5MTMwNzIwMjMxNTM4NDc3Mzche8
+      client-id: ${JUSTAUTH_MAXKEY_ID:placeholder}
+      client-secret: ${JUSTAUTH_MAXKEY_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=maxkey
     topiam:
-      # topiam 服务器地址
-      server-url: http://127.0.0.1:1989/api/v1/authorize/y0q************spq***********8ol
-      client-id: 449c4*********937************759
-      client-secret: ac7***********1e0************28d
+      server-url: http://127.0.0.1:1989/api/v1/authorize/placeholder
+      client-id: ${JUSTAUTH_TOPIAM_ID:placeholder}
+      client-secret: ${JUSTAUTH_TOPIAM_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=topiam
       scopes: [ openid, email, phone, profile ]
     qq:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_QQ_ID:placeholder}
+      client-secret: ${JUSTAUTH_QQ_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=qq
       union-id: false
     weibo:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_WEIBO_ID:placeholder}
+      client-secret: ${JUSTAUTH_WEIBO_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=weibo
     gitee:
-      client-id: 91436b7940090d09c72c7daf85b959cfd5f215d67eea73acbf61b6b590751a98
-      client-secret: 02c6fcfd70342980cd8dd2f2c06c1a350645d76c754d7a264c4e125f9ba915ac
+      client-id: ${JUSTAUTH_GITEE_ID:placeholder}
+      client-secret: ${JUSTAUTH_GITEE_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=gitee
     dingtalk:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_DINGTALK_ID:placeholder}
+      client-secret: ${JUSTAUTH_DINGTALK_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=dingtalk
     baidu:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_BAIDU_ID:placeholder}
+      client-secret: ${JUSTAUTH_BAIDU_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=baidu
     csdn:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_CSDN_ID:placeholder}
+      client-secret: ${JUSTAUTH_CSDN_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=csdn
     coding:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_CODING_ID:placeholder}
+      client-secret: ${JUSTAUTH_CODING_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=coding
       coding-group-name: xx
     oschina:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_OSCHINA_ID:placeholder}
+      client-secret: ${JUSTAUTH_OSCHINA_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=oschina
     alipay_wallet:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_ALIPAY_ID:placeholder}
+      client-secret: ${JUSTAUTH_ALIPAY_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=alipay_wallet
-      alipay-public-key: MIIB**************DAQAB
+      alipay-public-key: ${JUSTAUTH_ALIPAY_PUBKEY:placeholder}
     wechat_open:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_WECHAT_OPEN_ID:placeholder}
+      client-secret: ${JUSTAUTH_WECHAT_OPEN_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=wechat_open
     wechat_mp:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_WECHAT_MP_ID:placeholder}
+      client-secret: ${JUSTAUTH_WECHAT_MP_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=wechat_mp
     wechat_enterprise:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_WECHAT_ENT_ID:placeholder}
+      client-secret: ${JUSTAUTH_WECHAT_ENT_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=wechat_enterprise
       agent-id: 1000002
     gitlab:
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_GITLAB_ID:placeholder}
+      client-secret: ${JUSTAUTH_GITLAB_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=gitlab
     gitea:
-      # 前端改动 https://gitee.com/JavaLionLi/plus-ui/pulls/204
-      # gitea 服务器地址
       server-url: https://demo.gitea.com
-      client-id: 10**********6
-      client-secret: 1f7d08**********5b7**********29e
+      client-id: ${JUSTAUTH_GITEA_ID:placeholder}
+      client-secret: ${JUSTAUTH_GITEA_SECRET:placeholder}
       redirect-uri: ${justauth.address}/social-callback?source=gitea
 
 --- # AI 模块占位 (PRD-B-006 骨架; PRD-B-007 填 provider 实现 + 真实凭据)

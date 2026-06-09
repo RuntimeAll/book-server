@@ -13,10 +13,11 @@ import java.util.List;
  *
  * <p>X 卡段② / freeTag 字典化：用于按 question_id 批量回填结构化 freeTags 数组。
  *
- * <p>不继承 {@code BaseMapperPlus<Entity>} — 本 Mapper 只读不增删改，
+ * <p>不继承 {@link BizBaseMapper}/{@code BaseMapperPlus<Entity>} — 本 Mapper 只读不增删改，
  * 不为字典查询造 BizFreeTag / BizQuestionFreeTag entity（按主线段②约束）。
  *
- * <p>biz_question_free_tag 无 tenant_id 字段，关 MyBatis-Plus 多租户拦截器自动注入。
+ * <p>biz_question_free_tag 无 tenant_id 字段；本接口无 entity 不走 BizBaseMapper，
+ * 保留自身 @InterceptorIgnore 关 MP 多租户拦截器自动注入 (PRD-A-012 T3 例外保留).
  *
  * @author backend-dev (X 卡段②)
  */

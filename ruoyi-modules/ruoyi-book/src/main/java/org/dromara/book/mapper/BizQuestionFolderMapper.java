@@ -1,9 +1,7 @@
 package org.dromara.book.mapper;
 
-import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import org.apache.ibatis.annotations.Mapper;
 import org.dromara.book.domain.entity.BizQuestionFolder;
-import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
 
 /**
  * 题目收藏夹 Mapper（biz_question_folder）。
@@ -16,6 +14,5 @@ import org.dromara.common.mybatis.core.mapper.BaseMapperPlus;
  * @author backend-dev
  */
 @Mapper
-@InterceptorIgnore(tenantLine = "true")
-public interface BizQuestionFolderMapper extends BaseMapperPlus<BizQuestionFolder, BizQuestionFolder> {
+public interface BizQuestionFolderMapper extends BizBaseMapper<BizQuestionFolder> {
 }

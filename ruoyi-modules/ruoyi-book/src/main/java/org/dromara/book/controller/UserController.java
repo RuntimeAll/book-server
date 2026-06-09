@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.annotation.SaIgnore;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.dromara.book.domain.bo.RegisterTeacherBo;
 import org.dromara.book.domain.bo.UpdateProfileBo;
 import org.dromara.book.domain.vo.CurrentUserVo;
@@ -32,6 +33,7 @@ import java.util.Map;
  *
  * @author backend-dev
  */
+@Slf4j
 @RestController
 @RequestMapping("/teacher/user")
 @RequiredArgsConstructor
@@ -99,6 +101,7 @@ public class UserController {
             validateCaptcha(bo.getCode(), bo.getUuid());
         }
         Long userId = userService.register(bo);
+        log.info("【user·register】 username={}, realName={}, userId={}", bo.getUserName(), bo.getNickName(), userId);
         Map<String, Object> resp = new HashMap<>(2);
         resp.put("userId", userId);
         resp.put("userName", bo.getUserName());

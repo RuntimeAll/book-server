@@ -105,6 +105,7 @@ public class AuthController {
         LoginVo loginVo = IAuthStrategy.login(body, client, grantType);
 
         Long userId = LoginHelper.getUserId();
+        log.info("【auth·login】 username={}, clientId={}, userId={}", LoginHelper.getUsername(), clientId, userId);
         scheduledExecutorService.schedule(() -> {
             SseMessageDto dto = new SseMessageDto();
             dto.setMessage(DateUtils.getTodayHour(new Date()) + "好，欢迎登录 RuoYi-Vue-Plus 后台管理系统");

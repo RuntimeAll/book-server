@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
@@ -55,6 +56,7 @@ import java.util.Set;
  *
  * @author backend-dev
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaperLibraryServiceImpl implements IPaperLibraryService {
@@ -294,6 +296,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         }
         bizPaperQuestionMapper.insertBatch(pqList);
 
+        log.info("【paper·create】 userId={}, paperName={}, questionCount={}, paperId={}", userIdStr, bo.getName(), qCount, newPaperId);
         return new CreateExamPaperVo(newPaperId, qCount);
     }
 
@@ -337,6 +340,8 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
                 throw new ServiceException("无权编辑非本人创建的试卷");
             }
+
+            log.info("【paper·update】 userId={}, paperId={}, oldName={}, newName={}", currentUserId, paperId, existing.getName(), bo.getName());
 
             Date now = new Date();
             String userIdStr = String.valueOf(currentUserId);
@@ -431,6 +436,8 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
                 throw new ServiceException("无权删除非本人创建的试卷");
             }
+
+            log.info("【paper·delete】 userId={}, paperId={}, paperName={}", currentUserId, paperId, existing.getName());
 
             // 2. 级联物理删 biz_paper_question（该卷全部题关系）
             LambdaQueryWrapper<BizPaperQuestion> pqWrapper = new LambdaQueryWrapper<>();
