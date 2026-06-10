@@ -70,8 +70,11 @@
         q.question_type,
         q.difficult,
         q.subject_id,
-        <!-- PRD: 题干外置优先（biz_text_content S），AI 题 q.stem_text 为 NULL 时回填外置文本，老 misikt 题兜底老字段 -->
-        COALESCE(tc_s.content, q.stem_text) AS stem_text_resolved,
+        <!-- 题干文本来源闸（2026-06-11 用户拍板"来源锁死"）：misikt 题 stem_text 是搜索用纯文本提取、非展示内容，
+             展示必须走 stem_img_url 图片 → stemText 强制出 NULL 让前端能力判定落回图片；
+             其余来源（AI-Orchestrator/举一反三/manual）外置文本优先、老字段兜底。后期 TextIn 复活老题时再放开此闸 -->
+        CASE WHEN q.import_source = 'misikt' THEN NULL
+             ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text_resolved,
         q.stem_img_url,
         q.free_tag,
         0 AS score_val,
@@ -143,7 +146,8 @@
             q.difficult,
             q.subject_id,
             <!-- PRD-B-006: 三要素外置优先, biz_text_content 命中走外置, stem 兜底老字段 -->
-            COALESCE(tc_s.content, q.stem_text)         AS stem_text_resolved,
+            CASE WHEN q.import_source = 'misikt' THEN NULL
+                 ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text_resolved,
             tc_a.content                                AS answer_resolved,
             tc_e.content                                AS explain_resolved,
             q.stem_text,
@@ -183,7 +187,8 @@
             q.subject_id,
             <!-- PRD-B-006: 同 selectQuestionDetailById 拼三要素外置, 试卷预览/PDF 导出也吃到 -->
             <!-- PRD-B-013: 删 8 列（详见 PRD-B-013 §scope.A）；answer 直读 biz_text_content A 列 -->
-            COALESCE(tc_s.content, q.stem_text)         AS stem_text_resolved,
+            CASE WHEN q.import_source = 'misikt' THEN NULL
+                 ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text_resolved,
             tc_a.content                                AS answer_resolved,
             tc_e.content                                AS explain_resolved,
             q.stem_text,
