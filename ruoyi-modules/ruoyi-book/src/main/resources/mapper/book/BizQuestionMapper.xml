@@ -22,7 +22,9 @@
         <result property="questionType" column="question_type"/>
         <result property="difficult" column="difficult"/>
         <result property="subjectId" column="subject_id"/>
-        <result property="stemText" column="stem_text"/>
+        <!-- PRD: stemText 走 resolved 别名（COALESCE(biz_text_content S, q.stem_text)），
+             AI 入库/手录题 q.stem_text 为 NULL，文本在 biz_text_content；列表 / 收藏列表 / 详情三处 SELECT 统一产出该别名列 -->
+        <result property="stemText" column="stem_text_resolved"/>
         <result property="stemImg" column="stem_img_url"/>
         <result property="freeTag" column="free_tag"/>
         <result property="score" column="score_val"/>
@@ -68,7 +70,8 @@
         q.question_type,
         q.difficult,
         q.subject_id,
-        q.stem_text,
+        <!-- PRD: 题干外置优先（biz_text_content S），AI 题 q.stem_text 为 NULL 时回填外置文本，老 misikt 题兜底老字段 -->
+        COALESCE(tc_s.content, q.stem_text) AS stem_text_resolved,
         q.stem_img_url,
         q.free_tag,
         0 AS score_val,
@@ -95,6 +98,7 @@
         <include refid="QuestionItemColumns"/>,
         (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
         FROM biz_question q
+        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
         LEFT JOIN biz_question_favorite f
           ON f.question_id = q.id
          AND f.user_id = #{currentUserId}
@@ -114,6 +118,7 @@
         <include refid="QuestionItemColumns"/>,
         1 AS is_favorite
         FROM biz_question q
+        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
         INNER JOIN biz_question_favorite f
           ON f.question_id = q.id
          AND f.user_id = #{currentUserId}
