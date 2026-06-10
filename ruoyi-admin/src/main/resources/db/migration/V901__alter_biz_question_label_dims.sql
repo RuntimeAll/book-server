@@ -1,9 +1,12 @@
 -- ============================================================================
--- V16: PRD-C(teacher-copilot 探针) — biz_question 加 5 层维度打标字段 + 状态机 + 向量预留
+-- V901: PRD-C(teacher-copilot 探针) — biz_question 加 5 层维度打标字段 + 状态机 + 向量预留
 -- ----------------------------------------------------------------------------
 -- 来源: codeplace-C/teacher-copilot-ready/01-DDL.sql (2026-06-05 探针施工图) §1
 -- 目的: 题库 5 层维度 AI 打标(①知识点 ②题型 ③思维方法 ④难度 ⑤图形/情境结构)
--- 状态: 🟡 留档(第2周 graph 落库前置)。手动跑, 非自动迁移。
+-- 🔴 2026-06-10 转正为 flyway 自动迁移(原 sql/V16, 与 A 线 db/migration/V16 撞号 → 重排到 C 线
+--    预留段 V901+, A 线后续 V19/20/… 永不再撞)。纯增量(ADD COLUMN/索引, 无 DROP), prod 部署直接 apply。
+--    dev 已手工应用过同内容 → flyway_schema_history 以 NULL checksum 记 V901 success=1, 启动 validate
+--    跳过重跑(同 V1-16 baseline 行写法)。
 --
 -- 🔴 跑此文件必须显式 utf8mb4(同 V11), 否则中文 COMMENT 落库乱码:
 --   mysql --default-character-set=utf8mb4 -uroot -pXXX miskt_data2 < V16__alter_biz_question_label_dims.sql

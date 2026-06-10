@@ -1,9 +1,10 @@
 -- ============================================================================
--- V18: PRD-C(teacher-copilot 探针) — biz_billing_event 计费埋点表(骨架版)
+-- V903: PRD-C(teacher-copilot 探针) — biz_billing_event 计费埋点表(骨架版)
 -- ----------------------------------------------------------------------------
 -- 来源: codeplace-C/teacher-copilot-ready/01-DDL.sql §3
 -- 目的: 每次 LLM 调用 / 服务计量埋点。
--- 状态: 🟡 留档(第2周 persist 节点每次 LLM 调用写一条)。手动跑, 非自动迁移。
+-- 🔴 2026-06-10 转正为 flyway 自动迁移(原 sql/V18 → C 线预留段 V903)。纯新建表(CREATE TABLE, 无 DROP),
+--    探针未来用、现 prod 空表零风险; dev 已手工建过 → history NULL checksum 记 success=1 跳过重跑。
 --
 -- 🔴 第一期【只埋点, 不扣费】, 但字段必须从第一天就有 —— 否则上线后想做计费, 历史数据全丢。
 -- ⚠️ 待决(见 teacher-copilot/ROADMAP.md): 埋点【写入路径】走 RuoYi HTTP 还是 Python 直写 3307?
