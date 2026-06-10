@@ -91,6 +91,12 @@ public class QuestionServiceImpl implements IQuestionService {
         // 免 FE N+1 调用 /qd/favorite/{id}。@SaCheckLogin 在 Controller 兜底，此处不为 null。
         Long currentUserId = LoginHelper.getUserId();
 
+        // PRD-C-009「我的题库」：mine=true → 只看当前登录老师自己的题（create_user=自己）。
+        // owner 由后端定（绝不信前端传 userId），前端只传 mine 开关。
+        if (Boolean.TRUE.equals(bo.getMine())) {
+            wrapper.eq("q.create_user", currentUserId);
+        }
+
         Page<QuestionItemVo> mpPage = new Page<>(pageIndex, pageSize);
         IPage<QuestionItemVo> result = bizQuestionMapper.selectQuestionPage(mpPage, wrapper, currentUserId);
 

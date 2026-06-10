@@ -63,4 +63,10 @@ public class QuestionPageBo implements Serializable {
      * 过滤已被试卷引用的题：0=不限 / 1=只看未被试卷引用
      */
     private Integer notUsedQuestion;
+
+    /**
+     * PRD-C-009「我的题库」：true=只看当前登录老师自己的题（create_user=自己，含举一反三跑出 + 上传）。
+     * 空/false=不过滤（沿用原「题库」全量语义）。owner 由后端 LoginHelper 定，前端只传开关。
+     */
+    private Boolean mine;
 }
