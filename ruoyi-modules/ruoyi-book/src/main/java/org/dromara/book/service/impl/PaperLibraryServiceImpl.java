@@ -200,6 +200,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
 
         // scope 分流：'mine' → 只看自己创建的；其余（'public' / 缺省）→ 公共卷库，按分类树归属过滤
         // 🔴 PRD-B-013: 共享标记列已 DROP；公共卷库语义 = 按 paper_category 分类树（subject_id 前缀）。
+        // （2026-06-02 修：历史「共享开关」字段已在 PRD-B-013 V15 DROP 清掉，绝不依赖。）
         if ("mine".equals(bo.getScope())) {
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
             wrapper.eq("p.create_by", currentUserIdStr);
@@ -233,13 +234,30 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         if (currentUserId == null) {
             throw new ServiceException("未登录用户不能创建试卷");
         }
+        return doCreateExamPaper(bo, String.valueOf(currentUserId));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CreateExamPaperVo createExamPaperForTeacher(CreateExamPaperBo bo, Long teacherId) {
+        if (teacherId == null) {
+            throw new ServiceException("归属老师 id 不能为空");
+        }
+        return doCreateExamPaper(bo, String.valueOf(teacherId));
+    }
+
+    /**
+     * 落库核心：写 biz_paper + section + 批量 paper_question。create_by 由调用方决定
+     * （登录态 or 显式 teacherId），是两个入口的唯一差异。
+     */
+    private CreateExamPaperVo doCreateExamPaper(CreateExamPaperBo bo, String ownerIdStr) {
         if (bo.getQuestionIds() == null || bo.getQuestionIds().isEmpty()) {
             throw new ServiceException("题目列表不能为空");
         }
 
         int qCount = bo.getQuestionIds().size();
         Date now = new Date();
-        String userIdStr = String.valueOf(currentUserId);
+        String userIdStr = ownerIdStr;
 
         // 1. INSERT biz_paper
         BizPaper paper = new BizPaper();
@@ -278,7 +296,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         }
         bizPaperQuestionMapper.insertBatch(pqList);
 
-        log.info("【paper·create】 userId={}, paperName={}, questionCount={}, paperId={}", currentUserId, bo.getName(), qCount, newPaperId);
+        log.info("【paper·create】 userId={}, paperName={}, questionCount={}, paperId={}", userIdStr, bo.getName(), qCount, newPaperId);
         return new CreateExamPaperVo(newPaperId, qCount);
     }
 

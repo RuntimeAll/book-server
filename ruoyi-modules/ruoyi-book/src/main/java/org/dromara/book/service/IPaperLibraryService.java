@@ -68,6 +68,18 @@ public interface IPaperLibraryService {
     CreateExamPaperVo createExamPaper(CreateExamPaperBo bo);
 
     /**
+     * 指定归属老师创建试卷（C 线 AI 组卷免登录落库用）。
+     *
+     * <p>与 {@link #createExamPaper(CreateExamPaperBo)} 共用落库核心，区别仅在 create_by
+     * 用显式传入的 teacherId（而非登录态），供 Dify 免登录编排把卷落进目标老师的"我的卷库"。
+     *
+     * @param bo        创建入参（name + questionIds）
+     * @param teacherId 归属老师 id（= sys_user.id），不可为空
+     * @return 新建试卷 ID + 题目数
+     */
+    CreateExamPaperVo createExamPaperForTeacher(CreateExamPaperBo bo, Long teacherId);
+
+    /**
      * PRD-A-005 T3 — 编辑试卷（POST /teacher/exam/paper/update）。
      *
      * <p>业务流（@Transactional 整体回滚）：
