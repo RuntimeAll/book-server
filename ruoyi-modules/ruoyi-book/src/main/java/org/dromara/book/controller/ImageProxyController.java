@@ -3,24 +3,13 @@ package org.dromara.book.controller;
 import cn.dev33.satoken.annotation.SaIgnore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.dromara.common.core.exception.ServiceException;
-import org.dromara.common.redis.utils.RedisUtils;
+import org.dromara.book.service.OssImageFetcher;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.util.DigestUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.Base64;
 
 /**
  * Q' 卡 hotfix-4 — OSS 图代理端点。
@@ -31,24 +20,16 @@ import java.util.Base64;
  * 这导致预览模态加载题图被拒，PDF 截图也连带空白。
  *
  * <p><b>方案</b>：BE 代理拉 OSS 流，剥掉 {@code Content-Disposition} + {@code x-oss-force-download}
- * 后同源返给 FE。同时走 Redis 24h 缓存，OSS 单图只首次拉一次，后续命中 Redis。
+ * 后同源返给 FE。SSRF 白名单 + Redis 24h 缓存 + 体积上限的取图逻辑（PRD-A-014）已抽到
+ * {@link OssImageFetcher} 公共组件（导出 PdfComposer 共用同一把关点），本控制器仅负责同源 HTTP 响应。
  *
  * <p><b>调用</b>：{@code GET /api/teacher/image-proxy?url=<encoded-oss-url>}
  *
- * <p><b>安全</b>：
- * <ul>
- *   <li>{@code @SaIgnore} 无需登录 — chrome {@code <img src>} 不会自动带 Bearer token，
- *       加鉴权会让 401 阻塞 inline 渲染（hotfix-5 反派轮 5 真因）。
- *       业务安全考量：OSS 图本身是 public-read（直连 OSS URL 任何人都能拿），代理层加鉴权冗余</li>
- *   <li>白名单只允许 ai-book OSS host，防 SSRF</li>
- *   <li>体积上限 10MB 防 DoS</li>
- *   <li>未来如需防盗链 → 走 referer 检查 + bucket-level OSS ACL（不在本端点做）</li>
- * </ul>
+ * <p><b>安全</b>：{@code @SaIgnore} 无需登录（chrome {@code <img src>} 不带 Bearer token，
+ * 加鉴权会 401 阻塞 inline 渲染；OSS 图本身 public-read，代理层鉴权冗余）；SSRF 白名单 +
+ * 体积上限在 OssImageFetcher 内。
  *
- * <p><b>envelope</b>：路径含 /teacher/ 前缀命中 {@link MisiktEnvelopeAdvice}，
- * 但 advice 实现已豁免非 JSON 响应（line 83-86），binary image 直接返不被包。
- *
- * @author backend-dev (Q' hotfix-4)
+ * @author backend-dev (Q' hotfix-4 / PRD-A-014 抽离取图逻辑)
  */
 @RestController
 @RequestMapping("/teacher/image-proxy")
@@ -56,97 +37,16 @@ import java.util.Base64;
 @Slf4j
 public class ImageProxyController {
 
-    /** OSS host 白名单（防 SSRF）— 只允许代理 ai-book bucket */
-    private static final String OSS_HOST_WHITELIST = "ai-book.oss-cn-hangzhou.aliyuncs.com";
-
-    /** Redis 缓存 key 前缀 */
-    private static final String CACHE_KEY_PREFIX = "img-proxy:";
-
-    /** Redis 缓存 TTL — 题图变更频率低，24h 合理 */
-    private static final Duration CACHE_TTL = Duration.ofHours(24);
-
-    /** 单图体积上限 — 防 DoS / Redis 内存爆炸 */
-    private static final int MAX_IMAGE_SIZE = 10 * 1024 * 1024;
-
-    /** HttpClient 拉 OSS 超时 */
-    private static final Duration FETCH_TIMEOUT = Duration.ofSeconds(10);
-
-    /** java.net.http.HttpClient 单例（线程安全，复用连接池） */
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(5))
-        .build();
+    private final OssImageFetcher ossImageFetcher;
 
     @SaIgnore
     @GetMapping
     public ResponseEntity<byte[]> proxy(@RequestParam("url") String url) {
-        // 1. URI 解析 + 白名单校验
-        URI uri;
-        try {
-            uri = URI.create(url);
-        } catch (IllegalArgumentException e) {
-            throw new ServiceException("非法 image url: " + url);
-        }
-        if (uri.getHost() == null || !OSS_HOST_WHITELIST.equals(uri.getHost())) {
-            throw new ServiceException("非法 image host: " + uri.getHost());
-        }
-
-        // 2. Redis 缓存命中
-        // 🔴 hotfix(2026-06-03): RedisUtils 用 Jackson JSON codec，直接存 byte[] 会被序列化成 Base64
-        //    字符串，读回来是 String，强转 byte[] 必抛 ClassCastException —— 表现为预览/导出图「首次能看、
-        //    二次起全裂(500)」。修法：缓存显式存/取 Base64 String。读失败(含历史脏 byte[] 缓存)吞掉当
-        //    cache miss 重拉，自愈，无需手动清 Redis。
-        String cacheKey = CACHE_KEY_PREFIX + DigestUtils.md5DigestAsHex(url.getBytes(StandardCharsets.UTF_8));
-        try {
-            String cachedB64 = RedisUtils.getCacheObject(cacheKey);
-            if (cachedB64 != null) {
-                log.debug("[image-proxy] cache hit: {}", url);
-                return buildResponse(Base64.getDecoder().decode(cachedB64), "image/png");
-            }
-        } catch (Exception e) {
-            log.warn("[image-proxy] cache read failed, will re-fetch: {} ({})", url, e.getMessage());
-        }
-
-        // 3. 走 OSS 拉
-        byte[] bytes;
-        String contentType;
-        try {
-            HttpRequest req = HttpRequest.newBuilder()
-                .uri(uri)
-                .timeout(FETCH_TIMEOUT)
-                .GET()
-                .build();
-            HttpResponse<byte[]> resp = HTTP_CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
-
-            if (resp.statusCode() != 200) {
-                throw new ServiceException("OSS 拉取失败 status=" + resp.statusCode());
-            }
-            bytes = resp.body();
-            if (bytes.length > MAX_IMAGE_SIZE) {
-                throw new ServiceException("图片体积超限 " + bytes.length + " > " + MAX_IMAGE_SIZE);
-            }
-            contentType = resp.headers().firstValue("Content-Type").orElse("image/png");
-        } catch (IOException e) {
-            throw new ServiceException("OSS 拉取 IO 异常: " + e.getMessage());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new ServiceException("OSS 拉取被中断");
-        }
-
-        // 4. 写 Redis 缓存（Base64 String，配合 Jackson codec，避免 byte[] 反序列化 ClassCastException）
-        RedisUtils.setCacheObject(cacheKey, Base64.getEncoder().encodeToString(bytes), CACHE_TTL);
-        log.debug("[image-proxy] cache miss → fetched + cached: {} ({}B)", url, bytes.length);
-
-        return buildResponse(bytes, contentType);
-    }
-
-    /**
-     * 构造同源 image response。
-     * 关键：不返 Content-Disposition 头 → chrome 当 inline image 渲染。
-     */
-    private ResponseEntity<byte[]> buildResponse(byte[] bytes, String contentType) {
+        OssImageFetcher.Fetched fetched = ossImageFetcher.fetch(url);
+        // 关键：不返 Content-Disposition 头 → chrome 当 inline image 渲染
         return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(contentType))
+            .contentType(MediaType.parseMediaType(fetched.contentType()))
             .header("Cache-Control", "public, max-age=86400")
-            .body(bytes);
+            .body(fetched.bytes());
     }
 }

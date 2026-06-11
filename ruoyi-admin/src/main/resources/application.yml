@@ -185,6 +185,8 @@ tenant:
     - biz_question_free_tag
     # PRD-C 举一反三母题图上传留痕表（V904，无 tenant_id，同上单租户约定）
     - biz_variant_upload
+    # PRD-A-014 试卷导出任务记录表（V20，无 tenant_id，同上单租户约定）
+    - biz_export_record
 
 # MyBatisPlus配置
 # https://baomidou.com/config/

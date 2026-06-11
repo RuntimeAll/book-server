@@ -77,6 +77,14 @@
             <artifactId>ruoyi-system</artifactId>
         </dependency>
 
+        <!-- OpenPDF：PRD-A-014 试卷导出异步化，纯图模式拼 PDF + 中文水印（STSong-Light 内置 CJK 字体）。
+             OpenPDF 1.3.x 起把 iText 亚洲字体合进主 jar，STSong-Light 开箱可用，无需额外 fonts-asian 依赖。-->
+        <dependency>
+            <groupId>com.github.librepdf</groupId>
+            <artifactId>openpdf</artifactId>
+            <version>1.3.43</version>
+        </dependency>
+
     </dependencies>
 
 </project>
