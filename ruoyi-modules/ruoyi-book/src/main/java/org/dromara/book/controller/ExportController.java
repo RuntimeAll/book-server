@@ -9,6 +9,7 @@ import org.dromara.book.domain.vo.ExportSubmitVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.service.IExportRecordService;
 import org.dromara.common.core.domain.R;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,12 +24,13 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>路径前缀 {@code /teacher/}，命中 {@link MisiktEnvelopeAdvice} 自动转 envelope
  * （成功 {@code {code:1,message,response}}，FE 按 code!==1 判错）。
  *
- * <p>4 端点：
+ * <p>5 端点：
  * <ol>
  *   <li>POST /teacher/export/paper — 提交导出任务（单用户并发 1，G7）</li>
  *   <li>GET  /teacher/export/record/{id} — 查记录详情（越权 404，G4/G6）</li>
  *   <li>GET  /teacher/export/record/page — 分页（仅本人，G4）</li>
  *   <li>POST /teacher/export/record/{id}/retry — 重试（仅本人，G6）</li>
+ *   <li>DELETE /teacher/export/record/{id} — 删除记录（连 OSS 文件，仅本人；进行中不许删）</li>
  * </ol>
  *
  * <p>越权 / 不存在统一返 {@code R.fail(404, ...)} → envelope {@code {code:404}}（FE 判错）。
@@ -45,7 +47,7 @@ public class ExportController {
     /**
      * POST /teacher/export/paper — 提交试卷导出任务。
      *
-     * <p>body {@code {paperId?, ids[], fileName, variant, watermark}}；
+     * <p>body {@code {paperId?, ids[], fileName, showAnswer, showExplain, watermark}}；
      * 返回 {@code {recordId, estimatedSeconds}}。单用户并发 1：已有在途任务则
      * ServiceException → envelope code:500（G7）。
      */
@@ -97,5 +99,21 @@ public class ExportController {
             return R.fail(404, "导出记录不存在或无权访问");
         }
         return R.ok(vo);
+    }
+
+    /**
+     * DELETE /teacher/export/record/{id} — 删除导出记录（2026-06-11 去过期改版）。
+     *
+     * <p>仅本人记录可删，越权 / 不存在返 {@code R.fail(404)}；删除时连 OSS 文件一起删
+     * （best-effort）；进行中（排队/生成中）任务不许删 → ServiceException。
+     */
+    @SaCheckLogin
+    @DeleteMapping("/record/{id}")
+    public R<Void> deleteRecord(@PathVariable("id") Long id) {
+        boolean ok = exportRecordService.deleteRecord(id);
+        if (!ok) {
+            return R.fail(404, "导出记录不存在或无权访问");
+        }
+        return R.ok();
     }
 }

@@ -47,9 +47,6 @@ public class ExportPdfWorker {
     /** 单任务超时上限 5 分钟 */
     private static final long TASK_TIMEOUT_MS = 5 * 60 * 1000L;
 
-    /** OSS 留存 7 天 */
-    private static final long EXPIRE_DAYS_MS = 7L * 24 * 60 * 60 * 1000L;
-
     private final BizExportRecordMapper exportRecordMapper;
     private final BizQuestionMapper questionMapper;
     private final PdfComposer pdfComposer;
@@ -140,11 +137,17 @@ public class ExportPdfWorker {
         }
         updateProgress(recordId, BizExportRecord.STATUS_RUNNING, 40);
 
-        // 4. 拼 PDF
-        PdfComposer.Variant variant = PdfComposer.Variant.of(options.getVariant());
+        // 4. 拼 PDF — showAnswer/showExplain 双开关（2026-06-11 契约改版；存量 options 只有
+        //    旧 variant 字段 → 映射：teacher=答案+解析 / student_answers_appended=答案 / 其余=仅题干）
+        boolean showAnswer = options.getShowAnswer() != null
+            ? options.getShowAnswer()
+            : "teacher".equals(options.getVariant()) || "student_answers_appended".equals(options.getVariant());
+        boolean showExplain = options.getShowExplain() != null
+            ? options.getShowExplain()
+            : "teacher".equals(options.getVariant());
         boolean watermark = Boolean.TRUE.equals(options.getWatermark());
         String wmText = watermark ? watermarkTextResolver.resolve(record.getUserId()) : null;
-        byte[] pdf = pdfComposer.compose(record.getFileName(), ordered, variant, watermark, wmText);
+        byte[] pdf = pdfComposer.compose(record.getFileName(), ordered, showAnswer, showExplain, watermark, wmText);
         updateProgress(recordId, BizExportRecord.STATUS_RUNNING, 75);
 
         // 5. OSS 上传
@@ -160,7 +163,7 @@ public class ExportPdfWorker {
         done.setFileUrl(uploaded.getUrl());
         done.setFileSize((long) pdf.length);
         done.setDurationMs((int) durationMs);
-        done.setExpireAt(new Date(System.currentTimeMillis() + EXPIRE_DAYS_MS));
+        // 2026-06-11 用户拍板：不设过期（expire_at 不再写），文件留存到用户自己删
         done.setUpdateTime(new Date());
         exportRecordMapper.updateById(done);
         log.info("[export-worker] 完成 recordId={} 题数={} size={}B 耗时={}ms url={}",

@@ -25,9 +25,9 @@ import java.util.List;
 /**
  * 试卷 PDF 拼装器（OpenPDF，纯图模式，PRD-A-014）。
  *
- * <p>按预览版式拼 PDF：A4 纵向，每题 = 题号 + 题干图；variant=teacher 时题后跟答案图 +
- * 解析图；variant=student_answers_appended 时答案图集中附在卷末。图片按宽等比缩放进内容区
- * （上下左右各留 ~10mm）。水印开启时每页平铺半透明斜排 "老师名 手机号脱敏"。
+ * <p>按预览版式拼 PDF：A4 纵向，每题 = 题号 + 题干图；showAnswer/showExplain 开关与预览页
+ * 「显示答案 / 显示解析」一致，开则题后跟答案图 / 解析图（导出=所见即所得，2026-06-11 去卷型改版）。
+ * 图片按宽等比缩放进内容区（上下左右各留 ~10mm）。水印开启时每页平铺半透明斜排 "老师名 手机号脱敏"。
  *
  * <p>题图字节由 {@link OssImageFetcher} 拉（共用 SSRF 白名单 + Redis 缓存）。中文走 OpenPDF 内置
  * {@code STSong-Light + UniGB-UCS2-H}（CJK，OpenPDF 主 jar 自带亚洲字体，水印/题号中文不乱码）。
@@ -53,40 +53,18 @@ public class PdfComposer {
     }
 
     /**
-     * 卷型枚举（与契约 variant 串对齐）。
-     */
-    public enum Variant {
-        /** 学生卷：仅题干 */
-        STUDENT,
-        /** 教师卷：每题后跟答案图 + 解析图 */
-        TEACHER,
-        /** 学生卷 + 答案集中附后 */
-        STUDENT_ANSWERS_APPENDED;
-
-        public static Variant of(String s) {
-            if (s == null) {
-                return STUDENT;
-            }
-            return switch (s) {
-                case "teacher" -> TEACHER;
-                case "student_answers_appended" -> STUDENT_ANSWERS_APPENDED;
-                default -> STUDENT;
-            };
-        }
-    }
-
-    /**
      * 拼 PDF 并返回字节。
      *
      * @param title         卷名（首行标题）
      * @param questions     题目（已按导出题序排好）
-     * @param variant       卷型
+     * @param showAnswer    是否随题附答案图（同预览「显示答案」）
+     * @param showExplain   是否随题附解析图（同预览「显示解析」）
      * @param watermark     是否加水印
      * @param watermarkText 水印文字（"老师名 138****1234"），watermark=true 时用
      * @return PDF 字节
      */
-    public byte[] compose(String title, List<BizQuestion> questions, Variant variant,
-                          boolean watermark, String watermarkText) {
+    public byte[] compose(String title, List<BizQuestion> questions, boolean showAnswer,
+                          boolean showExplain, boolean watermark, String watermarkText) {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         Document document = new Document(PageSize.A4, MARGIN, MARGIN, MARGIN, MARGIN);
         try {
@@ -110,29 +88,15 @@ public class PdfComposer {
                 // 题号
                 document.add(new Paragraph(qNo + ".", qFont));
                 addImageIfPresent(document, q.getStemImgUrl());
-                if (variant == Variant.TEACHER) {
-                    // 教师卷：答案 + 解析跟在题后
+                // 与预览勾选一致：开则答案 / 解析跟在题后
+                if (showAnswer) {
                     addLabeledImage(document, qFont, "【答案】", q.getAnswerImgUrl());
+                }
+                if (showExplain) {
                     addLabeledImage(document, qFont, "【解析】", q.getExplainImgUrl());
                 }
                 document.add(spacer());
                 qNo++;
-            }
-
-            // 学生卷 + 答案附后：卷末集中放答案图
-            if (variant == Variant.STUDENT_ANSWERS_APPENDED) {
-                document.newPage();
-                Paragraph ansTitle = new Paragraph("参考答案", titleFont);
-                ansTitle.setAlignment(Element.ALIGN_CENTER);
-                ansTitle.setSpacingAfter(16f);
-                document.add(ansTitle);
-                int aNo = 1;
-                for (BizQuestion q : questions) {
-                    document.add(new Paragraph(aNo + ".", qFont));
-                    addImageIfPresent(document, q.getAnswerImgUrl());
-                    document.add(spacer());
-                    aNo++;
-                }
             }
 
             document.close();

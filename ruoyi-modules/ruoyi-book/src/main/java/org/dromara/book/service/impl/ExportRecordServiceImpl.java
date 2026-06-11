@@ -17,6 +17,7 @@ import org.dromara.book.mapper.BizExportRecordMapper;
 import org.dromara.book.service.ExportPdfWorker;
 import org.dromara.book.service.IExportRecordService;
 import org.dromara.common.core.exception.ServiceException;
+import org.dromara.common.oss.factory.OssFactory;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
 
@@ -43,9 +44,6 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class ExportRecordServiceImpl implements IExportRecordService {
-
-    /** OSS 留存 7 天 */
-    private static final long EXPIRE_DAYS_MS = 7L * 24 * 60 * 60 * 1000L;
 
     /** 冷启动 k：每题 0.8 秒 */
     private static final double COLD_K = 0.8;
@@ -75,9 +73,10 @@ public class ExportRecordServiceImpl implements IExportRecordService {
             throw new ServiceException("已有导出任务正在进行，请等待完成后再试");
         }
 
-        // options JSON
+        // options JSON（2026-06-11 起 showAnswer/showExplain 双开关，不再写 variant）
         ExportOptions options = new ExportOptions();
-        options.setVariant(bo.getVariant() == null ? "student" : bo.getVariant());
+        options.setShowAnswer(Boolean.TRUE.equals(bo.getShowAnswer()));
+        options.setShowExplain(Boolean.TRUE.equals(bo.getShowExplain()));
         options.setWatermark(Boolean.TRUE.equals(bo.getWatermark()));
         options.setIds(bo.getIds());
         String optionsJson;
@@ -95,18 +94,20 @@ public class ExportRecordServiceImpl implements IExportRecordService {
         record.setOptions(optionsJson);
         record.setStatus(BizExportRecord.STATUS_QUEUED);
         record.setProgress(0);
-        record.setExpireAt(new Date(now.getTime() + EXPIRE_DAYS_MS));
+        // 2026-06-11 用户拍板：不设过期，文件留存到用户自己删（删除连 OSS 一起删，见 deleteRecord）
         record.setCreateTime(now);
         record.setUpdateTime(now);
         exportRecordMapper.insert(record);
 
-        int estimated = estimateSeconds(bo.getIds().size(), options.getVariant());
+        int estimated = estimateSeconds(bo.getIds().size(),
+            options.getShowAnswer(), options.getShowExplain());
 
         // 触发异步 Worker（专用线程池）
         exportPdfWorker.run(record.getId());
 
-        log.info("[export-submit] user={} recordId={} n={} variant={} est={}s",
-            userId, record.getId(), bo.getIds().size(), options.getVariant(), estimated);
+        log.info("[export-submit] user={} recordId={} n={} answer={} explain={} est={}s",
+            userId, record.getId(), bo.getIds().size(),
+            options.getShowAnswer(), options.getShowExplain(), estimated);
         return new ExportSubmitVo(record.getId(), estimated);
     }
 
@@ -178,7 +179,6 @@ public class ExportRecordServiceImpl implements IExportRecordService {
         neo.setOptions(old.getOptions());
         neo.setStatus(BizExportRecord.STATUS_QUEUED);
         neo.setProgress(0);
-        neo.setExpireAt(new Date(now.getTime() + EXPIRE_DAYS_MS));
         neo.setCreateTime(now);
         neo.setUpdateTime(now);
         exportRecordMapper.insert(neo);
@@ -188,21 +188,44 @@ public class ExportRecordServiceImpl implements IExportRecordService {
         return new ExportRetryVo(neo.getId());
     }
 
+    @Override
+    public boolean deleteRecord(Long recordId) {
+        Long userId = LoginHelper.getUserId();
+        if (userId == null || recordId == null) {
+            return false;
+        }
+        BizExportRecord record = exportRecordMapper.selectById(recordId);
+        // 越权 / 不存在：返 false（控制器转 404）
+        if (record == null || !userId.equals(record.getUserId())) {
+            return false;
+        }
+        // 进行中任务不许删（Worker 还会回写该行，删了会产生孤儿 OSS 文件）
+        if (BizExportRecord.STATUS_QUEUED.equals(record.getStatus())
+            || BizExportRecord.STATUS_RUNNING.equals(record.getStatus())) {
+            throw new ServiceException("任务进行中，等完成或失败后再删除");
+        }
+        // 2026-06-11 用户拍板：删除记录时连 OSS 文件一起删（best-effort，OSS 删失败不挡记录删除，留 warn）
+        if (record.getFileUrl() != null && !record.getFileUrl().isBlank()) {
+            try {
+                OssFactory.instance().delete(record.getFileUrl());
+            } catch (Exception e) {
+                log.warn("[export-delete] OSS 文件删除失败（继续删记录） recordId={} url={} err={}",
+                    recordId, record.getFileUrl(), e.getMessage());
+            }
+        }
+        exportRecordMapper.deleteById(recordId);
+        log.info("[export-delete] user={} recordId={} fileUrl={}", userId, recordId, record.getFileUrl());
+        return true;
+    }
+
     /**
-     * 预估秒数：base 2 + n × k × variant 系数。
+     * 预估秒数：base 2 + n × k × (1 + 含答案0.5 + 含解析0.8)。
      * k = 最近 ROLLING_N 条 done 的 duration_ms/题 滚动均值（秒），冷启动 COLD_K。
      */
-    private int estimateSeconds(int n, String variant) {
+    private int estimateSeconds(int n, boolean showAnswer, boolean showExplain) {
         double k = rollingK();
-        double variantFactor = 1.0;
-        if ("teacher".equals(variant)) {
-            // 教师卷 = 含答案 + 含解析
-            variantFactor = 1.0 + 0.5 + 0.8;
-        } else if ("student_answers_appended".equals(variant)) {
-            // 学生卷 + 答案附后 = 含答案
-            variantFactor = 1.0 + 0.5;
-        }
-        double est = 2 + n * k * variantFactor;
+        double factor = 1.0 + (showAnswer ? 0.5 : 0) + (showExplain ? 0.8 : 0);
+        double est = 2 + n * k * factor;
         return (int) Math.ceil(est);
     }
 
