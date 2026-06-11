@@ -23,4 +23,10 @@ public class SubjectLazyTreeBo implements Serializable {
      * 父节点 ID（V0.1 忽略此入参，永远返整树）
      */
     private String parentId;
+
+    /**
+     * 个人题库场景标记（2026-06-11）：true 时过滤 mine_visible='0' 的目录（连同其子树）。
+     * 公共题库页不传/false → 整树照常。
+     */
+    private Boolean mine;
 }

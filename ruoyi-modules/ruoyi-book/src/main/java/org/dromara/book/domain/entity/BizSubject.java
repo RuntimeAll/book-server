@@ -56,6 +56,11 @@ public class BizSubject implements Serializable {
      */
     private String status;
 
+    /**
+     * 个人题库（我的题库）目录是否展示 '1' 展示 / '0' 隐藏（V21，全局生效，公共题库页不受影响）
+     */
+    private String mineVisible;
+
     private String createBy;
 
     @TableField(fill = FieldFill.INSERT)

@@ -56,11 +56,34 @@ public class SubjectServiceImpl implements ISubjectService {
             }
         }
 
+        // 2.5 个人题库场景（mine=true）：剪掉 mine_visible='0' 的节点（子树随父消失）。
+        // 在整树装配后剪枝而非提前过滤实体——避免"父被滤掉、子被误当顶层"（2026-06-11 V21）。
+        if (Boolean.TRUE.equals(bo.getMine())) {
+            java.util.Set<String> hidden = new java.util.HashSet<>();
+            for (BizSubject e : all) {
+                if ("0".equals(e.getMineVisible())) {
+                    hidden.add(e.getId());
+                }
+            }
+            pruneHidden(roots, hidden);
+        }
+
         // 3. sort 排序 + hasChildren 标记（叶子 hasChildren=false，非叶子不带）
         sortRecursive(roots);
         markHasChildren(roots);
 
         return roots;
+    }
+
+    /** 递归剪掉 hidden 集中的节点（连同其整棵子树） */
+    private void pruneHidden(List<SubjectNodeVo> nodes, java.util.Set<String> hidden) {
+        if (nodes == null) {
+            return;
+        }
+        nodes.removeIf(n -> hidden.contains(n.getId()));
+        for (SubjectNodeVo n : nodes) {
+            pruneHidden(n.getChildren(), hidden);
+        }
     }
 
     /**
