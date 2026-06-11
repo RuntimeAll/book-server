@@ -105,6 +105,10 @@ spring:
     locations: classpath:db/migration
     table: flyway_schema_history
     validate-on-migrate: true
+    # 🔴 三线预留段必需 (2026-06-11 PRD-A-014 踩出): dev 共用库已记 C 线 V901-904, A 线后续低位号
+    # (V19/V20...) 对 Flyway 是 "out of order", 默认 validate 直接拒启。开 out-of-order 允许补 apply;
+    # prod 各线库独立无 V9xx, 此开关无副作用 (号唯一不复用即安全, 见 book-ai/CLAUDE.md §3.1)。
+    out-of-order: true
 
 # Sa-Token配置
 sa-token:
