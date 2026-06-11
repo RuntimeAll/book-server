@@ -29,8 +29,12 @@ import java.util.Base64;
 @Component
 public class OssImageFetcher {
 
-    /** OSS host 白名单（防 SSRF）— 只允许代理 ai-book bucket */
-    private static final String OSS_HOST_WHITELIST = "ai-book.oss-cn-hangzhou.aliyuncs.com";
+    /** OSS host 白名单（防 SSRF）— ai-book 自有 bucket + misikt 题图源（腾讯 COS，biz_question.*_img_url 存量 2.9 万题全在此 host，
+     *  导出拼 PDF 服务端必拉；2026-06-11 PRD-A-014 自验踩出：漏它则 misikt 题图全被静默跳过、PDF 只剩水印） */
+    private static final java.util.Set<String> OSS_HOST_WHITELIST = java.util.Set.of(
+        "ai-book.oss-cn-hangzhou.aliyuncs.com",
+        "question-1256278081.cos.ap-shanghai.myqcloud.com"
+    );
 
     /** Redis 缓存 key 前缀 */
     private static final String CACHE_KEY_PREFIX = "img-proxy:";
@@ -65,7 +69,7 @@ public class OssImageFetcher {
         }
         try {
             URI uri = URI.create(url);
-            return OSS_HOST_WHITELIST.equals(uri.getHost());
+            return uri.getHost() != null && OSS_HOST_WHITELIST.contains(uri.getHost());
         } catch (IllegalArgumentException e) {
             return false;
         }
@@ -84,7 +88,7 @@ public class OssImageFetcher {
         } catch (IllegalArgumentException e) {
             throw new ServiceException("非法 image url: " + url);
         }
-        if (uri.getHost() == null || !OSS_HOST_WHITELIST.equals(uri.getHost())) {
+        if (uri.getHost() == null || !OSS_HOST_WHITELIST.contains(uri.getHost())) {
             throw new ServiceException("非法 image host: " + uri.getHost());
         }
 

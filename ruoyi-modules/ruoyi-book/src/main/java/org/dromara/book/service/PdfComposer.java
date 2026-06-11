@@ -164,7 +164,12 @@ public class PdfComposer {
      * 拉图、等比缩放进内容区宽度、居左放入。缺图 / 非白名单 / 拉取失败 → 跳过（不让单题坏掉整卷）。
      */
     private void addImageIfPresent(Document document, String url) throws DocumentException {
-        if (url == null || url.isBlank() || !ossImageFetcher.isWhitelisted(url)) {
+        if (url == null || url.isBlank()) {
+            return;
+        }
+        if (!ossImageFetcher.isWhitelisted(url)) {
+            // 🔴 别静默吞：2026-06-11 自验踩出 misikt COS host 没进白名单时整卷题图被无声跳过、PDF 只剩水印
+            log.warn("[pdf-composer] 题图非白名单 host 跳过 url={}", url);
             return;
         }
         try {
