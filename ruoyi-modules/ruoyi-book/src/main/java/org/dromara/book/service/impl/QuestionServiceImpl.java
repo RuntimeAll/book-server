@@ -6,11 +6,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
+import org.dromara.book.domain.entity.BizTextContent;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
 import org.dromara.book.domain.vo.FreeTagVo;
@@ -21,13 +23,17 @@ import org.dromara.book.domain.vo.QuestionKnowledgeVo;
 import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
+import org.dromara.book.mapper.BizTextContentMapper;
 import org.dromara.book.service.IQuestionBasketService;
 import org.dromara.book.service.IQuestionService;
+import org.dromara.common.core.exception.ServiceException;
+import org.dromara.common.core.utils.StringUtils;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
 
@@ -60,7 +66,13 @@ public class QuestionServiceImpl implements IQuestionService {
     private final BizQuestionMapper bizQuestionMapper;
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
     private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
+    private final BizTextContentMapper bizTextContentMapper;
     private final IQuestionBasketService questionBasketService;
+
+    /** 录题默认导入来源（importSource 未传时填） */
+    private static final String DEFAULT_IMPORT_SOURCE = "AI-Orchestrator";
+    /** 题目格式版本默认码 */
+    private static final int DEFAULT_QUESTION_VERSION = 1010;
 
     /** misikt 默认每页 10，pageIndex 兜底 1 */
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -78,6 +90,12 @@ public class QuestionServiceImpl implements IQuestionService {
         // J 卡段②：注入当前 userId → mapper LEFT JOIN biz_question_favorite 直接出 isFavorite，
         // 免 FE N+1 调用 /qd/favorite/{id}。@SaCheckLogin 在 Controller 兜底，此处不为 null。
         Long currentUserId = LoginHelper.getUserId();
+
+        // PRD-C-009「我的题库」：mine=true → 只看当前登录老师自己的题（create_user=自己）。
+        // owner 由后端定（绝不信前端传 userId），前端只传 mine 开关。
+        if (Boolean.TRUE.equals(bo.getMine())) {
+            wrapper.eq("q.create_user", currentUserId);
+        }
 
         Page<QuestionItemVo> mpPage = new Page<>(pageIndex, pageSize);
         IPage<QuestionItemVo> result = bizQuestionMapper.selectQuestionPage(mpPage, wrapper, currentUserId);
@@ -342,6 +360,120 @@ public class QuestionServiceImpl implements IQuestionService {
             bizQuestionMapper.update(null, uw);
             return null;
         }));
+    }
+
+    /**
+     * PRD-C-009 — teacher 侧录题落库。
+     *
+     * <p>归属 OWNER 范式（复刻 {@code PaperLibraryServiceImpl.doCreateExamPaper}）：
+     * create_user/create_by 一律取 {@code LoginHelper.getUserId()}，绝不信前端 body。
+     *
+     * <p>外置文本写法（核心，复刻 biz_text_content (question_id, content_type) UNIQUE 一题一类型一行）：
+     * <ol>
+     *   <li>先 insert(question) 拿 questionId（雪花全局 ASSIGN_ID 自动回填）</li>
+     *   <li>对 stem(必)/answer/analyze(各非空才写) 逐个 insert BizTextContent，拿各行 id</li>
+     *   <li>updateById 回写 stem/answer/analyzeTextContentId 三个 FK</li>
+     * </ol>
+     *
+     * <p>🔴 全事务体 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹
+     * （biz_question / biz_text_content 无 tenant_id；老题 create_user≠登录 id）。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public QuestionDetailVo create(CreateQuestionBo bo) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录不能录题");
+        }
+        if (bo == null) {
+            throw new ServiceException("录题入参不能为空");
+        }
+        if (bo.getQuestionType() == null) {
+            throw new ServiceException("questionType 不能为空");
+        }
+        if (StringUtils.isBlank(bo.getStem())) {
+            throw new ServiceException("stem 题干不能为空");
+        }
+
+        String ownerIdStr = String.valueOf(currentUserId);
+        Date now = new Date();
+
+        // dim3Skill / auxTags JSON 序列化（探针期存原始 JSON 文本，不上 typeHandler，同 updateLabel）
+        String dim3SkillJson = bo.getDim3Skill() == null ? null : JsonUtils.toJsonString(bo.getDim3Skill());
+        String auxTagsJson = bo.getAuxTags() == null ? null : JsonUtils.toJsonString(bo.getAuxTags());
+
+        Long newQuestionId = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 1. INSERT biz_question（OWNER 强制，status='1' 已发布，stem_text 老字段不写）
+            BizQuestion q = new BizQuestion();
+            q.setQuestionType(bo.getQuestionType());
+            q.setDifficult(bo.getDifficult());
+            q.setSubjectId(bo.getSubjectId());
+            q.setStemImgUrl(bo.getStemImg());
+            q.setAnswerImgUrl(bo.getAnswerImg());
+            q.setExplainImgUrl(bo.getExplainImg());
+            q.setFileBinUrl(bo.getFileBin());
+            q.setFreeTag(bo.getFreeTag());
+            q.setExamYear(bo.getExamYear());
+            q.setExamPaperId(bo.getExamPaperId());
+            q.setExamPaperName(bo.getExamPaperName());
+            // AI 血缘 / 来源（零 DDL，复用 B-012 V11+V16 列）
+            q.setMotherQuestionId(bo.getMotherQuestionId());
+            q.setVariantRelation(bo.getVariantRelation());
+            q.setImportSource(StringUtils.isBlank(bo.getImportSource())
+                ? DEFAULT_IMPORT_SOURCE : bo.getImportSource());
+            q.setAuxTags(auxTagsJson);
+            // 5 维度打标（复用 V16 列，同 UpdateLabelBo；与 stem 一并入库时可带）
+            q.setDim1KpId(bo.getDim1KpId());
+            q.setDim2Qtype(bo.getDim2Qtype());
+            q.setDim3Skill(dim3SkillJson);
+            q.setDim4Difficulty(bo.getDim4Difficulty());
+            q.setDim5Structure(bo.getDim5Structure());
+            q.setLabelStatus(bo.getLabelStatus());
+            q.setLabelConfidence(bo.getLabelConfidence());
+            q.setLabeledBy(bo.getLabeledBy());
+            // 系统列：服务端强制（绝不信前端 createBy/createUser/status/id）
+            q.setVersion(DEFAULT_QUESTION_VERSION);
+            q.setStatus("1");
+            q.setCreateUser(currentUserId);
+            q.setCreateBy(ownerIdStr);
+            q.setCreateTime(now);
+            q.setUpdateBy(ownerIdStr);
+            q.setUpdateTime(now);
+            bizQuestionMapper.insert(q);
+            Long qid = q.getId();
+
+            // 2. 外置三要素长文本：stem 必写，answer/analyze 各非空才写；拿各行 id 回填 FK
+            Long stemTcId = insertTextContent(qid, "S", bo.getStem());
+            Long answerTcId = StringUtils.isBlank(bo.getAnswer())
+                ? null : insertTextContent(qid, "A", bo.getAnswer());
+            Long analyzeTcId = StringUtils.isBlank(bo.getAnalyze())
+                ? null : insertTextContent(qid, "E", bo.getAnalyze());
+
+            // 3. 回写三个外置 FK 到 biz_question
+            BizQuestion fkUpdate = new BizQuestion();
+            fkUpdate.setId(qid);
+            fkUpdate.setStemTextContentId(stemTcId);
+            fkUpdate.setAnswerTextContentId(answerTcId);
+            fkUpdate.setAnalyzeTextContentId(analyzeTcId);
+            bizQuestionMapper.updateById(fkUpdate);
+
+            return qid;
+        }));
+
+        // 读回详情（含外置文本 COALESCE + knowledges + freeTags）
+        return selectById(newQuestionId);
+    }
+
+    /**
+     * 录题工具：插一行 biz_text_content（question_id + content_type 唯一），返回新行 id。
+     */
+    private Long insertTextContent(Long questionId, String contentType, String content) {
+        BizTextContent tc = new BizTextContent();
+        tc.setQuestionId(questionId);
+        tc.setContentType(contentType);
+        tc.setContent(content);
+        bizTextContentMapper.insert(tc);
+        return tc.getId();
     }
 
     /**

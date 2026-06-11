@@ -1,5 +1,6 @@
 package org.dromara.book.service;
 
+import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
@@ -97,4 +98,31 @@ public interface IQuestionService {
      * @param bo 打标入参（questionId 必填，dim 与 label 维度值）
      */
     void updateLabel(UpdateLabelBo bo);
+
+    /**
+     * PRD-C-009 — teacher 侧录题（POST /teacher/question/create）。
+     *
+     * <p>归属 = 登录老师（绝不信前端 createBy）。落库一个事务原子完成：
+     * <ol>
+     *   <li>INSERT biz_question（create_user = 登录 id，create_by/update_by = String.valueOf(登录 id)，
+     *       status='1' 已发布，直列 difficult/subjectId/*Img/freeTag/exam_* + AI 血缘
+     *       motherQuestionId/variantRelation/importSource + 5 维度打标列；
+     *       dim3Skill/auxTags 序列化为 JSON 文本）</li>
+     *   <li>对 stem(必)/answer/analyze(各非空才写) 逐个 INSERT biz_text_content
+     *       (content_type='S'/'A'/'E')，拿到各行 id</li>
+     *   <li>updateById 回写 stem/answer/analyze TextContentId FK 到 biz_question</li>
+     * </ol>
+     *
+     * <p>🔴 biz_question / biz_text_content 均无 tenant_id 列，且老题 create_user≠登录 id，
+     * 全事务体走 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹
+     * （否则 BaseMapper 继承 insert/updateById 被多租户拦截器注入 tenant_id 报 Unknown column
+     * 整事务回滚；数据权限拦截器注入 AND create_by=登录id 致 FK 回写 0 行静默假成功）。
+     *
+     * <p>🔴 stem_text 老字段不写（题面事实源走外置；读端 selectQuestionDetailById 已
+     * COALESCE(tc_s.content, q.stem_text)，answer/explain 唯一来源 = tc_a/tc_e）。
+     *
+     * @param bo 录题入参（questionType + stem 必填）
+     * @return 新建题目的详情 VO（读回外置文本 + knowledges + freeTags）
+     */
+    QuestionDetailVo create(CreateQuestionBo bo);
 }

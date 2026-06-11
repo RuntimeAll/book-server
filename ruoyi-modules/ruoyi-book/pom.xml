@@ -65,6 +65,12 @@
             <artifactId>ruoyi-common-excel</artifactId>
         </dependency>
 
+        <!-- OSS 对象存储（举一反三母题图上传 OssFactory/OssClient）-->
+        <dependency>
+            <groupId>org.dromara</groupId>
+            <artifactId>ruoyi-common-oss</artifactId>
+        </dependency>
+
         <!-- 引用 ruoyi-system（查 sys_user 拿教师信息 / 鉴权信息）-->
         <dependency>
             <groupId>org.dromara</groupId>

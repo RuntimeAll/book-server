@@ -3,6 +3,7 @@ package org.dromara.book.controller;
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
@@ -133,5 +134,24 @@ public class QuestionController {
     public R<Void> updateLabel(@Validated @RequestBody UpdateLabelBo bo) {
         questionService.updateLabel(bo);
         return R.ok("操作成功");
+    }
+
+    /**
+     * POST /teacher/question/create — PRD-C-009 teacher 侧录题。
+     *
+     * <p>由教师端工作台 / AI-Orchestrator（双头鉴权 ruoyi_username 登录后，满足 @SaCheckLogin）调用。
+     * 挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
+     *
+     * <p>入参（{@link CreateQuestionBo}，camelCase body）：questionType + stem 必填；
+     * answer/analyze 长文本 + difficult/subjectId/*Img/freeTag/exam_* 直列 +
+     * AI 血缘 motherQuestionId/variantRelation/importSource + 5 维度打标列（可选）。
+     * 🔴 createBy/createUser/status/id 服务端强制，body 传了也忽略（归属 = 登录老师）。
+     *
+     * <p>响应（envelope 拆后）= 新建题目的 {@link QuestionDetailVo}（读回外置题面 + knowledges + freeTags）。
+     */
+    @SaCheckLogin
+    @PostMapping("/create")
+    public R<QuestionDetailVo> create(@Validated @RequestBody CreateQuestionBo bo) {
+        return R.ok(questionService.create(bo));
     }
 }
