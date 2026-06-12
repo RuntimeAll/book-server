@@ -59,7 +59,11 @@ public class QuestionItemVo implements Serializable {
     private String stemImg;
 
     /**
-     * 自由标签
+     * 自由标签（原 biz_question.free_tag 串字段）。
+     *
+     * <p>🔴 V905 schema 收敛：free_tag 列已 DROP，本字段不再回填（恒 null），
+     * 真相走结构化 {@link #freeTags}（biz_question_free_tag 挂接表）。
+     * 字段保留仅为向下兼容 FE 序列化契约，待 FE 切净后随 PRD 一并删。
      */
     private String freeTag;
 

@@ -45,6 +45,14 @@ public class BizQuestionKnowledge implements Serializable {
      */
     private String source;
 
+    /**
+     * 1=主考点 / 0=副考点（V905 schema 收敛新增 is_primary）。
+     *
+     * <p>主副同属一套知识体系 biz_subject，仅此标记区分；副 kp（原 biz_question_secondary_kp）
+     * 已并入本表 is_primary=0。
+     */
+    private Integer isPrimary;
+
     @TableField(fill = FieldFill.INSERT)
     private Date createTime;
 }

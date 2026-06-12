@@ -28,7 +28,6 @@ import org.dromara.book.service.IQuestionBasketService;
 import org.dromara.book.service.IQuestionService;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.core.utils.StringUtils;
-import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.dromara.common.tenant.helper.TenantHelper;
@@ -330,8 +329,10 @@ public class QuestionServiceImpl implements IQuestionService {
      * 故全程 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹
      * （biz_question 无 tenant_id，同 replaceQuestion 处理；BaseMapper 继承方法走线程级 ignore）。
      *
-     * <p>仅 {@code set} 打标列，不碰题干/答案。dim3_skill / aux_tags JSON 列探针期存 JSON 文本
-     * （null 时显式 set null，保持可清空语义）。labeled_at 取 now（不收 body）。
+     * <p>仅 {@code set} 打标列，不碰题干/答案。labeled_at 取 now（不收 body）。
+     *
+     * <p>🔴 V905 schema 收敛：dim3_skill / aux_tags 列已 DROP（思维方法砍维 / 血缘并入 ai 表），
+     * 故本方法不再写这两列；bo 上对应入参（探针期遗留）暂忽略，待 toolkit 同步。
      */
     @Override
     public void updateLabel(UpdateLabelBo bo) {
@@ -339,19 +340,13 @@ public class QuestionServiceImpl implements IQuestionService {
             return;
         }
 
-        // JSON 列序列化（探针期存原始 JSON 文本，不上 typeHandler）
-        String dim3SkillJson = bo.getDim3Skill() == null ? null : JsonUtils.toJsonString(bo.getDim3Skill());
-        String auxTagsJson = bo.getAuxTags() == null ? null : JsonUtils.toJsonString(bo.getAuxTags());
-
         TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
             LambdaUpdateWrapper<BizQuestion> uw = new LambdaUpdateWrapper<>();
             uw.eq(BizQuestion::getId, bo.getQuestionId())
               .set(BizQuestion::getDim1KpId, bo.getDim1KpId())
               .set(BizQuestion::getDim2Qtype, bo.getDim2Qtype())
-              .set(BizQuestion::getDim3Skill, dim3SkillJson)
               .set(BizQuestion::getDim4Difficulty, bo.getDim4Difficulty())
               .set(BizQuestion::getDim5Structure, bo.getDim5Structure())
-              .set(BizQuestion::getAuxTags, auxTagsJson)
               .set(BizQuestion::getLabelStatus, bo.getLabelStatus())
               .set(BizQuestion::getLabelConfidence, bo.getLabelConfidence())
               .set(BizQuestion::getLabeledBy, bo.getLabeledBy())
@@ -398,10 +393,6 @@ public class QuestionServiceImpl implements IQuestionService {
         String ownerIdStr = String.valueOf(currentUserId);
         Date now = new Date();
 
-        // dim3Skill / auxTags JSON 序列化（探针期存原始 JSON 文本，不上 typeHandler，同 updateLabel）
-        String dim3SkillJson = bo.getDim3Skill() == null ? null : JsonUtils.toJsonString(bo.getDim3Skill());
-        String auxTagsJson = bo.getAuxTags() == null ? null : JsonUtils.toJsonString(bo.getAuxTags());
-
         Long newQuestionId = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
             // 1. INSERT biz_question（OWNER 强制，status='1' 已发布，stem_text 老字段不写）
             BizQuestion q = new BizQuestion();
@@ -412,7 +403,6 @@ public class QuestionServiceImpl implements IQuestionService {
             q.setAnswerImgUrl(bo.getAnswerImg());
             q.setExplainImgUrl(bo.getExplainImg());
             q.setFileBinUrl(bo.getFileBin());
-            q.setFreeTag(bo.getFreeTag());
             q.setExamYear(bo.getExamYear());
             q.setExamPaperId(bo.getExamPaperId());
             q.setExamPaperName(bo.getExamPaperName());
@@ -421,11 +411,10 @@ public class QuestionServiceImpl implements IQuestionService {
             q.setVariantRelation(bo.getVariantRelation());
             q.setImportSource(StringUtils.isBlank(bo.getImportSource())
                 ? DEFAULT_IMPORT_SOURCE : bo.getImportSource());
-            q.setAuxTags(auxTagsJson);
             // 5 维度打标（复用 V16 列，同 UpdateLabelBo；与 stem 一并入库时可带）
+            // 🔴 V905 schema 收敛：dim3_skill / aux_tags 已 DROP，bo 上对应入参暂忽略（待 toolkit 同步）。
             q.setDim1KpId(bo.getDim1KpId());
             q.setDim2Qtype(bo.getDim2Qtype());
-            q.setDim3Skill(dim3SkillJson);
             q.setDim4Difficulty(bo.getDim4Difficulty());
             q.setDim5Structure(bo.getDim5Structure());
             q.setLabelStatus(bo.getLabelStatus());

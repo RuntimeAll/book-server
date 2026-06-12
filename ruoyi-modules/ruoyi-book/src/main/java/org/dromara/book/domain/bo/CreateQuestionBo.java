@@ -9,8 +9,6 @@ import lombok.Data;
 import java.io.Serial;
 import java.io.Serializable;
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
 
 /**
  * PRD-C-009 — teacher 侧录题入参 BO（POST /teacher/question/create）。
@@ -21,8 +19,9 @@ import java.util.Map;
  * <p>题面三要素长文本（{@code stem} 必 / {@code answer} / {@code analyze}）全部外置 biz_text_content
  * （content_type='S'/'A'/'E'），不写 biz_question.stem_text 老字段（PRD-B-006 后题面事实源走外置）。
  *
- * <p>AI 血缘 / 来源 + 5 维度打标列复用 B-012 V11 + C V16 已有列，零 DDL。dim3Skill / auxTags
- * 由 service 序列化为 JSON 文本落库（探针期不上 typeHandler，同 {@link UpdateLabelBo} 范式）。
+ * <p>AI 血缘 / 来源 + 打标列（dim1/2/4/5）复用 B-012 V11 + C V16 已有列，零 DDL。
+ * （🔴 V905 schema 收敛：free_tag / dim3_skill / aux_tags 列已 DROP，对应入参 freeTag / dim3Skill /
+ * auxTags 一并移除；toolkit 旧 body 多带这几键也无害，Jackson 忽略未知属性。）
  *
  * <p>🔴 绝不从 body 接收 {@code createBy / createUser / status / id} —— 服务端强制
  * （create_user/create_by = 登录老师；status='1' 已发布；id = 雪花）。前端传了也忽略。
@@ -73,9 +72,6 @@ public class CreateQuestionBo implements Serializable {
     /** 笔迹数据 → biz_question.file_bin_url */
     private String fileBin;
 
-    /** 自由标签（逗号分隔）→ biz_question.free_tag */
-    private String freeTag;
-
     /** 出处年份 → biz_question.exam_year */
     private String examYear;
 
@@ -96,9 +92,6 @@ public class CreateQuestionBo implements Serializable {
     /** 导入来源（默认 "AI-Orchestrator"）→ biz_question.import_source */
     private String importSource;
 
-    /** 辅标签对象 → service 序列化为 JSON 文本 → biz_question.aux_tags（探针期 String 存） */
-    private Map<String, Object> auxTags;
-
     // ===== 可选：5 维度打标（与 stem 一并入库时可带，复用 V16 列，同 UpdateLabelBo） =====
 
     /** ①知识点 ID → biz_question.dim1_kp_id */
@@ -106,9 +99,6 @@ public class CreateQuestionBo implements Serializable {
 
     /** ②题型 1选择/4填空/5解答/6证明 → biz_question.dim2_qtype */
     private Integer dim2Qtype;
-
-    /** ③思维方法数组（service 序列化为 JSON 文本）→ biz_question.dim3_skill */
-    private List<String> dim3Skill;
 
     /** ④难度 1-4 → biz_question.dim4_difficulty */
     private Integer dim4Difficulty;

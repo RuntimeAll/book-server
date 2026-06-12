@@ -88,9 +88,10 @@ public interface IQuestionService {
     /**
      * PRD-C-007 T1 — 题目 5 维度打标回写（POST /teacher/question/update-label）。
      *
-     * <p>仅 UPDATE 打标列（dim1_kp_id / dim2_qtype / dim3_skill / dim4_difficulty / dim5_structure /
-     * aux_tags / label_status / label_confidence / labeled_by / labeled_at），不碰题干/答案。
-     * labeled_at 服务端取 now。dim3_skill / aux_tags 由 service 序列化为 JSON 文本落库。
+     * <p>仅 UPDATE 打标列（dim1_kp_id / dim2_qtype / dim4_difficulty / dim5_structure /
+     * label_status / label_confidence / labeled_by / labeled_at），不碰题干/答案。
+     * labeled_at 服务端取 now。
+     * （🔴 V905 schema 收敛：dim3_skill / aux_tags 列已 DROP，不再回写。）
      *
      * <p>🔴 必须 {@code DataPermissionHelper.ignore} 包裹 —— biz_question 老题 create_user=2 ≠ 登录 id，
      * 数据权限拦截器会注入 {@code AND create_by=登录id} → 0 行静默假成功（PRD-A-002 实战坑）。
@@ -105,9 +106,8 @@ public interface IQuestionService {
      * <p>归属 = 登录老师（绝不信前端 createBy）。落库一个事务原子完成：
      * <ol>
      *   <li>INSERT biz_question（create_user = 登录 id，create_by/update_by = String.valueOf(登录 id)，
-     *       status='1' 已发布，直列 difficult/subjectId/*Img/freeTag/exam_* + AI 血缘
-     *       motherQuestionId/variantRelation/importSource + 5 维度打标列；
-     *       dim3Skill/auxTags 序列化为 JSON 文本）</li>
+     *       status='1' 已发布，直列 difficult/subjectId/*Img/exam_* + AI 血缘
+     *       motherQuestionId/variantRelation/importSource + 打标列 dim1/2/4/5）</li>
      *   <li>对 stem(必)/answer/analyze(各非空才写) 逐个 INSERT biz_text_content
      *       (content_type='S'/'A'/'E')，拿到各行 id</li>
      *   <li>updateById 回写 stem/answer/analyze TextContentId FK 到 biz_question</li>

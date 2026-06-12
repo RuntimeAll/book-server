@@ -122,8 +122,9 @@ public class QuestionController {
      * <p>由 teacher-copilot LangGraph persist 节点调用（双头鉴权 + camelCase body）。
      * 挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包成 {@code {code:1,message,response}}。
      *
-     * <p>入参（{@link UpdateLabelBo}）：questionId(必填) / dim1KpId / dim2Qtype / dim3Skill[list] /
-     * dim4Difficulty / dim5Structure / auxTags(obj) / labelStatus(1或2,必填) / labelConfidence(0-1) / labeledBy。
+     * <p>入参（{@link UpdateLabelBo}）：questionId(必填) / dim1KpId / dim2Qtype /
+     * dim4Difficulty / dim5Structure / labelStatus(1或2,必填) / labelConfidence(0-1) / labeledBy。
+     * （🔴 V905 schema 收敛：dim3Skill / auxTags 入参已移除，对应列已 DROP。）
      * labeled_at 服务端取 now。仅 UPDATE 打标列，不碰题干/答案。
      *
      * <p>🔴 service 走 {@code DataPermissionHelper.ignore} —— 否则 biz_question 老题
