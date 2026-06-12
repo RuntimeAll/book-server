@@ -11,15 +11,19 @@ import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.entity.BizQuestion;
+import org.dromara.book.domain.entity.BizQuestionAi;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
 import org.dromara.book.domain.entity.BizTextContent;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
 import org.dromara.book.domain.vo.FreeTagVo;
+import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
+import org.dromara.book.mapper.BizFreeTagWriteMapper;
+import org.dromara.book.mapper.BizQuestionAiMapper;
 import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
@@ -28,6 +32,7 @@ import org.dromara.book.service.IQuestionBasketService;
 import org.dromara.book.service.IQuestionService;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.core.utils.StringUtils;
+import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.dromara.common.tenant.helper.TenantHelper;
@@ -42,6 +47,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -65,8 +71,18 @@ public class QuestionServiceImpl implements IQuestionService {
     private final BizQuestionMapper bizQuestionMapper;
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
     private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
+    private final BizFreeTagWriteMapper bizFreeTagWriteMapper;
+    private final BizQuestionAiMapper bizQuestionAiMapper;
     private final BizTextContentMapper bizTextContentMapper;
     private final IQuestionBasketService questionBasketService;
+
+    /** 副 kp 上限（≤3，越界丢弃，见字段映射文档 secondary_kps） */
+    private static final int MAX_SECONDARY_KP = 3;
+    /** 标注 schema 版本默认值（主表 + ai 表一致） */
+    private static final int DEFAULT_ANNOTATE_VERSION = 1;
+    /** T4 标签候选池默认 limit / clamp 上下限 */
+    private static final int DEFAULT_TAGS_LIMIT = 300;
+    private static final int MAX_TAGS_LIMIT = 1000;
 
     /** 录题默认导入来源（importSource 未传时填） */
     private static final String DEFAULT_IMPORT_SOURCE = "AI-Orchestrator";
@@ -420,6 +436,11 @@ public class QuestionServiceImpl implements IQuestionService {
             q.setLabelStatus(bo.getLabelStatus());
             q.setLabelConfidence(bo.getLabelConfidence());
             q.setLabeledBy(bo.getLabeledBy());
+            // 打标时间 + 标注版本（与 ai 表对齐；labelStatus 带值即视为已标，labeled_at 取 now）
+            if (bo.getLabelStatus() != null) {
+                q.setLabeledAt(now);
+            }
+            q.setAnnotateVersion(DEFAULT_ANNOTATE_VERSION);
             // 系统列：服务端强制（绝不信前端 createBy/createUser/status/id）
             q.setVersion(DEFAULT_QUESTION_VERSION);
             q.setStatus("1");
@@ -446,6 +467,18 @@ public class QuestionServiceImpl implements IQuestionService {
             fkUpdate.setAnalyzeTextContentId(analyzeTcId);
             bizQuestionMapper.updateById(fkUpdate);
 
+            // 4. biz_question_knowledge：主 kp 1 行（is_primary=1）+ 副 kp 各 1 行（is_primary=0）
+            //    PRD-C-014 B1 ②；个人题库知识点栏数据源。dim1KpId 有值才写主 kp（不造假行）。
+            writeKnowledges(qid, bo, now);
+
+            // 5. 标签三轨：biz_free_tag(exact 复用/新插) + biz_question_free_tag(position=下标)
+            //    PRD-C-014 B1 ③；tags 空整段跳过。
+            writeFreeTags(qid, bo);
+
+            // 6. biz_question_ai 一行：核心 DNA + 锚定审计 + label 元
+            //    PRD-C-014 B1 ④；单项缺值时行仍写、该列留空。
+            writeQuestionAi(qid, bo, now);
+
             return qid;
         }));
 
@@ -463,6 +496,182 @@ public class QuestionServiceImpl implements IQuestionService {
         tc.setContent(content);
         bizTextContentMapper.insert(tc);
         return tc.getId();
+    }
+
+    /**
+     * PRD-C-014 B1 ② —— 写 biz_question_knowledge（主 kp is_primary=1 + 副 kp is_primary=0）。
+     *
+     * <p>规则：
+     * <ul>
+     *   <li>dim1KpId 有值才写主 kp 1 行（knowledge_id=dim1KpId, is_primary=1, source='U'）；无值不写（不造假行）</li>
+     *   <li>副 kp 每个 1 行（is_primary=0）；与主 kp 重复时跳过；同 (questionId, knowledgeId) 去重</li>
+     *   <li>越界副 kp（超过 {@link #MAX_SECONDARY_KP}）丢弃</li>
+     *   <li>source 统一 'U'（用户/AI 标注，与 V905 副 kp 并入一致）</li>
+     * </ul>
+     * 防重（⑤）：本方法为新建题，question_id 全新无历史挂接，仅本批内去重即可。
+     */
+    private void writeKnowledges(Long questionId, CreateQuestionBo bo, Date now) {
+        Set<String> seen = new java.util.HashSet<>();
+
+        // 主 kp
+        String primaryKp = StringUtils.isBlank(bo.getDim1KpId()) ? null : bo.getDim1KpId().trim();
+        if (primaryKp != null) {
+            insertKnowledge(questionId, primaryKp, 1, now);
+            seen.add(primaryKp);
+        }
+
+        // 副 kp（≤3，去重，与主 kp 重复跳过）
+        List<Long> secondary = bo.getSecondaryKpIds();
+        if (secondary != null && !secondary.isEmpty()) {
+            int written = 0;
+            for (Long kp : secondary) {
+                if (kp == null || written >= MAX_SECONDARY_KP) {
+                    continue;
+                }
+                String kpStr = String.valueOf(kp);
+                if (seen.contains(kpStr)) {
+                    continue;
+                }
+                insertKnowledge(questionId, kpStr, 0, now);
+                seen.add(kpStr);
+                written++;
+            }
+        }
+    }
+
+    /** 插一行 biz_question_knowledge（source='U'）。 */
+    private void insertKnowledge(Long questionId, String knowledgeId, int isPrimary, Date now) {
+        BizQuestionKnowledge k = new BizQuestionKnowledge();
+        k.setQuestionId(questionId);
+        k.setKnowledgeId(knowledgeId);
+        k.setSource("U");
+        k.setIsPrimary(isPrimary);
+        k.setCreateTime(now);
+        bizQuestionKnowledgeMapper.insert(k);
+    }
+
+    /**
+     * PRD-C-014 B1 ③ —— 标签三轨写入。
+     *
+     * <p>每个 tag：biz_free_tag 按 name exact 查既有 id（命中 use_count+1）/ 未命中插新（use_count=1）
+     * → biz_question_free_tag (question_id, tag_id, position=数组下标)。tags 空整段跳过。
+     *
+     * <p>防重（⑤）：同 (questionId, tagId) 已挂接则跳过（B3 单题入库防重依赖）；
+     * 同一 tags 数组内重复 name 也去重（避免同题同 tag 多 position 行）。
+     */
+    private void writeFreeTags(Long questionId, CreateQuestionBo bo) {
+        List<String> tags = bo.getTags();
+        if (tags == null || tags.isEmpty()) {
+            return;
+        }
+        Set<Long> seenTagIds = new java.util.HashSet<>();
+        int position = 0;
+        for (String raw : tags) {
+            if (StringUtils.isBlank(raw)) {
+                continue;
+            }
+            String name = raw.trim();
+            // exact 查既有 id；命中 use_count+1，未命中插新后再查拿 id
+            Long tagId = bizFreeTagWriteMapper.selectIdByName(name);
+            if (tagId != null) {
+                bizFreeTagWriteMapper.incrementUseCount(tagId);
+            } else {
+                bizFreeTagWriteMapper.insertFreeTag(name);
+                tagId = bizFreeTagWriteMapper.selectIdByName(name);
+                if (tagId == null) {
+                    // 理论不达（unique 保证）；防御性跳过该 tag，不阻断事务
+                    continue;
+                }
+            }
+            // 同题同 tag 去重（本批内 + 已存在的）
+            if (seenTagIds.contains(tagId) || bizFreeTagWriteMapper.countRel(questionId, tagId) > 0) {
+                continue;
+            }
+            bizFreeTagWriteMapper.insertRel(questionId, tagId, position);
+            seenTagIds.add(tagId);
+            position++;
+        }
+    }
+
+    /**
+     * PRD-C-014 B1 ④ —— 写 biz_question_ai 一行（核心 DNA + 锚定审计 + label 元）。
+     *
+     * <p>命名映射：skeleton→solution_skeleton / scene→scenario / examType→assessment_type /
+     * hardPoints→breakthrough_points(JSON 数组串) + hard_point_count(代码算 size())。
+     * confidence ← labelConfidence。单项缺值时行仍写、该列留空。
+     */
+    private void writeQuestionAi(Long questionId, CreateQuestionBo bo, Date now) {
+        BizQuestionAi ai = new BizQuestionAi();
+        ai.setQuestionId(questionId);
+        ai.setAnnotateVersion(DEFAULT_ANNOTATE_VERSION);
+        ai.setSolutionSkeleton(StringUtils.isBlank(bo.getSkeleton()) ? null : bo.getSkeleton());
+        ai.setScenario(StringUtils.isBlank(bo.getScene()) ? null : bo.getScene());
+        ai.setAssessmentType(StringUtils.isBlank(bo.getExamType()) ? null : bo.getExamType());
+
+        // 难点：count = 代码算 size()（不信调用方自报）；breakthrough_points = JSON 数组串
+        List<String> hardPoints = bo.getHardPoints();
+        if (hardPoints != null && !hardPoints.isEmpty()) {
+            ai.setHardPointCount(hardPoints.size());
+            ai.setBreakthroughPoints(JsonUtils.toJsonString(hardPoints));
+        } else {
+            ai.setHardPointCount(0);
+            ai.setBreakthroughPoints(null);
+        }
+
+        // 锚定溯源审计
+        ai.setAnchorId(StringUtils.isBlank(bo.getAnchorId()) ? null : bo.getAnchorId());
+        ai.setConfidence(bo.getLabelConfidence());
+        ai.setNeedAnchorReview(Boolean.TRUE.equals(bo.getNeedAnchorReview()) ? 1 : 0);
+        ai.setReasoning(StringUtils.isBlank(bo.getReasoning()) ? null : bo.getReasoning());
+
+        // 打标元
+        ai.setLabelStatus(bo.getLabelStatus());
+        ai.setLabeledBy(bo.getLabeledBy());
+        if (bo.getLabelStatus() != null) {
+            ai.setLabeledAt(now);
+        }
+        ai.setCreateTime(now);
+
+        bizQuestionAiMapper.insert(ai);
+    }
+
+    /**
+     * PRD-C-014 B1 T4 —— 某 kp 下高频标签候选池。
+     *
+     * <p>biz_question_free_tag ⨝ biz_question_knowledge（同 question_id 且 knowledge_id=kpId）⨝ biz_free_tag，
+     * 按 tag 聚合 count desc limit N。kpId 空/空白返空 list；limit 兜底 300、clamp 1~1000。
+     *
+     * <p>只读聚合查询，不涉数据权限（三张表均无 create_by 过滤），无需 ignore 包裹；
+     * mapper 自带 @InterceptorIgnore 关多租户。
+     */
+    @Override
+    public List<KpTagStatVo> tagsByKp(String kpId, Integer limit) {
+        if (StringUtils.isBlank(kpId)) {
+            return Collections.emptyList();
+        }
+        int n = limit == null ? DEFAULT_TAGS_LIMIT : limit;
+        if (n < 1) {
+            n = DEFAULT_TAGS_LIMIT;
+        }
+        if (n > MAX_TAGS_LIMIT) {
+            n = MAX_TAGS_LIMIT;
+        }
+        List<Map<String, Object>> rows = bizFreeTagWriteMapper.selectTagsByKp(kpId.trim(), n);
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<KpTagStatVo> result = new ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            KpTagStatVo vo = new KpTagStatVo();
+            Object id = row.get("id");
+            Object name = row.get("name");
+            Object count = row.get("cnt");
+            vo.setId(id == null ? null : ((Number) id).longValue());
+            vo.setName(name == null ? null : String.valueOf(name));
+            vo.setCount(count == null ? 0L : ((Number) count).longValue());
+            result.add(vo);
+        }
+        return result;
     }
 
     /**

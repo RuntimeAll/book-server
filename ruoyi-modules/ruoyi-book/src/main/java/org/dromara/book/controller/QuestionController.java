@@ -8,6 +8,7 @@ import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.vo.ExamDataVo;
+import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
@@ -144,8 +145,10 @@ public class QuestionController {
      * 挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
      *
      * <p>入参（{@link CreateQuestionBo}，camelCase body）：questionType + stem 必填；
-     * answer/analyze 长文本 + difficult/subjectId/*Img/freeTag/exam_* 直列 +
-     * AI 血缘 motherQuestionId/variantRelation/importSource + 5 维度打标列（可选）。
+     * answer/analyze 长文本 + difficult/subjectId/*Img/exam_* 直列 +
+     * AI 血缘 motherQuestionId/variantRelation/importSource + 5 维度打标列 +
+     * （PRD-C-014 B1）副 kp secondaryKpIds / 标签 tags / DNA skeleton/scene/examType/hardPoints/
+     * 锚定 anchorId/needAnchorReview/reasoning（均可选，事务内拆写 knowledge / free_tag×2 / ai 表）。
      * 🔴 createBy/createUser/status/id 服务端强制，body 传了也忽略（归属 = 登录老师）。
      *
      * <p>响应（envelope 拆后）= 新建题目的 {@link QuestionDetailVo}（读回外置题面 + knowledges + freeTags）。
@@ -154,5 +157,26 @@ public class QuestionController {
     @PostMapping("/create")
     public R<QuestionDetailVo> create(@Validated @RequestBody CreateQuestionBo bo) {
         return R.ok(questionService.create(bo));
+    }
+
+    /**
+     * GET /teacher/question/tagsByKp?kpId={id}&limit=300 — PRD-C-014 B1 T4
+     * 某知识点下高频标签候选池。
+     *
+     * <p>SQL = biz_question_free_tag ⨝ biz_question_knowledge（同 question_id 且 knowledge_id=kpId）
+     * ⨝ biz_free_tag，按 tag 聚合 count desc limit N。供 W1 标签候选池（替代旧 H6 单建接口）。
+     *
+     * <p>挂在 {@code /teacher/**}，命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
+     * 老师登录态（@SaCheckLogin）。kpId 空 / 无命中返空数组。
+     *
+     * @param kpId  知识点 ID（biz_subject.id）
+     * @param limit 返回上限（默认 300，service clamp 1~1000）
+     * @return 标签候选 {@code [{id,name,count}]}（count 倒序）
+     */
+    @SaCheckLogin
+    @GetMapping("/tagsByKp")
+    public R<List<KpTagStatVo>> tagsByKp(@RequestParam("kpId") String kpId,
+                                         @RequestParam(value = "limit", required = false, defaultValue = "300") Integer limit) {
+        return R.ok(questionService.tagsByKp(kpId, limit));
     }
 }

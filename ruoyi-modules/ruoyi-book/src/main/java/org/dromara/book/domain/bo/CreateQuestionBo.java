@@ -9,6 +9,7 @@ import lombok.Data;
 import java.io.Serial;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * PRD-C-009 — teacher 侧录题入参 BO（POST /teacher/question/create）。
@@ -116,4 +117,55 @@ public class CreateQuestionBo implements Serializable {
 
     /** AI 模型名或人员 → biz_question.labeled_by */
     private String labeledBy;
+
+    // ===== 可选：PRD-C-014 B1 扩字段（DNA 全维 / 挂接表，键名钉死，toolkit 按同一契约发） =====
+    // 全部 optional：旧调用方不带时不破，对应行/列缺值时按各自规则跳过或留空。
+
+    /**
+     * 副知识点 ID 列表（≤3）→ biz_question_knowledge(is_primary=0) 各 1 行。
+     * 与主 kp（dim1KpId）重复时跳过；越界（>3）由 W1 侧约束，BE 全量写池内项。
+     */
+    private List<Long> secondaryKpIds;
+
+    /**
+     * 标签列表（3~6）→ 三轨：biz_free_tag(exact 复用/新插) + biz_question_free_tag(position=下标)。
+     * 空则整段跳过。
+     */
+    private List<String> tags;
+
+    /**
+     * 解法骨架（运算序列，【】标最难步）→ biz_question_ai.solution_skeleton（命名映射 skeleton→solution_skeleton）。
+     */
+    private String skeleton;
+
+    /**
+     * 场景（半开放，变式表皮必换项，≤64）→ biz_question_ai.scenario（命名映射 scene→scenario）。
+     */
+    private String scene;
+
+    /**
+     * 考察类型（怎么考：计算/证明/应用…闭集 10，≠考点）→ biz_question_ai.assessment_type（命名映射 examType→assessment_type）。
+     */
+    private String examType;
+
+    /**
+     * 难点/突破点列表（半开放）→ biz_question_ai.breakthrough_points(JSON 数组串)
+     * + biz_question_ai.hard_point_count = 代码算 size()（不信调用方自报）。
+     */
+    private List<String> hardPoints;
+
+    /**
+     * 锚定用的 subject 节点 → biz_question_ai.anchor_id（DDL VARCHAR(20)，本字段按字符串接）。
+     */
+    private String anchorId;
+
+    /**
+     * 锚定存疑待人审 → biz_question_ai.need_anchor_review。
+     */
+    private Boolean needAnchorReview;
+
+    /**
+     * agent 抽取/生成依据 → biz_question_ai.reasoning。
+     */
+    private String reasoning;
 }

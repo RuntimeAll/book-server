@@ -5,6 +5,7 @@ import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.vo.ExamDataVo;
+import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
@@ -125,4 +126,17 @@ public interface IQuestionService {
      * @return 新建题目的详情 VO（读回外置文本 + knowledges + freeTags）
      */
     QuestionDetailVo create(CreateQuestionBo bo);
+
+    /**
+     * PRD-C-014 B1 T4 —— 某知识点（kpId）下高频标签候选池
+     * （GET /teacher/question/tagsByKp?kpId=&limit=）。
+     *
+     * <p>SQL = biz_question_free_tag ⨝ biz_question_knowledge（同 question_id 且 knowledge_id=kpId）
+     * ⨝ biz_free_tag，按 tag 聚合 count desc limit N。供 W1 标签候选池替代旧单建接口。
+     *
+     * @param kpId  知识点 ID（biz_subject.id；空 / 空白返空 list）
+     * @param limit 返回上限（兜底 300，clamp 1~1000）
+     * @return 标签候选列表（{id,name,count}，count 倒序）；无命中返空 list
+     */
+    List<KpTagStatVo> tagsByKp(String kpId, Integer limit);
 }
