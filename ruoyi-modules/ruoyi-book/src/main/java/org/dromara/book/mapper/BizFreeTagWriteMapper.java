@@ -74,6 +74,17 @@ public interface BizFreeTagWriteMapper {
                  @Param("tagId") Long tagId);
 
     /**
+     * PRD-C-015 批4·缺口10 —— 删某题全部标签挂接（biz_question_free_tag）。
+     *
+     * <p>「覆盖原行」更新时先清后写标签三轨（幂等）。只删关联行，不动 biz_free_tag 字典
+     * （use_count 不回退——字典是全局复用计数，删一道题的挂接不应改全局字典）。
+     *
+     * @param questionId 题目 ID
+     * @return 删除行数
+     */
+    int deleteRelByQuestion(@Param("questionId") Long questionId);
+
+    /**
      * T4 —— 某知识点（kpId）下高频标签候选池：
      * biz_question_free_tag ⨝ biz_question_knowledge（同 question_id 且 knowledge_id=kpId）⨝ biz_free_tag，
      * 按 tag 聚合 count desc limit N。

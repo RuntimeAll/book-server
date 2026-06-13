@@ -10,6 +10,7 @@ import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
+import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionAi;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
@@ -484,6 +485,119 @@ public class QuestionServiceImpl implements IQuestionService {
 
         // 读回详情（含外置文本 COALESCE + knowledges + freeTags）
         return selectById(newQuestionId);
+    }
+
+    /**
+     * PRD-C-015 批4·缺口10 —— teacher 侧「覆盖原行」更新。
+     *
+     * <p>举一反三「重生后再入库 = 覆盖原行」：按 {@code bo.id} 覆盖一道**已入库**的题，
+     * 不新写一行。流程（一个事务，全程 TenantHelper.ignore + DataPermissionHelper.ignore）：
+     * <ol>
+     *   <li>校验：题存在 + create_user = 登录老师（只许改自己的题，否则 ServiceException）</li>
+     *   <li>UPDATE biz_question 直列（题型/难度/科目/imgs/血缘/打标列，update_by/time 刷新，
+     *       create_user/create_by/status 不动）</li>
+     *   <li>题面三要素 biz_text_content：删旧 S/A/E 三行 → 重插（stem 必，answer/analyze 各非空才写）
+     *       → 回写三个 FK</li>
+     *   <li>子表 knowledge / free_tag / ai：各按 question_id 删旧 → 复用 create 的 write* 重写（幂等）</li>
+     * </ol>
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public QuestionDetailVo update(UpdateQuestionBo bo) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录不能改题");
+        }
+        if (bo == null || bo.getId() == null) {
+            throw new ServiceException("覆盖更新须指定要更新哪道题（id 不能为空）");
+        }
+        if (bo.getQuestionType() == null) {
+            throw new ServiceException("questionType 不能为空");
+        }
+        if (StringUtils.isBlank(bo.getStem())) {
+            throw new ServiceException("stem 题干不能为空");
+        }
+
+        Long qid = bo.getId();
+        String ownerIdStr = String.valueOf(currentUserId);
+        Date now = new Date();
+
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 1. 归属校验：题存在 + create_user = 登录老师（只许改自己的题）
+            BizQuestion existing = bizQuestionMapper.selectById(qid);
+            if (existing == null || "2".equals(existing.getStatus())) {
+                throw new ServiceException("要更新的题不存在或已删除（id=" + qid + "）");
+            }
+            if (existing.getCreateUser() == null || !existing.getCreateUser().equals(currentUserId)) {
+                throw new ServiceException("无权更新这道题（只能改自己的题）");
+            }
+
+            // 2. UPDATE biz_question 直列（create_user/create_by/status 不动；update_by/time 刷新）
+            BizQuestion q = new BizQuestion();
+            q.setId(qid);
+            q.setQuestionType(bo.getQuestionType());
+            q.setDifficult(bo.getDifficult());
+            q.setSubjectId(bo.getSubjectId());
+            q.setStemImgUrl(bo.getStemImg());
+            q.setAnswerImgUrl(bo.getAnswerImg());
+            q.setExplainImgUrl(bo.getExplainImg());
+            q.setFileBinUrl(bo.getFileBin());
+            q.setExamYear(bo.getExamYear());
+            q.setExamPaperId(bo.getExamPaperId());
+            q.setExamPaperName(bo.getExamPaperName());
+            q.setMotherQuestionId(bo.getMotherQuestionId());
+            q.setVariantRelation(bo.getVariantRelation());
+            if (StringUtils.isNotBlank(bo.getImportSource())) {
+                q.setImportSource(bo.getImportSource());
+            }
+            q.setDim1KpId(bo.getDim1KpId());
+            q.setDim2Qtype(bo.getDim2Qtype());
+            q.setDim4Difficulty(bo.getDim4Difficulty());
+            q.setDim5Structure(bo.getDim5Structure());
+            q.setLabelStatus(bo.getLabelStatus());
+            q.setLabelConfidence(bo.getLabelConfidence());
+            q.setLabeledBy(bo.getLabeledBy());
+            if (bo.getLabelStatus() != null) {
+                q.setLabeledAt(now);
+            }
+            q.setUpdateBy(ownerIdStr);
+            q.setUpdateTime(now);
+            bizQuestionMapper.updateById(q);
+
+            // 3. 题面三要素：删旧 S/A/E → 重插 → 回写 FK（先清后写，幂等覆盖）
+            LambdaUpdateWrapper<BizTextContent> tcDel = new LambdaUpdateWrapper<>();
+            tcDel.eq(BizTextContent::getQuestionId, qid);
+            bizTextContentMapper.delete(tcDel);
+            Long stemTcId = insertTextContent(qid, "S", bo.getStem());
+            Long answerTcId = StringUtils.isBlank(bo.getAnswer())
+                ? null : insertTextContent(qid, "A", bo.getAnswer());
+            Long analyzeTcId = StringUtils.isBlank(bo.getAnalyze())
+                ? null : insertTextContent(qid, "E", bo.getAnalyze());
+            BizQuestion fkUpdate = new BizQuestion();
+            fkUpdate.setId(qid);
+            fkUpdate.setStemTextContentId(stemTcId);
+            fkUpdate.setAnswerTextContentId(answerTcId);
+            fkUpdate.setAnalyzeTextContentId(analyzeTcId);
+            bizQuestionMapper.updateById(fkUpdate);
+
+            // 4. 子表先清后写（幂等覆盖）：knowledge / free_tag rel / ai
+            LambdaUpdateWrapper<BizQuestionKnowledge> kDel = new LambdaUpdateWrapper<>();
+            kDel.eq(BizQuestionKnowledge::getQuestionId, qid);
+            bizQuestionKnowledgeMapper.delete(kDel);
+            writeKnowledges(qid, bo, now);
+
+            bizFreeTagWriteMapper.deleteRelByQuestion(qid);
+            writeFreeTags(qid, bo);
+
+            LambdaUpdateWrapper<BizQuestionAi> aiDel = new LambdaUpdateWrapper<>();
+            aiDel.eq(BizQuestionAi::getQuestionId, qid);
+            bizQuestionAiMapper.delete(aiDel);
+            writeQuestionAi(qid, bo, now);
+
+            return null;
+        }));
+
+        return selectById(qid);
     }
 
     /**

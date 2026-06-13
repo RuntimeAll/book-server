@@ -7,6 +7,7 @@ import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
+import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
@@ -157,6 +158,25 @@ public class QuestionController {
     @PostMapping("/create")
     public R<QuestionDetailVo> create(@Validated @RequestBody CreateQuestionBo bo) {
         return R.ok(questionService.create(bo));
+    }
+
+    /**
+     * POST /teacher/question/update — PRD-C-015 批4·缺口10 覆盖原行。
+     *
+     * <p>举一反三「重生后再入库 = 覆盖原行」：AI 改了 DNA / 重生题面后，把**已入库**的题
+     * 按 {@code id} UPDATE（而非新写一行）。重写题面三要素 + knowledge / free_tag / ai
+     * 子表（先清后写，幂等）。归属由后端校验（只许改自己的题），create_user 不动、update_by/time 刷新。
+     *
+     * <p>入参 {@link UpdateQuestionBo}（= CreateQuestionBo + 必填 id）。挂 {@code /teacher/**}
+     * 走 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
+     *
+     * @param bo 覆盖更新入参（id + questionType + stem 必填）
+     * @return 更新后的题目详情 VO
+     */
+    @SaCheckLogin
+    @PostMapping("/update")
+    public R<QuestionDetailVo> update(@Validated @RequestBody UpdateQuestionBo bo) {
+        return R.ok(questionService.update(bo));
     }
 
     /**

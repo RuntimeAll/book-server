@@ -4,6 +4,7 @@ import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
+import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
@@ -126,6 +127,23 @@ public interface IQuestionService {
      * @return 新建题目的详情 VO（读回外置文本 + knowledges + freeTags）
      */
     QuestionDetailVo create(CreateQuestionBo bo);
+
+    /**
+     * PRD-C-015 批4·缺口10 —— teacher 侧「覆盖原行」更新（POST /teacher/question/update）。
+     *
+     * <p>举一反三「重生后再入库 = 覆盖原行」：按 {@code bo.id} UPDATE biz_question 直列 +
+     * 重写题面三要素（biz_text_content S/A/E）+ 重写子表（knowledge / free_tag / ai，先清后写，幂等）。
+     *
+     * <p>归属校验：只许改自己的题（create_user = 登录老师才放行，否则抛 ServiceException）；
+     * create_user 不动、update_by/update_time 刷新；status 不动（仍 '1'）。
+     *
+     * <p>🔴 全事务体走 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))}（同 create，
+     * biz_question / biz_text_content 无 tenant_id + 老题 create_user≠登录 id）。
+     *
+     * @param bo 覆盖更新入参（id + questionType + stem 必填）
+     * @return 更新后的题目详情 VO
+     */
+    QuestionDetailVo update(UpdateQuestionBo bo);
 
     /**
      * PRD-C-014 B1 T4 —— 某知识点（kpId）下高频标签候选池

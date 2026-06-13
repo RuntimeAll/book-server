@@ -31,6 +31,11 @@
         WHERE question_id = #{questionId} AND tag_id = #{tagId}
     </select>
 
+    <!-- PRD-C-015 批4·缺口10：覆盖原行更新时先清某题全部标签挂接（只删关联，不动字典 use_count）。 -->
+    <delete id="deleteRelByQuestion" parameterType="java.lang.Long">
+        DELETE FROM biz_question_free_tag WHERE question_id = #{questionId}
+    </delete>
+
     <!--
       T4 候选池：某 kp 下题目挂接过的标签，按出现次数倒序。
       biz_question_knowledge.knowledge_id 为 varchar，kpId 以字符串比对。
