@@ -168,6 +168,14 @@ public class QuestionServiceImpl implements IQuestionService {
         Map<Long, List<QuestionKnowledgeVo>> uMap = loadKnowledgesByQuestionIds(ids, "U");
         Map<Long, List<QuestionKnowledgeVo>> sMap = loadKnowledgesByQuestionIds(ids, "S");
         Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
+        // PRD-A-015：批量回填结构化网格块 JSON（与单题 selectById 对称），供卷库预览/PDF 导出
+        //   走 QuestionBlockRender 结构化渲染；null=未结构化，FE 回落旧富文本/图。
+        Map<Long, String> blockMap = new LinkedHashMap<>();
+        for (BizQuestionBlock b : bizQuestionBlockMapper.selectBatchIds(ids)) {
+            if (b.getBlockJson() != null) {
+                blockMap.put(b.getQuestionId(), b.getBlockJson());
+            }
+        }
 
         // 按 id 索引（保序的中间结构 — DB 返回顺序不保证）
         Map<Long, QuestionDetailVo> byId = new LinkedHashMap<>(raw.size() * 2);
@@ -175,6 +183,7 @@ public class QuestionServiceImpl implements IQuestionService {
             vo.setQuestionKnowledges(uMap.getOrDefault(vo.getId(), new ArrayList<>()));
             vo.setQuestionStdKnowledges(sMap.getOrDefault(vo.getId(), new ArrayList<>()));
             vo.setFreeTags(ftMap.getOrDefault(vo.getId(), new ArrayList<>()));
+            vo.setBlockJson(blockMap.get(vo.getId()));
             byId.put(vo.getId(), vo);
         }
 
