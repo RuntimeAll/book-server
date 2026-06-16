@@ -191,6 +191,8 @@ tenant:
     - biz_variant_upload
     # PRD-A-014 试卷导出任务记录表（V20，无 tenant_id，同上单租户约定）
     - biz_export_record
+    # PRD-A-015 题目结构化网格块存储表（V23，无 tenant_id，同上单租户约定）
+    - biz_question_block
 
 # MyBatisPlus配置
 # https://baomidou.com/config/

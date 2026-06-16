@@ -126,4 +126,12 @@ public class CreateQuestionBo implements Serializable {
 
     /** AI 模型名或人员 → biz_question.labeled_by */
     private String labeledBy;
+
+    // ===== 可选：结构化网格块内容（PRD-A-015，§10.1 schema） =====
+
+    /**
+     * 结构化网格块 JSON（可空；非空时校验 §10.1 并落 biz_question_block，
+     * question_id = 新建题 id，v=1，update_by = 登录老师）。
+     */
+    private String blockJson;
 }

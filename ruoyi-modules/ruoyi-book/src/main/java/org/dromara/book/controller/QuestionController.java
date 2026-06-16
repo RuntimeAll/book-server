@@ -7,6 +7,7 @@ import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
+import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
@@ -153,5 +154,23 @@ public class QuestionController {
     @PostMapping("/create")
     public R<QuestionDetailVo> create(@Validated @RequestBody CreateQuestionBo bo) {
         return R.ok(questionService.create(bo));
+    }
+
+    /**
+     * POST /teacher/question/update — PRD-A-015 题目结构化编辑。
+     *
+     * <p>权威源 = blockJson（§10.1 结构化网格块 schema）。挂在 {@code /teacher/**}，
+     * 自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1，异常透传非 code:1）。
+     *
+     * <p>入参（{@link UpdateQuestionBo}）：questionId + blockJson 必填；
+     * questionType/difficult/subjectId/stem/answer/analyze 可选元数据（传了才同步）。
+     * 🔴 createUser/createBy/status/id 服务端强制，body 传了也忽略；编辑前做 OWNER 校验（非本人题拒）。
+     *
+     * <p>响应（envelope 拆后）= 更新后题目的 {@link QuestionDetailVo}（含 blockJson + 外置题面）。
+     */
+    @SaCheckLogin
+    @PostMapping("/update")
+    public R<QuestionDetailVo> update(@Validated @RequestBody UpdateQuestionBo bo) {
+        return R.ok(questionService.update(bo));
     }
 }

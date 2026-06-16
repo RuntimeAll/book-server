@@ -4,6 +4,7 @@ import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
+import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
@@ -125,4 +126,26 @@ public interface IQuestionService {
      * @return 新建题目的详情 VO（读回外置文本 + knowledges + freeTags）
      */
     QuestionDetailVo create(CreateQuestionBo bo);
+
+    /**
+     * PRD-A-015 — 题目结构化编辑（POST /teacher/question/update）。
+     *
+     * <p>权威源 = blockJson（§10.1 schema）。落库一个事务原子完成：
+     * <ol>
+     *   <li>OWNER 校验：原题 create_user ≠ 登录 id → 抛 ServiceException（他人题 + 公共题都被挡，G5）</li>
+     *   <li>校验 blockJson（{@link org.dromara.book.util.BlockJsonValidator}），非法抛异常</li>
+     *   <li>upsert biz_question_block（question_id 为 PK，先 selectById 判存在 → update/insert，
+     *       v=1，update_by = 登录 id）</li>
+     *   <li>可选元数据：传了 questionType/difficult/subjectId 更新 biz_question 对应列；
+     *       传了 stem/answer/analyze（非空）同步更新对应 biz_text_content（无则新建并回写 FK）</li>
+     * </ol>
+     *
+     * <p>🔴 biz_question / biz_text_content / biz_question_block 均无 tenant_id 列；且老题
+     * create_user≠登录 id，全事务体走 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))}
+     * 包裹（同 create() 范式：否则数据权限拦截器注入 AND create_by=登录id 致 OWNER 加载到 null / 更新 0 行）。
+     *
+     * @param bo 编辑入参（questionId + blockJson 必填）
+     * @return 更新后题目的详情 VO（含 blockJson + 外置文本 + knowledges + freeTags）
+     */
+    QuestionDetailVo update(UpdateQuestionBo bo);
 }

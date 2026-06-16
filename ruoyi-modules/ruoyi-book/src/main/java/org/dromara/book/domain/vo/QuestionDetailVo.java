@@ -59,4 +59,10 @@ public class QuestionDetailVo extends QuestionItemVo {
      * 标准库标注知识点（source='S'，仅详情返）
      */
     private List<QuestionKnowledgeVo> questionStdKnowledges;
+
+    /**
+     * 结构化网格块 JSON（PRD-A-015，来源 biz_question_block.block_json）。
+     * null = 该题未结构化，FE 渲染回落旧富文本/图。仅详情返（列表 QuestionItemVo 不带，避免列表变重）。
+     */
+    private String blockJson;
 }
