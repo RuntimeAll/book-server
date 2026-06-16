@@ -69,4 +69,14 @@ public class QuestionPageBo implements Serializable {
      * 空/false=不过滤（沿用原「题库」全量语义）。owner 由后端 LoginHelper 定，前端只传开关。
      */
     private Boolean mine;
+
+    /**
+     * 按出处试卷筛选（biz_question.exam_paper_id）。非 null 才过滤；null=不限。
+     */
+    private Long examPaperId;
+
+    /**
+     * 按打标态筛选（biz_question.label_status）：0=未标 / 1=AI已标 / 2=已审核。非 null 才过滤；null=不限。
+     */
+    private Integer labelStatus;
 }

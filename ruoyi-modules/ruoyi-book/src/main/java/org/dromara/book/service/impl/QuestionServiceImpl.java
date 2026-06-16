@@ -549,6 +549,13 @@ public class QuestionServiceImpl implements IQuestionService {
         if (bo.getNotUsedQuestion() != null && bo.getNotUsedQuestion() == 1) {
             w.notInSql("q.id", "SELECT question_id FROM biz_paper_question");
         }
+        // 富文本带出卡：按出处试卷 / 打标态可选过滤（非 null 才施加）
+        if (bo.getExamPaperId() != null) {
+            w.eq("q.exam_paper_id", bo.getExamPaperId());
+        }
+        if (bo.getLabelStatus() != null) {
+            w.eq("q.label_status", bo.getLabelStatus());
+        }
         // notTaskQuestion=1：V0.1 schema 无 biz_task_question 表（M6 才上），
         // 入参收下但不施加过滤 — 等同 0=不限。撞 M6 起卡时再补 SQL。
         // if (bo.getNotTaskQuestion() != null && bo.getNotTaskQuestion() == 1) { ... }

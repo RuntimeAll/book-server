@@ -139,4 +139,28 @@ public class QuestionItemVo implements Serializable {
      * page 端点固定回填（默认 false），FE 直接渲染心形态，免 N+1 GET /qd/favorite/{id}。
      */
     private Boolean isFavorite;
+
+    /**
+     * 题干富文本（biz_text_content.content）。
+     *
+     * <p>🔴 按 FK 关联：biz_question.stem_text_content_id = biz_text_content.id —— 不是按
+     * question_id+content_type（一题在 biz_text_content 可能有多条历史记录，FK 指定启用哪条）。
+     * FK 为 NULL 时返 null。与老字段 {@link #stemText}（来源闸 resolved）并存，不替换。
+     */
+    private String stemTextContent;
+
+    /**
+     * 答案富文本（biz_text_content.content，FK = biz_question.answer_text_content_id）。FK 为 NULL 返 null。
+     */
+    private String answerTextContent;
+
+    /**
+     * 解析富文本（biz_text_content.content，FK = biz_question.analyze_text_content_id）。FK 为 NULL 返 null。
+     */
+    private String analyzeTextContent;
+
+    /**
+     * AI 打标状态（biz_question.label_status）：0=未标 / 1=AI已标 / 2=已审核。
+     */
+    private Integer labelStatus;
 }
