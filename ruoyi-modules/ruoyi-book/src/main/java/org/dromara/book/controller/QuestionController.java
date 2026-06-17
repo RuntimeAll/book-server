@@ -203,6 +203,23 @@ public class QuestionController {
     }
 
     /**
+     * POST /teacher/question/delete-block?questionId={id} — PRD-C-100 BC3 清结构化排版。
+     *
+     * <p>删 biz_question_block 行，让详情/卷库回落纯文本渲染。用途：举一反三里老师对已入库变式
+     * 「手动排版」存过 blockJson 后又「重生」该题——重生覆盖题面后旧布局对不上，确认重生前清掉脏 block。
+     *
+     * <p>OWNER 校验（本人题 or superadmin）；block 不存在幂等返回。挂 {@code /teacher/**} 命中 envelope。
+     *
+     * @param questionId 题目 id
+     */
+    @SaCheckLogin
+    @PostMapping("/delete-block")
+    public R<Void> deleteBlock(@RequestParam("questionId") Long questionId) {
+        questionService.deleteBlock(questionId);
+        return R.ok();
+    }
+
+    /**
      * GET /teacher/question/tagsByKp?kpId={id}&limit=300 — PRD-C-014 B1 T4
      * 某知识点下高频标签候选池。
      *

@@ -195,4 +195,18 @@ public interface IQuestionService {
      * @return 更新后题目的详情 VO（含 blockJson + 外置文本 + knowledges + freeTags）
      */
     QuestionDetailVo updateBlock(UpdateBlockBo bo);
+
+    /**
+     * PRD-C-100 BC3 — 清掉某题的结构化排版（删 biz_question_block 行）。
+     *
+     * <p>用途：举一反三里老师对已入库变式「手动排版」存过 blockJson 后又「重生」该题——重生产物题面
+     * 已变，旧 blockJson 布局会与新题面对不上（详情/卷库「有 block 用 block」会渲染旧布局）。确认重生
+     * 前调本方法删掉脏 block，让详情/卷库回落到按新题面纯文本渲染。
+     *
+     * <p>OWNER 校验同 {@link #updateBlock}（本人题 or superadmin）。block 行不存在 → 幂等返回（不报错）。
+     * 不碰 biz_question 题面/答案/解析（那些由重生 update 覆盖）。
+     *
+     * @param questionId 题目 id（必填）
+     */
+    void deleteBlock(Long questionId);
 }

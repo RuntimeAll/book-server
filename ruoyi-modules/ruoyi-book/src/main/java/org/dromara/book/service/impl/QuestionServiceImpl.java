@@ -858,6 +858,38 @@ public class QuestionServiceImpl implements IQuestionService {
     }
 
     /**
+     * PRD-C-100 BC3 — 清掉某题的结构化排版（删 biz_question_block 行）。OWNER 校验同 updateBlock；
+     * block 不存在幂等返回。重生覆盖题面后调它，让详情/卷库回落纯文本渲染（避免旧布局对不上新题面）。
+     */
+    @Override
+    public void deleteBlock(Long questionId) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录不能编辑题目");
+        }
+        if (questionId == null) {
+            throw new ServiceException("questionId 不能为空");
+        }
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // OWNER 校验（与 updateBlock 同款裁剪查询，规避数据权限注入 + free_tag 漂移列）
+            BizQuestion q = bizQuestionMapper.selectOne(
+                new LambdaQueryWrapper<BizQuestion>()
+                    .select(BizQuestion::getId, BizQuestion::getCreateUser)
+                    .eq(BizQuestion::getId, questionId));
+            if (q == null) {
+                throw new ServiceException("题目不存在");
+            }
+            boolean isOwner = q.getCreateUser() != null && q.getCreateUser().equals(currentUserId);
+            if (!isOwner && !LoginHelper.isSuperAdmin()) {
+                throw new ServiceException("无权编辑非本人题目");
+            }
+            // 删 block 行（PK = question_id）。不存在 → deleteById 返回 0，幂等放行。
+            bizQuestionBlockMapper.deleteById(questionId);
+            return null;
+        }));
+    }
+
+    /**
      * 编辑工具：内容非空才 upsert 一行 biz_text_content（question_id + content_type 唯一）。
      *
      * <p>已有 FK（existingFkId 非空）→ updateById 改 content，返回该 FK（FK 不变）；
