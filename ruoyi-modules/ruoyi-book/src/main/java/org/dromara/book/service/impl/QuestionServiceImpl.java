@@ -414,7 +414,11 @@ public class QuestionServiceImpl implements IQuestionService {
             // 1. INSERT biz_question（OWNER 强制，status='1' 已发布，stem_text 老字段不写）
             BizQuestion q = new BizQuestion();
             q.setQuestionType(bo.getQuestionType());
-            q.setDifficult(bo.getDifficult());
+            // 🔴 2026-06-17：difficult(老列 NOT NULL 无默认) 回退 dim4Difficulty(新难度维)，都缺给中位 2。
+            //   母题入库(PRD-C-017)FE 只发 dim4Difficulty 不发 difficult → 老列空 → insert NOT NULL 违约
+            //   (500「发生未知异常」)。此前 FE 一直被「题面尚未产出」拦在前面，未触达本插入路径，故隐藏至今。
+            Integer difficult = bo.getDifficult() != null ? bo.getDifficult() : bo.getDim4Difficulty();
+            q.setDifficult(difficult != null ? difficult : 2);
             q.setSubjectId(bo.getSubjectId());
             q.setStemImgUrl(bo.getStemImg());
             q.setAnswerImgUrl(bo.getAnswerImg());
