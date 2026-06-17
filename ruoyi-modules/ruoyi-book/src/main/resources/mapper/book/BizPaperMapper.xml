@@ -95,7 +95,9 @@
             q.question_type,
             q.difficult,
             q.subject_id,
-            q.stem_text,
+            <!-- 2026-06-16 卷库回落对齐题库: misikt 有富文本(databin批)出富文本, 无则 NULL→前端落原图(不暴露搜索用 stem_text); 非 misikt 外置优先兜底老字段。别名仍 stem_text 不动 resultMap -->
+            CASE WHEN q.import_source = 'misikt' THEN tc_s.content
+                 ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text,
             q.stem_img_url,
             q.answer_img_url,
             q.explain_img_url,
@@ -114,6 +116,7 @@
             pq.score AS pq_score
         FROM biz_paper_question pq
         JOIN biz_question q ON q.id = pq.question_id
+        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         WHERE pq.paper_id = #{paperId}
           AND q.status = '1'
         ORDER BY pq.sort ASC
@@ -246,7 +249,9 @@
             q.question_type,
             q.difficult,
             q.subject_id,
-            q.stem_text,
+            <!-- 2026-06-16 卷库回落对齐题库: misikt 有富文本(databin批)出富文本, 无则 NULL→前端落原图(不暴露搜索用 stem_text); 非 misikt 外置优先兜底老字段。别名仍 stem_text 不动 resultMap -->
+            CASE WHEN q.import_source = 'misikt' THEN tc_s.content
+                 ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text,
             q.stem_img_url,
             q.answer_img_url,
             q.explain_img_url,
@@ -267,6 +272,7 @@
             (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
         FROM biz_paper_question pq
         JOIN biz_question q ON q.id = pq.question_id
+        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_question_favorite f
           ON f.question_id = q.id
          AND f.user_id = #{currentUserId}
