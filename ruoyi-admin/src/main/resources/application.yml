@@ -109,6 +109,10 @@ spring:
     # (V19/V20...) 对 Flyway 是 "out of order", 默认 validate 直接拒启。开 out-of-order 允许补 apply;
     # prod 各线库独立无 V9xx, 此开关无副作用 (号唯一不复用即安全, 见 book-ai/CLAUDE.md §3.1)。
     out-of-order: true
+    # 🔴 三线共用 dev 库再补 (2026-06-16): B 线 V801 已 apply 到共享库但 C clone 无此文件 (C 用 V901+),
+    # 默认 validate 撞 "Detected applied migration not resolved locally: 801" 直接拒启。
+    # 忽略 "本地没有但库里已 apply" 的外线迁移; prod 各线库独立无外线 V 号, 无副作用 (同 §3.1)。
+    ignore-migration-patterns: "*:missing"
 
 # Sa-Token配置
 sa-token:
@@ -191,6 +195,10 @@ tenant:
     - biz_variant_upload
     # PRD-A-014 试卷导出任务记录表（V20，无 tenant_id，同上单租户约定）
     - biz_export_record
+    # 🔴 PRD-C-100 B4 记忆/经验层（V909/V910，无 tenant_id，同上单租户约定）——
+    #   必须列入 tenant.excludes，否则多租户拦截器注入 tenant_id → "Unknown column 'tenant_id'" 全 500。
+    - biz_teacher_ai_memory
+    - biz_dna_edit_log
 
 # MyBatisPlus配置
 # https://baomidou.com/config/
