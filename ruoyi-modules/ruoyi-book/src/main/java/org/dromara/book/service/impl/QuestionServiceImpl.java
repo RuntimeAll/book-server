@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateAttrsBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.entity.BizQuestion;
@@ -148,6 +149,38 @@ public class QuestionServiceImpl implements IQuestionService {
         BizQuestionBlock block = bizQuestionBlockMapper.selectById(id);
         if (block != null) {
             vo.setBlockJson(block.getBlockJson());
+        }
+        // PRD-A-015 属性编辑页：回填 5 维 AI 打标 + 打标元数据 + N1 高级列（select 自定义 SQL 未含）。
+        // 列裁剪查 entity 再拷（不改大 ResultMap；避开 free_tag 全列扫漂移坑），TenantHelper.ignore
+        // 兼容无 tenant_id/老题 create_user≠登录 id。
+        BizQuestion attr = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            bizQuestionMapper.selectOne(new LambdaQueryWrapper<BizQuestion>()
+                .select(BizQuestion::getId,
+                    BizQuestion::getDim1KpId, BizQuestion::getDim2Qtype, BizQuestion::getDim3Skill,
+                    BizQuestion::getDim4Difficulty, BizQuestion::getDim5Structure, BizQuestion::getAuxTags,
+                    BizQuestion::getLabelConfidence, BizQuestion::getLabeledBy, BizQuestion::getLabeledAt,
+                    BizQuestion::getBaseScore, BizQuestion::getImportSource, BizQuestion::getRegionCode,
+                    BizQuestion::getSourceType, BizQuestion::getMotherQuestionId, BizQuestion::getVariantRelation,
+                    BizQuestion::getAnnotateVersion, BizQuestion::getAnnotateStatus)
+                .eq(BizQuestion::getId, id))));
+        if (attr != null) {
+            vo.setDim1KpId(attr.getDim1KpId());
+            vo.setDim2Qtype(attr.getDim2Qtype());
+            vo.setDim3Skill(attr.getDim3Skill());
+            vo.setDim4Difficulty(attr.getDim4Difficulty());
+            vo.setDim5Structure(attr.getDim5Structure());
+            vo.setAuxTags(attr.getAuxTags());
+            vo.setLabelConfidence(attr.getLabelConfidence());
+            vo.setLabeledBy(attr.getLabeledBy());
+            vo.setLabeledAt(attr.getLabeledAt());
+            vo.setBaseScore(attr.getBaseScore());
+            vo.setImportSource(attr.getImportSource());
+            vo.setRegionCode(attr.getRegionCode());
+            vo.setSourceType(attr.getSourceType());
+            vo.setMotherQuestionId(attr.getMotherQuestionId());
+            vo.setVariantRelation(attr.getVariantRelation());
+            vo.setAnnotateVersion(attr.getAnnotateVersion());
+            vo.setAnnotateStatus(attr.getAnnotateStatus());
         }
         return vo;
     }
@@ -389,6 +422,62 @@ public class QuestionServiceImpl implements IQuestionService {
             bizQuestionMapper.update(null, uw);
             return null;
         }));
+    }
+
+    /**
+     * PRD-A-015 属性编辑页回写：基础属性 + 5维打标 + N1 高级列。全字段可选——只回写传了的（非 null）列
+     * （LambdaUpdateWrapper 条件 set），不传的保持原值。权限：本人题 or superadmin。不碰 blockJson/题干。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public QuestionDetailVo updateAttrs(UpdateAttrsBo bo) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录不能编辑题目");
+        }
+        if (bo == null || bo.getQuestionId() == null) {
+            throw new ServiceException("questionId 不能为空");
+        }
+        String dim3SkillJson = bo.getDim3Skill() == null ? null : JsonUtils.toJsonString(bo.getDim3Skill());
+        String auxTagsJson = bo.getAuxTags() == null ? null : JsonUtils.toJsonString(bo.getAuxTags());
+
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 权限校验（同 update）：列裁剪查 create_user，避开 free_tag 全列扫漂移坑
+            BizQuestion q = bizQuestionMapper.selectOne(new LambdaQueryWrapper<BizQuestion>()
+                .select(BizQuestion::getId, BizQuestion::getCreateUser)
+                .eq(BizQuestion::getId, bo.getQuestionId()));
+            if (q == null) {
+                throw new ServiceException("题目不存在");
+            }
+            boolean isOwner = q.getCreateUser() != null && q.getCreateUser().equals(currentUserId);
+            if (!isOwner && !LoginHelper.isSuperAdmin()) {
+                throw new ServiceException("无权编辑非本人题目");
+            }
+            // 条件 set：仅回写传了的列，不传保持原值（局部保存不清空其它维度）
+            LambdaUpdateWrapper<BizQuestion> uw = new LambdaUpdateWrapper<>();
+            uw.eq(BizQuestion::getId, bo.getQuestionId())
+              .set(bo.getSubjectId() != null, BizQuestion::getSubjectId, bo.getSubjectId())
+              .set(bo.getQuestionType() != null, BizQuestion::getQuestionType, bo.getQuestionType())
+              .set(bo.getDifficult() != null, BizQuestion::getDifficult, bo.getDifficult())
+              .set(bo.getDim1KpId() != null, BizQuestion::getDim1KpId, bo.getDim1KpId())
+              .set(bo.getDim2Qtype() != null, BizQuestion::getDim2Qtype, bo.getDim2Qtype())
+              .set(bo.getDim3Skill() != null, BizQuestion::getDim3Skill, dim3SkillJson)
+              .set(bo.getDim4Difficulty() != null, BizQuestion::getDim4Difficulty, bo.getDim4Difficulty())
+              .set(bo.getDim5Structure() != null, BizQuestion::getDim5Structure, bo.getDim5Structure())
+              .set(bo.getAuxTags() != null, BizQuestion::getAuxTags, auxTagsJson)
+              .set(bo.getLabelStatus() != null, BizQuestion::getLabelStatus, bo.getLabelStatus())
+              .set(bo.getLabelConfidence() != null, BizQuestion::getLabelConfidence, bo.getLabelConfidence())
+              .set(bo.getLabeledBy() != null, BizQuestion::getLabeledBy, bo.getLabeledBy())
+              .set(bo.getBaseScore() != null, BizQuestion::getBaseScore, bo.getBaseScore())
+              .set(bo.getSourceType() != null, BizQuestion::getSourceType, bo.getSourceType())
+              .set(bo.getRegionCode() != null, BizQuestion::getRegionCode, bo.getRegionCode())
+              .set(bo.getVariantRelation() != null, BizQuestion::getVariantRelation, bo.getVariantRelation())
+              .set(bo.getMotherQuestionId() != null, BizQuestion::getMotherQuestionId, bo.getMotherQuestionId())
+              .set(bo.getAnnotateStatus() != null, BizQuestion::getAnnotateStatus, bo.getAnnotateStatus());
+            bizQuestionMapper.update(null, uw);
+            return null;
+        }));
+        return selectById(bo.getQuestionId());
     }
 
     /**

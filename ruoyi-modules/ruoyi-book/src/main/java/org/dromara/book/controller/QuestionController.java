@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateAttrsBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
@@ -172,5 +173,18 @@ public class QuestionController {
     @PostMapping("/update")
     public R<QuestionDetailVo> update(@Validated @RequestBody UpdateQuestionBo bo) {
         return R.ok(questionService.update(bo));
+    }
+
+    /**
+     * POST /teacher/question/update-attrs — PRD-A-015 属性编辑页回写（基础属性 + 5维打标 + N1 高级列）。
+     *
+     * <p>与 {@code /update}（排版=blockJson）、{@code /update-label}（AI LangGraph 打标）分工：
+     * 本端点是「老师属性编辑页」专用，全字段可选（只回写传了的列），不碰 blockJson/题干。
+     * 权限：本人题 or superadmin（service 内 owner||isSuperAdmin 校验）。
+     */
+    @SaCheckLogin
+    @PostMapping("/update-attrs")
+    public R<QuestionDetailVo> updateAttrs(@Validated @RequestBody UpdateAttrsBo bo) {
+        return R.ok(questionService.updateAttrs(bo));
     }
 }

@@ -3,6 +3,7 @@ package org.dromara.book.service;
 import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateAttrsBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
@@ -99,6 +100,17 @@ public interface IQuestionService {
      * @param bo 打标入参（questionId 必填，dim 与 label 维度值）
      */
     void updateLabel(UpdateLabelBo bo);
+
+    /**
+     * PRD-A-015 属性编辑页回写（POST /teacher/question/update-attrs）：基础属性 + 5维打标 + N1 高级列。
+     *
+     * <p>全字段可选——只回写传了的（非 null）列，不传保持原值。权限：本人题 or superadmin。
+     * 不碰 blockJson/题干（那走 {@link #update}）。
+     *
+     * @param bo 属性入参（questionId 必填，其余可选）
+     * @return 回读的最新详情 VO
+     */
+    QuestionDetailVo updateAttrs(UpdateAttrsBo bo);
 
     /**
      * PRD-C-009 — teacher 侧录题（POST /teacher/question/create）。
