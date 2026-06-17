@@ -160,6 +160,15 @@ public class QuestionItemVo implements Serializable {
     private String analyzeTextContent;
 
     /**
+     * PRD-A-015 结构化网格块 JSON（biz_question_block.block_json，按 question_id 关联）。
+     *
+     * <p>列表卡片（我的题库/题库/工作台中栏/卷篮）有则走 QuestionBlockRender 结构化渲染，
+     * 与详情/卷库/PDF 四端一致；null=未结构化老题，FE 回落 stemText/stemImg 扁平展示。
+     * page() 批量回填（仿 selectById/listByIds），不再「列表端空返」。
+     */
+    private String blockJson;
+
+    /**
      * AI 打标状态（biz_question.label_status）：0=未标 / 1=AI已标 / 2=已审核。
      */
     private Integer labelStatus;

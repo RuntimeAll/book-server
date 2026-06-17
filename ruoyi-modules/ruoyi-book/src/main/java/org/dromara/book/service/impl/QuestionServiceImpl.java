@@ -111,9 +111,18 @@ public class QuestionServiceImpl implements IQuestionService {
             List<Long> ids = records.stream().map(QuestionItemVo::getId).collect(Collectors.toList());
             Map<Long, List<QuestionKnowledgeVo>> uMap = loadKnowledgesByQuestionIds(ids, "U");
             Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
+            // PRD-A-015：批量回填结构化网格块 JSON（仿 listByIds），令列表卡片也能走
+            // QuestionBlockRender 渲染（图片/选项/公式与详情一致），不再「列表端空返」。
+            Map<Long, String> blockMap = new LinkedHashMap<>();
+            for (BizQuestionBlock b : bizQuestionBlockMapper.selectBatchIds(ids)) {
+                if (b.getBlockJson() != null) {
+                    blockMap.put(b.getQuestionId(), b.getBlockJson());
+                }
+            }
             for (QuestionItemVo vo : records) {
                 vo.setQuestionKnowledges(uMap.getOrDefault(vo.getId(), Collections.emptyList()));
                 vo.setFreeTags(ftMap.getOrDefault(vo.getId(), Collections.emptyList()));
+                vo.setBlockJson(blockMap.get(vo.getId()));
             }
         }
 
