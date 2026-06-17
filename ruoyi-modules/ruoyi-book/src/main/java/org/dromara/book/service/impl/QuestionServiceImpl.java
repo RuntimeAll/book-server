@@ -419,7 +419,10 @@ public class QuestionServiceImpl implements IQuestionService {
             //   (500「发生未知异常」)。此前 FE 一直被「题面尚未产出」拦在前面，未触达本插入路径，故隐藏至今。
             Integer difficult = bo.getDifficult() != null ? bo.getDifficult() : bo.getDim4Difficulty();
             q.setDifficult(difficult != null ? difficult : 2);
-            q.setSubjectId(bo.getSubjectId());
+            // 🔴 2026-06-17 审计补：subject_id 与 difficult 同构 NOT NULL 无默认地雷。母题主考点未锚定
+            //   且年级章未确认时 FE 发 subjectId=null → insert 违约 500。toolkit 路兜了"0"(未分类)，
+            //   FE 直连路没兜 → 此处统一兜底"0"(与 toolkit UNCLASSIFIED_SUBJECT_ID 同口径)，堵所有调用方。
+            q.setSubjectId(StringUtils.isBlank(bo.getSubjectId()) ? "0" : bo.getSubjectId());
             q.setStemImgUrl(bo.getStemImg());
             q.setAnswerImgUrl(bo.getAnswerImg());
             q.setExplainImgUrl(bo.getExplainImg());
