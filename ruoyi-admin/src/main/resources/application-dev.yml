@@ -47,7 +47,11 @@ spring:
     baseline-version: 16
     locations: classpath:db/migration
     table: flyway_schema_history
-    validate-on-migrate: true
+    # 🔴 三线共用 dev 库协作坑 (book-ai/CLAUDE.md §3.1): B/C 线 V801/V905-908 等迁移已 apply 进共用
+    # flyway_schema_history, A 线本地 db/migration 无这些文件 → validate 报 "not resolved locally" 拒启。
+    # ignore-migration-patterns 实测拦不住 → dev 直接关 validate (库 schema 已由各线迁移维护齐全;
+    # A 线自己的新迁移仍会 migrate 自动 apply, 仅不做跨线 validate)。仅 dev; prod 各线库独立, 不受影响。
+    validate-on-migrate: false
 
 --- # 数据源配置
 spring:

@@ -3,6 +3,8 @@ package org.dromara.book.service;
 import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateAttrsBo;
+import org.dromara.book.domain.bo.UpdateBlockBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
@@ -103,6 +105,17 @@ public interface IQuestionService {
     void updateLabel(UpdateLabelBo bo);
 
     /**
+     * PRD-A-015 属性编辑页回写（POST /teacher/question/update-attrs）：基础属性 + 5维打标 + N1 高级列。
+     *
+     * <p>全字段可选——只回写传了的（非 null）列，不传保持原值。权限：本人题 or superadmin。
+     * 不碰 blockJson/题干（那走 {@link #update}）。
+     *
+     * @param bo 属性入参（questionId 必填，其余可选）
+     * @return 回读的最新详情 VO
+     */
+    QuestionDetailVo updateAttrs(UpdateAttrsBo bo);
+
+    /**
      * PRD-C-009 — teacher 侧录题（POST /teacher/question/create）。
      *
      * <p>归属 = 登录老师（绝不信前端 createBy）。落库一个事务原子完成：
@@ -157,4 +170,29 @@ public interface IQuestionService {
      * @return 标签候选列表（{id,name,count}，count 倒序）；无命中返空 list
      */
     List<KpTagStatVo> tagsByKp(String kpId, Integer limit);
+
+    /**
+     * PRD-A-015 — 题目结构化网格块编辑（POST /teacher/question/update-block）。
+     *
+     * <p>🔴 C-100 B-converge 改名：原 A-015 = {@code update(UpdateQuestionBo)} + {@code /teacher/question/update}，
+     * 与 C-015「覆盖原行」撞名撞端点，维护者拍板 A 整体改名 → {@code updateBlock(UpdateBlockBo)} + {@code /update-block}。
+     *
+     * <p>权威源 = blockJson（§10.1 schema）。落库一个事务原子完成：
+     * <ol>
+     *   <li>OWNER 校验：原题 create_user ≠ 登录 id → 抛 ServiceException（他人题 + 公共题都被挡，G5）</li>
+     *   <li>校验 blockJson（{@link org.dromara.book.util.BlockJsonValidator}），非法抛异常</li>
+     *   <li>upsert biz_question_block（question_id 为 PK，先 selectById 判存在 → update/insert，
+     *       v=1，update_by = 登录 id）</li>
+     *   <li>可选元数据：传了 questionType/difficult/subjectId 更新 biz_question 对应列；
+     *       传了 stem/answer/analyze（非空）同步更新对应 biz_text_content（无则新建并回写 FK）</li>
+     * </ol>
+     *
+     * <p>🔴 biz_question / biz_text_content / biz_question_block 均无 tenant_id 列；且老题
+     * create_user≠登录 id，全事务体走 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))}
+     * 包裹（同 create() 范式：否则数据权限拦截器注入 AND create_by=登录id 致 OWNER 加载到 null / 更新 0 行）。
+     *
+     * @param bo 编辑入参（questionId + blockJson 必填）
+     * @return 更新后题目的详情 VO（含 blockJson + 外置文本 + knowledges + freeTags）
+     */
+    QuestionDetailVo updateBlock(UpdateBlockBo bo);
 }

@@ -168,4 +168,12 @@ public class CreateQuestionBo implements Serializable {
      * agent 抽取/生成依据 → biz_question_ai.reasoning。
      */
     private String reasoning;
+
+    // ===== 可选：结构化网格块内容（PRD-A-015，§10.1 schema） =====
+
+    /**
+     * 结构化网格块 JSON（可空；非空时校验 §10.1 并落 biz_question_block，
+     * question_id = 新建题 id，v=1，update_by = 登录老师）。
+     */
+    private String blockJson;
 }

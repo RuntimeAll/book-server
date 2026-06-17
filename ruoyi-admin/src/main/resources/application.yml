@@ -199,6 +199,8 @@ tenant:
     #   必须列入 tenant.excludes，否则多租户拦截器注入 tenant_id → "Unknown column 'tenant_id'" 全 500。
     - biz_teacher_ai_memory
     - biz_dna_edit_log
+    # PRD-A-015 题目结构化网格块存储表（V23，无 tenant_id，同上单租户约定）
+    - biz_question_block
 
 # MyBatisPlus配置
 # https://baomidou.com/config/

@@ -38,6 +38,12 @@
         <result property="updateBy" column="update_by"/>
         <!-- J 卡段② / page 端点专属，详情端点 SELECT 不带这列，serialize 时为 null -->
         <result property="isFavorite" column="is_favorite"/>
+        <!-- 富文本带出卡：按 FK(stem/answer/analyze_text_content_id)=biz_text_content.id 关联出三段富文本 +
+             label_status。SELECT 不带这些列的查询（如 favorite page）序列化为 null，前端容忍 -->
+        <result property="stemTextContent" column="stem_text_content"/>
+        <result property="answerTextContent" column="answer_text_content"/>
+        <result property="analyzeTextContent" column="analyze_text_content"/>
+        <result property="labelStatus" column="label_status"/>
     </resultMap>
 
     <!--
@@ -98,7 +104,12 @@
             resultMap="QuestionItemMap">
         SELECT
         <include refid="QuestionItemColumns"/>,
-        (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
+        (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite,
+        <!-- 富文本带出卡：按 FK id 关联 biz_text_content（不是 question_id+content_type），FK NULL 时返 null -->
+        (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.stem_text_content_id)    AS stem_text_content,
+        (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.answer_text_content_id)  AS answer_text_content,
+        (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.analyze_text_content_id) AS analyze_text_content,
+        q.label_status AS label_status
         FROM biz_question q
         LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_question_favorite f
@@ -164,7 +175,12 @@
             q.create_by,
             UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
             UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
-            q.update_by
+            q.update_by,
+            <!-- 富文本带出卡：按 FK id 关联 biz_text_content，FK NULL 时返 null -->
+            (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.stem_text_content_id)    AS stem_text_content,
+            (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.answer_text_content_id)  AS answer_text_content,
+            (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.analyze_text_content_id) AS analyze_text_content,
+            q.label_status AS label_status
         FROM biz_question q
         LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_text_content tc_a ON tc_a.question_id = q.id AND tc_a.content_type = 'A'

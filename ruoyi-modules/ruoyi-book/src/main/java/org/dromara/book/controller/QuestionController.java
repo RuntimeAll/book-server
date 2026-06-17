@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
+import org.dromara.book.domain.bo.UpdateAttrsBo;
+import org.dromara.book.domain.bo.UpdateBlockBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
@@ -180,6 +182,27 @@ public class QuestionController {
     }
 
     /**
+     * POST /teacher/question/update-block — PRD-A-015 题目结构化编辑。
+     *
+     * <p>🔴 C-100 B-converge 改名：原 A-015 端点 = {@code /teacher/question/update}，与 C-015
+     * 「覆盖原行」撞名，维护者拍板 A 整体改名 → {@code /teacher/question/update-block} + {@link UpdateBlockBo}。
+     *
+     * <p>权威源 = blockJson（§10.1 结构化网格块 schema）。挂在 {@code /teacher/**}，
+     * 自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1，异常透传非 code:1）。
+     *
+     * <p>入参（{@link UpdateBlockBo}）：questionId + blockJson 必填；
+     * questionType/difficult/subjectId/stem/answer/analyze 可选元数据（传了才同步）。
+     * 🔴 createUser/createBy/status/id 服务端强制，body 传了也忽略；编辑前做 OWNER 校验（非本人题拒）。
+     *
+     * <p>响应（envelope 拆后）= 更新后题目的 {@link QuestionDetailVo}（含 blockJson + 外置题面）。
+     */
+    @SaCheckLogin
+    @PostMapping("/update-block")
+    public R<QuestionDetailVo> updateBlock(@Validated @RequestBody UpdateBlockBo bo) {
+        return R.ok(questionService.updateBlock(bo));
+    }
+
+    /**
      * GET /teacher/question/tagsByKp?kpId={id}&limit=300 — PRD-C-014 B1 T4
      * 某知识点下高频标签候选池。
      *
@@ -198,5 +221,20 @@ public class QuestionController {
     public R<List<KpTagStatVo>> tagsByKp(@RequestParam("kpId") String kpId,
                                          @RequestParam(value = "limit", required = false, defaultValue = "300") Integer limit) {
         return R.ok(questionService.tagsByKp(kpId, limit));
+    }
+
+    /**
+     * POST /teacher/question/update-attrs — PRD-A-015 属性编辑页回写（基础属性 + 5维打标 + N1 高级列）。
+     *
+     * <p>与 {@code /update}（C-015 覆盖原行）、{@code /update-block}（A-015 排版=blockJson）、
+     * {@code /update-label}（AI LangGraph 打标）分工：本端点是「老师属性编辑页」专用，
+     * 全字段可选（只回写传了的列），不碰 blockJson/题干。
+     * 🔴 C-100 方案B：dim3_skill / aux_tags 两维已随 V905 DROP 剥除（属性编辑页 C 线预期降级）。
+     * 权限：本人题 or superadmin（service 内 owner||isSuperAdmin 校验）。
+     */
+    @SaCheckLogin
+    @PostMapping("/update-attrs")
+    public R<QuestionDetailVo> updateAttrs(@Validated @RequestBody UpdateAttrsBo bo) {
+        return R.ok(questionService.updateAttrs(bo));
     }
 }

@@ -4,6 +4,8 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.io.Serial;
+import java.math.BigDecimal;
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -59,4 +61,41 @@ public class QuestionDetailVo extends QuestionItemVo {
      * 标准库标注知识点（source='S'，仅详情返）
      */
     private List<QuestionKnowledgeVo> questionStdKnowledges;
+
+    // blockJson 已上移至基类 QuestionItemVo（page/list/select 三端均回填），此处不再重复声明。
+
+    // ── PRD-A-015 属性编辑页 — 5 维 AI 打标 + 打标元数据（select 回填，供属性页查看/编辑）──
+    /** ①知识点 ID（dim1_kp_id，关联 biz_subject 知识点层节点） */
+    private String dim1KpId;
+    /** ②题型重标（dim2_qtype：1选择/4填空/5解答/6证明） */
+    private Integer dim2Qtype;
+    // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 字段随 V905 DROP 列一并剥除（属性编辑页 C 线预期降级）
+    /** ④难度重标 1-4（dim4_difficulty） */
+    private Integer dim4Difficulty;
+    /** ⑤图形/情境结构指纹（dim5_structure） */
+    private String dim5Structure;
+    /** AI 自评置信度 0-1（label_confidence） */
+    private BigDecimal labelConfidence;
+    /** 打标者：AI 模型名或人员（labeled_by） */
+    private String labeledBy;
+    /** 打标时间（labeled_at） */
+    private Date labeledAt;
+
+    // ── PRD-A-015 属性编辑页 — N1 高级属性列（biz_question 业务列，select 回填）──
+    /** 标准分值（base_score） */
+    private BigDecimal baseScore;
+    /** 导入来源（import_source：manual/textin/misikt/my-clone/ai-orchestrator） */
+    private String importSource;
+    /** 地域编码（region_code，国标行政区划） */
+    private String regionCode;
+    /** 来源类型（source_type：1中考真题/2模拟/3期末/4月考/5单元/6自编/9其他） */
+    private Integer sourceType;
+    /** 母题指针（mother_question_id，自关联血缘源；雪花 Long，BigNumberSerializer 序列化为 string） */
+    private Long motherQuestionId;
+    /** 变式关系（variant_relation：数值变式/情境变式/结构变式/同源） */
+    private String variantRelation;
+    /** 标注 schema 版本（annotate_version） */
+    private Integer annotateVersion;
+    /** 标注完整度（annotate_status：0未标/1已标全/2部分） */
+    private Integer annotateStatus;
 }
