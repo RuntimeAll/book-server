@@ -550,8 +550,10 @@ public class QuestionServiceImpl implements IQuestionService {
                 throw new ServiceException("题目不存在");
             }
 
-            // 2. OWNER 校验：非本人题（含他人题 + 公共题）一律拒（G5）
-            if (q.getCreateUser() == null || !q.getCreateUser().equals(currentUserId)) {
+            // 2. 权限校验（若依原生）：本人题可改；superadmin（LoginHelper.isSuperAdmin，userId=1）可改任意题；
+            //    teacher 等普通角色仅本人题（含他人题 + 公共题一律拒，G5）。与 workflow 模块同款 owner||superAdmin 范式。
+            boolean isOwner = q.getCreateUser() != null && q.getCreateUser().equals(currentUserId);
+            if (!isOwner && !LoginHelper.isSuperAdmin()) {
                 throw new ServiceException("无权编辑非本人题目");
             }
 
