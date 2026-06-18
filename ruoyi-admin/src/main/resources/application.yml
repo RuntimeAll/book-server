@@ -2,7 +2,8 @@
 server:
   # 服务器的HTTP端口（A 线用户端 8080 / B 线 admin 7888 / C 线 AI 编排 8090；多线共用同一 repo，端口靠目录隔离。
   #   master = A 线 = 8080；master-ai 分支固化 8090 — 跨分支合并时本字段以目标分支线为准）
-  port: 8090
+  #   master-A 分支（PRD-A-016 全栈同步，含 AI 编排）固化 8080 = A 线独立端口。
+  port: 8080
   servlet:
     # 应用的访问路径
     context-path: /
