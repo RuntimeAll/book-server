@@ -44,11 +44,19 @@ public class PlusWebInvokeTimeInterceptor implements HandlerInterceptor {
             String jsonParam = "";
             if (request instanceof RepeatedlyRequestWrapper) {
                 jsonParam = IoUtil.read(request.getReader());
+                // 🔴 PRD-A-018 FINDING#2：本拦截器只做「请求日志/计时」，解析请求体仅为脱敏打印。
+                //   解析失败（编码异常/超大体/畸形 JSON）绝不该抛出去掐死业务请求（原先 readTree
+                //   抛 JsonParseException → preHandle 抛 → 整请求 500，题目入库被误杀）。包 try/catch
+                //   降级为「打印原文 + warn」，让业务请求照常进 controller。
                 if (StringUtils.isNotBlank(jsonParam)) {
-                    ObjectMapper objectMapper = JsonUtils.getObjectMapper();
-                    JsonNode rootNode = objectMapper.readTree(jsonParam);
-                    removeSensitiveFields(rootNode, SystemConstants.EXCLUDE_PROPERTIES);
-                    jsonParam = rootNode.toString();
+                    try {
+                        ObjectMapper objectMapper = JsonUtils.getObjectMapper();
+                        JsonNode rootNode = objectMapper.readTree(jsonParam);
+                        removeSensitiveFields(rootNode, SystemConstants.EXCLUDE_PROPERTIES);
+                        jsonParam = rootNode.toString();
+                    } catch (Exception e) {
+                        log.warn("[PLUS]请求体日志脱敏解析失败（不影响业务，按原文打印）URL[{}]: {}", url, e.getMessage());
+                    }
                 }
             }
             log.info("[PLUS]开始请求 => URL[{}],参数类型[json],参数:[{}]", url, jsonParam);
