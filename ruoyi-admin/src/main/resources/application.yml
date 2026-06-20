@@ -101,8 +101,11 @@ spring:
   # 撞上 V6 INSERT 冲突 success=0 卡死, 后续 V7-V16 全部 skip 不写 history (G8 红).
   flyway:
     enabled: true
-    baseline-on-migrate: false
-    baseline-version: 16
+    # 🔴 2026-06-20 PRD-A-018 基线重置: V1-V24+V901-910 压成单一 V1__baseline。
+    #   baseline-on-migrate=true: populated 库(整库覆盖灌入)无 history 时自动 stamp baseline v1, 不跑迁移。
+    #   baseline-version=1: 仅 V1__baseline(version 1 ≤ baseline) → flyway 跳过不执行。后续新迁移从 V2 起。
+    baseline-on-migrate: true
+    baseline-version: 1
     locations: classpath:db/migration
     table: flyway_schema_history
     validate-on-migrate: true
