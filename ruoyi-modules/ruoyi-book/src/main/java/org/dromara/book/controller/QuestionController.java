@@ -7,9 +7,11 @@ import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateAttrsBo;
+import org.dromara.book.domain.bo.UpdateBlockBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
+import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
@@ -124,8 +126,9 @@ public class QuestionController {
      * <p>由 teacher-copilot LangGraph persist 节点调用（双头鉴权 + camelCase body）。
      * 挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包成 {@code {code:1,message,response}}。
      *
-     * <p>入参（{@link UpdateLabelBo}）：questionId(必填) / dim1KpId / dim2Qtype / dim3Skill[list] /
-     * dim4Difficulty / dim5Structure / auxTags(obj) / labelStatus(1或2,必填) / labelConfidence(0-1) / labeledBy。
+     * <p>入参（{@link UpdateLabelBo}）：questionId(必填) / dim1KpId / dim2Qtype /
+     * dim4Difficulty / dim5Structure / labelStatus(1或2,必填) / labelConfidence(0-1) / labeledBy。
+     * （🔴 V905 schema 收敛：dim3Skill / auxTags 入参已移除，对应列已 DROP。）
      * labeled_at 服务端取 now。仅 UPDATE 打标列，不碰题干/答案。
      *
      * <p>🔴 service 走 {@code DataPermissionHelper.ignore} —— 否则 biz_question 老题
@@ -145,8 +148,10 @@ public class QuestionController {
      * 挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
      *
      * <p>入参（{@link CreateQuestionBo}，camelCase body）：questionType + stem 必填；
-     * answer/analyze 长文本 + difficult/subjectId/*Img/freeTag/exam_* 直列 +
-     * AI 血缘 motherQuestionId/variantRelation/importSource + 5 维度打标列（可选）。
+     * answer/analyze 长文本 + difficult/subjectId/*Img/exam_* 直列 +
+     * AI 血缘 motherQuestionId/variantRelation/importSource + 5 维度打标列 +
+     * （PRD-C-014 B1）副 kp secondaryKpIds / 标签 tags / DNA skeleton/scene/examType/hardPoints/
+     * 锚定 anchorId/needAnchorReview/reasoning（均可选，事务内拆写 knowledge / free_tag×2 / ai 表）。
      * 🔴 createBy/createUser/status/id 服务端强制，body 传了也忽略（归属 = 登录老师）。
      *
      * <p>响应（envelope 拆后）= 新建题目的 {@link QuestionDetailVo}（读回外置题面 + knowledges + freeTags）。
@@ -158,16 +163,17 @@ public class QuestionController {
     }
 
     /**
-     * POST /teacher/question/update — PRD-A-015 题目结构化编辑。
+     * POST /teacher/question/update — PRD-C-015 批4·缺口10 覆盖原行。
      *
-     * <p>权威源 = blockJson（§10.1 结构化网格块 schema）。挂在 {@code /teacher/**}，
-     * 自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1，异常透传非 code:1）。
+     * <p>举一反三「重生后再入库 = 覆盖原行」：AI 改了 DNA / 重生题面后，把**已入库**的题
+     * 按 {@code id} UPDATE（而非新写一行）。重写题面三要素 + knowledge / free_tag / ai
+     * 子表（先清后写，幂等）。归属由后端校验（只许改自己的题），create_user 不动、update_by/time 刷新。
      *
-     * <p>入参（{@link UpdateQuestionBo}）：questionId + blockJson 必填；
-     * questionType/difficult/subjectId/stem/answer/analyze 可选元数据（传了才同步）。
-     * 🔴 createUser/createBy/status/id 服务端强制，body 传了也忽略；编辑前做 OWNER 校验（非本人题拒）。
+     * <p>入参 {@link UpdateQuestionBo}（= CreateQuestionBo + 必填 id）。挂 {@code /teacher/**}
+     * 走 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
      *
-     * <p>响应（envelope 拆后）= 更新后题目的 {@link QuestionDetailVo}（含 blockJson + 外置题面）。
+     * @param bo 覆盖更新入参（id + questionType + stem 必填）
+     * @return 更新后的题目详情 VO
      */
     @SaCheckLogin
     @PostMapping("/update")
@@ -176,10 +182,71 @@ public class QuestionController {
     }
 
     /**
+     * POST /teacher/question/update-block — PRD-A-015 题目结构化编辑。
+     *
+     * <p>🔴 C-100 B-converge 改名：原 A-015 端点 = {@code /teacher/question/update}，与 C-015
+     * 「覆盖原行」撞名，维护者拍板 A 整体改名 → {@code /teacher/question/update-block} + {@link UpdateBlockBo}。
+     *
+     * <p>权威源 = blockJson（§10.1 结构化网格块 schema）。挂在 {@code /teacher/**}，
+     * 自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1，异常透传非 code:1）。
+     *
+     * <p>入参（{@link UpdateBlockBo}）：questionId + blockJson 必填；
+     * questionType/difficult/subjectId/stem/answer/analyze 可选元数据（传了才同步）。
+     * 🔴 createUser/createBy/status/id 服务端强制，body 传了也忽略；编辑前做 OWNER 校验（非本人题拒）。
+     *
+     * <p>响应（envelope 拆后）= 更新后题目的 {@link QuestionDetailVo}（含 blockJson + 外置题面）。
+     */
+    @SaCheckLogin
+    @PostMapping("/update-block")
+    public R<QuestionDetailVo> updateBlock(@Validated @RequestBody UpdateBlockBo bo) {
+        return R.ok(questionService.updateBlock(bo));
+    }
+
+    /**
+     * POST /teacher/question/delete-block?questionId={id} — PRD-C-100 BC3 清结构化排版。
+     *
+     * <p>删 biz_question_block 行，让详情/卷库回落纯文本渲染。用途：举一反三里老师对已入库变式
+     * 「手动排版」存过 blockJson 后又「重生」该题——重生覆盖题面后旧布局对不上，确认重生前清掉脏 block。
+     *
+     * <p>OWNER 校验（本人题 or superadmin）；block 不存在幂等返回。挂 {@code /teacher/**} 命中 envelope。
+     *
+     * @param questionId 题目 id
+     */
+    @SaCheckLogin
+    @PostMapping("/delete-block")
+    public R<Void> deleteBlock(@RequestParam("questionId") Long questionId) {
+        questionService.deleteBlock(questionId);
+        return R.ok();
+    }
+
+    /**
+     * GET /teacher/question/tagsByKp?kpId={id}&limit=300 — PRD-C-014 B1 T4
+     * 某知识点下高频标签候选池。
+     *
+     * <p>SQL = biz_question_free_tag ⨝ biz_question_knowledge（同 question_id 且 knowledge_id=kpId）
+     * ⨝ biz_free_tag，按 tag 聚合 count desc limit N。供 W1 标签候选池（替代旧 H6 单建接口）。
+     *
+     * <p>挂在 {@code /teacher/**}，命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
+     * 老师登录态（@SaCheckLogin）。kpId 空 / 无命中返空数组。
+     *
+     * @param kpId  知识点 ID（biz_subject.id）
+     * @param limit 返回上限（默认 300，service clamp 1~1000）
+     * @return 标签候选 {@code [{id,name,count}]}（count 倒序）
+     */
+    @SaCheckLogin
+    @GetMapping("/tagsByKp")
+    public R<List<KpTagStatVo>> tagsByKp(@RequestParam("kpId") String kpId,
+                                         @RequestParam(value = "limit", required = false, defaultValue = "300") Integer limit) {
+        return R.ok(questionService.tagsByKp(kpId, limit));
+    }
+
+    /**
      * POST /teacher/question/update-attrs — PRD-A-015 属性编辑页回写（基础属性 + 5维打标 + N1 高级列）。
      *
-     * <p>与 {@code /update}（排版=blockJson）、{@code /update-label}（AI LangGraph 打标）分工：
-     * 本端点是「老师属性编辑页」专用，全字段可选（只回写传了的列），不碰 blockJson/题干。
+     * <p>与 {@code /update}（C-015 覆盖原行）、{@code /update-block}（A-015 排版=blockJson）、
+     * {@code /update-label}（AI LangGraph 打标）分工：本端点是「老师属性编辑页」专用，
+     * 全字段可选（只回写传了的列），不碰 blockJson/题干。
+     * 🔴 C-100 方案B：dim3_skill / aux_tags 两维已随 V905 DROP 剥除（属性编辑页 C 线预期降级）。
      * 权限：本人题 or superadmin（service 内 owner||isSuperAdmin 校验）。
      */
     @SaCheckLogin

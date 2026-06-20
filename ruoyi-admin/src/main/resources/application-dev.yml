@@ -43,8 +43,10 @@ captcha:
 spring:
   flyway:
     enabled: true
-    baseline-on-migrate: false
-    baseline-version: 16
+    # 🔴 2026-06-20 PRD-A-018 基线重置(同主 yml): baseline v1 + 仅 V1__baseline。dev 共用库 history 仍有旧行,
+    #   validate 保持关(下方), baseline-on-migrate 对非空 history 不触发, 仅新迁移自动 apply。
+    baseline-on-migrate: true
+    baseline-version: 1
     locations: classpath:db/migration
     table: flyway_schema_history
     # 🔴 三线共用 dev 库协作坑 (book-ai/CLAUDE.md §3.1): B/C 线 V801/V905-908 等迁移已 apply 进共用

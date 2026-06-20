@@ -9,8 +9,10 @@ spring.servlet.multipart.location: /ruoyi/server/temp
 spring:
   flyway:
     enabled: true
-    baseline-on-migrate: false
-    baseline-version: 16
+    # 🔴 2026-06-20 PRD-A-018 基线重置: 整库覆盖灌入 schema(无 flyway history) → baseline-on-migrate=true
+    #   自动 stamp baseline v1, 仅 V1__baseline(≤baseline)被跳过, 不跑迁移不炸库。后续新迁移 V2 起。
+    baseline-on-migrate: true
+    baseline-version: 1
     locations: classpath:db/migration
     table: flyway_schema_history
     validate-on-migrate: true

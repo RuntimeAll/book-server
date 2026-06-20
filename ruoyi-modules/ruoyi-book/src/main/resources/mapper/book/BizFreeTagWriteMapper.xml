@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  PRD-C-014 B1 — biz_free_tag 字典 + biz_question_free_tag 关联表的写 + T4 候选池查询。
+  ruoyi-book 自有 namespace（org.dromara.book.mapper.BizFreeTagWriteMapper），
+  与 ruoyi-book-admin 的 AdminFreeTagWriteMapper 隔离（模块铁则）。
+-->
+<mapper namespace="org.dromara.book.mapper.BizFreeTagWriteMapper">
+
+    <select id="selectIdByName" parameterType="string" resultType="java.lang.Long">
+        SELECT id FROM biz_free_tag WHERE name = #{name} LIMIT 1
+    </select>
+
+    <insert id="insertFreeTag" parameterType="string">
+        INSERT INTO biz_free_tag(name, use_count, create_time)
+        VALUES (#{name}, 1, NOW())
+    </insert>
+
+    <update id="incrementUseCount" parameterType="java.lang.Long">
+        UPDATE biz_free_tag SET use_count = use_count + 1 WHERE id = #{id}
+    </update>
+
+    <insert id="insertRel">
+        INSERT INTO biz_question_free_tag(question_id, tag_id, position)
+        VALUES (#{questionId}, #{tagId}, #{position})
+    </insert>
+
+    <select id="countRel" resultType="int">
+        SELECT COUNT(1) FROM biz_question_free_tag
+        WHERE question_id = #{questionId} AND tag_id = #{tagId}
+    </select>
+
+    <!-- PRD-C-015 批4·缺口10：覆盖原行更新时先清某题全部标签挂接（只删关联，不动字典 use_count）。 -->
+    <delete id="deleteRelByQuestion" parameterType="java.lang.Long">
+        DELETE FROM biz_question_free_tag WHERE question_id = #{questionId}
+    </delete>
+
+    <!--
+      T4 候选池：某 kp 下题目挂接过的标签，按出现次数倒序。
+      biz_question_knowledge.knowledge_id 为 varchar，kpId 以字符串比对。
+    -->
+    <select id="selectTagsByKp" resultType="java.util.Map">
+        SELECT
+            ft.id          AS id,
+            ft.name        AS name,
+            COUNT(*)       AS cnt
+        FROM biz_question_knowledge qk
+        JOIN biz_question_free_tag qft ON qft.question_id = qk.question_id
+        JOIN biz_free_tag ft ON ft.id = qft.tag_id
+        WHERE qk.knowledge_id = #{kpId}
+        GROUP BY ft.id, ft.name
+        ORDER BY cnt DESC, ft.id ASC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

@@ -2,6 +2,7 @@
 server:
   # 服务器的HTTP端口（A 线用户端 8080 / B 线 admin 7888 / C 线 AI 编排 8090；多线共用同一 repo，端口靠目录隔离。
   #   master = A 线 = 8080；master-ai 分支固化 8090 — 跨分支合并时本字段以目标分支线为准）
+  #   master-A 分支（PRD-A-016 全栈同步，含 AI 编排）固化 8080 = A 线独立端口。
   port: 8080
   servlet:
     # 应用的访问路径
@@ -100,8 +101,11 @@ spring:
   # 撞上 V6 INSERT 冲突 success=0 卡死, 后续 V7-V16 全部 skip 不写 history (G8 红).
   flyway:
     enabled: true
-    baseline-on-migrate: false
-    baseline-version: 16
+    # 🔴 2026-06-20 PRD-A-018 基线重置: V1-V24+V901-910 压成单一 V1__baseline。
+    #   baseline-on-migrate=true: populated 库(整库覆盖灌入)无 history 时自动 stamp baseline v1, 不跑迁移。
+    #   baseline-version=1: 仅 V1__baseline(version 1 ≤ baseline) → flyway 跳过不执行。后续新迁移从 V2 起。
+    baseline-on-migrate: true
+    baseline-version: 1
     locations: classpath:db/migration
     table: flyway_schema_history
     validate-on-migrate: true
@@ -109,6 +113,10 @@ spring:
     # (V19/V20...) 对 Flyway 是 "out of order", 默认 validate 直接拒启。开 out-of-order 允许补 apply;
     # prod 各线库独立无 V9xx, 此开关无副作用 (号唯一不复用即安全, 见 book-ai/CLAUDE.md §3.1)。
     out-of-order: true
+    # 🔴 三线共用 dev 库再补 (2026-06-16): B 线 V801 已 apply 到共享库但 C clone 无此文件 (C 用 V901+),
+    # 默认 validate 撞 "Detected applied migration not resolved locally: 801" 直接拒启。
+    # 忽略 "本地没有但库里已 apply" 的外线迁移; prod 各线库独立无外线 V 号, 无副作用 (同 §3.1)。
+    ignore-migration-patterns: "*:missing"
 
 # Sa-Token配置
 sa-token:
@@ -191,6 +199,10 @@ tenant:
     - biz_variant_upload
     # PRD-A-014 试卷导出任务记录表（V20，无 tenant_id，同上单租户约定）
     - biz_export_record
+    # 🔴 PRD-C-100 B4 记忆/经验层（V909/V910，无 tenant_id，同上单租户约定）——
+    #   必须列入 tenant.excludes，否则多租户拦截器注入 tenant_id → "Unknown column 'tenant_id'" 全 500。
+    - biz_teacher_ai_memory
+    - biz_dna_edit_log
     # PRD-A-015 题目结构化网格块存储表（V23，无 tenant_id，同上单租户约定）
     - biz_question_block
 

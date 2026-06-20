@@ -69,14 +69,11 @@ public class QuestionDetailVo extends QuestionItemVo {
     private String dim1KpId;
     /** ②题型重标（dim2_qtype：1选择/4填空/5解答/6证明） */
     private Integer dim2Qtype;
-    /** ③思维方法数组 JSON 文本（dim3_skill，如 ["分类讨论","数形结合"]；FE 自行 parse） */
-    private String dim3Skill;
+    // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 字段随 V905 DROP 列一并剥除（属性编辑页 C 线预期降级）
     /** ④难度重标 1-4（dim4_difficulty） */
     private Integer dim4Difficulty;
     /** ⑤图形/情境结构指纹（dim5_structure） */
     private String dim5Structure;
-    /** 辅标签 JSON 文本（aux_tags，对象；FE 自行 parse） */
-    private String auxTags;
     /** AI 自评置信度 0-1（label_confidence） */
     private BigDecimal labelConfidence;
     /** 打标者：AI 模型名或人员（labeled_by） */

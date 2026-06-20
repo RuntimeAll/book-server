@@ -75,10 +75,11 @@
         q.question_type,
         q.difficult,
         q.subject_id,
-        <!-- 题干文本来源闸（2026-06-11 用户拍板"来源锁死"）：misikt 题 stem_text 是搜索用纯文本提取、非展示内容，
-             展示必须走 stem_img_url 图片 → stemText 强制出 NULL 让前端能力判定落回图片；
-             其余来源（AI-Orchestrator/举一反三/manual）外置文本优先、老字段兜底。后期 TextIn 复活老题时再放开此闸 -->
-        CASE WHEN q.import_source = 'misikt' THEN NULL
+        <!-- 题干文本来源闸（2026-06-11 锁，2026-06-16 放闸）：misikt 老题 stem_text 是搜索用纯文本、非展示内容，
+             无富文本时仍强制出 NULL 让前端落回 stem_img_url 图片；但 biz_text_content S 已转好富文本(databin批)的题
+             → 直接出富文本(tc_s.content)，前端能力判定走 Markdown+KaTeX 渲染。未转的 misikt 老题维持图片，零回归。
+             其余来源（AI-Orchestrator/举一反三/manual）外置文本优先、老字段兜底。 -->
+        CASE WHEN q.import_source = 'misikt' THEN tc_s.content
              ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text_resolved,
         q.stem_img_url,
         0 AS score_val,
@@ -110,7 +111,7 @@
         (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.analyze_text_content_id) AS analyze_text_content,
         q.label_status AS label_status
         FROM biz_question q
-        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
+        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_question_favorite f
           ON f.question_id = q.id
          AND f.user_id = #{currentUserId}
@@ -130,7 +131,7 @@
         <include refid="QuestionItemColumns"/>,
         1 AS is_favorite
         FROM biz_question q
-        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
+        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         INNER JOIN biz_question_favorite f
           ON f.question_id = q.id
          AND f.user_id = #{currentUserId}
@@ -155,7 +156,8 @@
             q.difficult,
             q.subject_id,
             <!-- PRD-B-006: 三要素外置优先, biz_text_content 命中走外置, stem 兜底老字段 -->
-            CASE WHEN q.import_source = 'misikt' THEN NULL
+            <!-- 2026-06-16 放闸: misikt 题有富文本(databin批)直接出, 无则 NULL 落图片 -->
+            CASE WHEN q.import_source = 'misikt' THEN tc_s.content
                  ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text_resolved,
             tc_a.content                                AS answer_resolved,
             tc_e.content                                AS explain_resolved,
@@ -180,7 +182,7 @@
             (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.analyze_text_content_id) AS analyze_text_content,
             q.label_status AS label_status
         FROM biz_question q
-        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
+        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_text_content tc_a ON tc_a.question_id = q.id AND tc_a.content_type = 'A'
         LEFT JOIN biz_text_content tc_e ON tc_e.question_id = q.id AND tc_e.content_type = 'E'
         WHERE q.id = #{id}
@@ -200,7 +202,8 @@
             q.subject_id,
             <!-- PRD-B-006: 同 selectQuestionDetailById 拼三要素外置, 试卷预览/PDF 导出也吃到 -->
             <!-- PRD-B-013: 删 8 列（详见 PRD-B-013 §scope.A）；answer 直读 biz_text_content A 列 -->
-            CASE WHEN q.import_source = 'misikt' THEN NULL
+            <!-- 2026-06-16 放闸: misikt 题有富文本(databin批)直接出, 无则 NULL 落图片 -->
+            CASE WHEN q.import_source = 'misikt' THEN tc_s.content
                  ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text_resolved,
             tc_a.content                                AS answer_resolved,
             tc_e.content                                AS explain_resolved,
@@ -220,7 +223,7 @@
             UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
             q.update_by
         FROM biz_question q
-        LEFT JOIN biz_text_content tc_s ON tc_s.question_id = q.id AND tc_s.content_type = 'S'
+        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_text_content tc_a ON tc_a.question_id = q.id AND tc_a.content_type = 'A'
         LEFT JOIN biz_text_content tc_e ON tc_e.question_id = q.id AND tc_e.content_type = 'E'
         WHERE q.id IN

@@ -310,8 +310,10 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         log.info("【admin·edit-question】 adminId={}, questionId={}, action={}, changedFields={}",
             currentUserId, bo.getId(), isCreate ? "create" : "update", changedFields);
 
-        // ===== Step 1：INSERT/UPDATE biz_question（含 free_tag 冗余串同步） =====
-        // 🔴 PRD-B-013: 删除 4 列写入（详见 PRD-B-013 §scope.A）
+        // ===== Step 1：INSERT/UPDATE biz_question =====
+        // 🔴 V905 schema 收敛：biz_question.free_tag 列已 DROP（标签 canonical = biz_question_free_tag
+        //    挂接表 + biz_free_tag 字典，由 Step 4 writeFreeTags 经 AdminFreeTagWriteMapper 写入），
+        //    故此处不再同步 free_tag 冗余主表列。
         Long questionId;
         if (isCreate) {
             BizQuestion entity = new BizQuestion();
@@ -322,7 +324,6 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
             entity.setStemImgUrl(bo.getStemImgUrl());
             entity.setAnswerImgUrl(bo.getAnswerImgUrl());
             entity.setExplainImgUrl(bo.getExplainImgUrl());
-            entity.setFreeTag(joinFreeTag(bo.getTagNames()));
             // 新建时 status='0' 草稿（PRD §3.8 状态机）；status='1' 走 publish 端点
             entity.setStatus("0");
             // create_by / create_user 手动赋值（entity 没有自动填充注解）
@@ -355,7 +356,7 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
                 .set("stem_img_url", bo.getStemImgUrl())
                 .set("answer_img_url", bo.getAnswerImgUrl())
                 .set("explain_img_url", bo.getExplainImgUrl())
-                .set("free_tag", joinFreeTag(bo.getTagNames()))
+                // 🔴 V905：free_tag 列已 DROP，标签写入由 Step 4 writeFreeTags 经挂接表完成，不再写主表列
                 .set("update_by", currentUserName)
                 .set("update_time", new Date());
             int affected = bizQuestionMapper.update(null, w);
@@ -488,16 +489,8 @@ public class AdminQuestionServiceImpl implements IAdminQuestionService {
         }
     }
 
-    /**
-     * 拼 biz_question.free_tag 冗余串（PRD §3.5）。
-     * tagNames 空时返 null（而非空串）— 与 DB 现存数据一致。
-     */
-    private String joinFreeTag(List<String> tagNames) {
-        if (tagNames == null || tagNames.isEmpty()) {
-            return null;
-        }
-        return String.join(",", tagNames);
-    }
+    // 🔴 V905：joinFreeTag(拼 biz_question.free_tag 冗余串) 已移除 —— free_tag 列已 DROP，
+    //    标签 canonical 全量走 writeFreeTags → AdminFreeTagWriteMapper(挂接表+字典)。
 
     /**
      * U 轨知识点全量替换（V-6 — PRD §3.5）。

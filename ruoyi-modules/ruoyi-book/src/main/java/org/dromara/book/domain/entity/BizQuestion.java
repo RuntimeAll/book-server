@@ -123,11 +123,6 @@ public class BizQuestion implements Serializable {
     private Long analyzeTextContentId;
 
     /**
-     * 自由标签（逗号分隔）
-     */
-    private String freeTag;
-
-    /**
      * 题目格式版本码（默认 1010）
      */
     private Integer version;
@@ -205,13 +200,6 @@ public class BizQuestion implements Serializable {
     private Integer dim2Qtype;
 
     /**
-     * ③思维方法数组（JSON 列 dim3_skill，如 {@code ["分类讨论","数形结合"]}）—— V16 新增。
-     *
-     * <p>🔴 探针期用 String 存原始 JSON 文本（不上 typeHandler，PRD-C-007 T1 范式）。
-     */
-    private String dim3Skill;
-
-    /**
      * ④难度 1-4（dim4_difficulty TINYINT）—— V16 新增，AI 打标维度 4。
      */
     private Integer dim4Difficulty;
@@ -220,13 +208,6 @@ public class BizQuestion implements Serializable {
      * ⑤图形/情境结构指纹（dim5_structure VARCHAR(255)）—— V16 新增，AI 打标维度 5。
      */
     private String dim5Structure;
-
-    /**
-     * 辅标签 JSON（aux_tags：错因/情境/考查角度/母题）—— V16 新增。
-     *
-     * <p>🔴 探针期用 String 存原始 JSON 文本（不上 typeHandler）。
-     */
-    private String auxTags;
 
     /**
      * AI 打标状态机（label_status TINYINT）：0未标 / 1AI已标 / 2已审核 / 3争议 —— V16 新增。

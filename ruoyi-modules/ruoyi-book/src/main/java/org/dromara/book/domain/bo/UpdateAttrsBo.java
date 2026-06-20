@@ -8,8 +8,6 @@ import lombok.Data;
 import java.io.Serial;
 import java.io.Serializable;
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
 
 /**
  * PRD-A-015 属性编辑页回写入参 BO（{@code POST /teacher/question/update-attrs}）。
@@ -46,14 +44,11 @@ public class UpdateAttrsBo implements Serializable {
     private String dim1KpId;
     /** ②题型 1选择/4填空/5解答/6证明（dim2_qtype） */
     private Integer dim2Qtype;
-    /** ③思维方法数组（dim3_skill JSON 列；service 序列化为 JSON 文本） */
-    private List<String> dim3Skill;
+    // 🔴 C-100 B-converge 方案B：dim3Skill / auxTags 字段随 V905 DROP 列一并剥除（属性编辑页 C 线预期降级）
     /** ④难度 1-4（dim4_difficulty） */
     private Integer dim4Difficulty;
     /** ⑤图形/情境结构指纹（dim5_structure） */
     private String dim5Structure;
-    /** 辅标签对象（aux_tags JSON 列；service 序列化为 JSON 文本） */
-    private Map<String, Object> auxTags;
     /** 标注状态机：0未标/1AI已标/2已审核/3争议（label_status） */
     private Integer labelStatus;
     /** AI 自评置信度 0-1（label_confidence） */

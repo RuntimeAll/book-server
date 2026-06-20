@@ -4,9 +4,11 @@ import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateAttrsBo;
+import org.dromara.book.domain.bo.UpdateBlockBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
+import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
@@ -90,9 +92,10 @@ public interface IQuestionService {
     /**
      * PRD-C-007 T1 — 题目 5 维度打标回写（POST /teacher/question/update-label）。
      *
-     * <p>仅 UPDATE 打标列（dim1_kp_id / dim2_qtype / dim3_skill / dim4_difficulty / dim5_structure /
-     * aux_tags / label_status / label_confidence / labeled_by / labeled_at），不碰题干/答案。
-     * labeled_at 服务端取 now。dim3_skill / aux_tags 由 service 序列化为 JSON 文本落库。
+     * <p>仅 UPDATE 打标列（dim1_kp_id / dim2_qtype / dim4_difficulty / dim5_structure /
+     * label_status / label_confidence / labeled_by / labeled_at），不碰题干/答案。
+     * labeled_at 服务端取 now。
+     * （🔴 V905 schema 收敛：dim3_skill / aux_tags 列已 DROP，不再回写。）
      *
      * <p>🔴 必须 {@code DataPermissionHelper.ignore} 包裹 —— biz_question 老题 create_user=2 ≠ 登录 id，
      * 数据权限拦截器会注入 {@code AND create_by=登录id} → 0 行静默假成功（PRD-A-002 实战坑）。
@@ -118,9 +121,8 @@ public interface IQuestionService {
      * <p>归属 = 登录老师（绝不信前端 createBy）。落库一个事务原子完成：
      * <ol>
      *   <li>INSERT biz_question（create_user = 登录 id，create_by/update_by = String.valueOf(登录 id)，
-     *       status='1' 已发布，直列 difficult/subjectId/*Img/freeTag/exam_* + AI 血缘
-     *       motherQuestionId/variantRelation/importSource + 5 维度打标列；
-     *       dim3Skill/auxTags 序列化为 JSON 文本）</li>
+     *       status='1' 已发布，直列 difficult/subjectId/*Img/exam_* + AI 血缘
+     *       motherQuestionId/variantRelation/importSource + 打标列 dim1/2/4/5）</li>
      *   <li>对 stem(必)/answer/analyze(各非空才写) 逐个 INSERT biz_text_content
      *       (content_type='S'/'A'/'E')，拿到各行 id</li>
      *   <li>updateById 回写 stem/answer/analyze TextContentId FK 到 biz_question</li>
@@ -140,7 +142,40 @@ public interface IQuestionService {
     QuestionDetailVo create(CreateQuestionBo bo);
 
     /**
-     * PRD-A-015 — 题目结构化编辑（POST /teacher/question/update）。
+     * PRD-C-015 批4·缺口10 —— teacher 侧「覆盖原行」更新（POST /teacher/question/update）。
+     *
+     * <p>举一反三「重生后再入库 = 覆盖原行」：按 {@code bo.id} UPDATE biz_question 直列 +
+     * 重写题面三要素（biz_text_content S/A/E）+ 重写子表（knowledge / free_tag / ai，先清后写，幂等）。
+     *
+     * <p>归属校验：只许改自己的题（create_user = 登录老师才放行，否则抛 ServiceException）；
+     * create_user 不动、update_by/update_time 刷新；status 不动（仍 '1'）。
+     *
+     * <p>🔴 全事务体走 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))}（同 create，
+     * biz_question / biz_text_content 无 tenant_id + 老题 create_user≠登录 id）。
+     *
+     * @param bo 覆盖更新入参（id + questionType + stem 必填）
+     * @return 更新后的题目详情 VO
+     */
+    QuestionDetailVo update(UpdateQuestionBo bo);
+
+    /**
+     * PRD-C-014 B1 T4 —— 某知识点（kpId）下高频标签候选池
+     * （GET /teacher/question/tagsByKp?kpId=&limit=）。
+     *
+     * <p>SQL = biz_question_free_tag ⨝ biz_question_knowledge（同 question_id 且 knowledge_id=kpId）
+     * ⨝ biz_free_tag，按 tag 聚合 count desc limit N。供 W1 标签候选池替代旧单建接口。
+     *
+     * @param kpId  知识点 ID（biz_subject.id；空 / 空白返空 list）
+     * @param limit 返回上限（兜底 300，clamp 1~1000）
+     * @return 标签候选列表（{id,name,count}，count 倒序）；无命中返空 list
+     */
+    List<KpTagStatVo> tagsByKp(String kpId, Integer limit);
+
+    /**
+     * PRD-A-015 — 题目结构化网格块编辑（POST /teacher/question/update-block）。
+     *
+     * <p>🔴 C-100 B-converge 改名：原 A-015 = {@code update(UpdateQuestionBo)} + {@code /teacher/question/update}，
+     * 与 C-015「覆盖原行」撞名撞端点，维护者拍板 A 整体改名 → {@code updateBlock(UpdateBlockBo)} + {@code /update-block}。
      *
      * <p>权威源 = blockJson（§10.1 schema）。落库一个事务原子完成：
      * <ol>
@@ -159,5 +194,19 @@ public interface IQuestionService {
      * @param bo 编辑入参（questionId + blockJson 必填）
      * @return 更新后题目的详情 VO（含 blockJson + 外置文本 + knowledges + freeTags）
      */
-    QuestionDetailVo update(UpdateQuestionBo bo);
+    QuestionDetailVo updateBlock(UpdateBlockBo bo);
+
+    /**
+     * PRD-C-100 BC3 — 清掉某题的结构化排版（删 biz_question_block 行）。
+     *
+     * <p>用途：举一反三里老师对已入库变式「手动排版」存过 blockJson 后又「重生」该题——重生产物题面
+     * 已变，旧 blockJson 布局会与新题面对不上（详情/卷库「有 block 用 block」会渲染旧布局）。确认重生
+     * 前调本方法删掉脏 block，让详情/卷库回落到按新题面纯文本渲染。
+     *
+     * <p>OWNER 校验同 {@link #updateBlock}（本人题 or superadmin）。block 行不存在 → 幂等返回（不报错）。
+     * 不碰 biz_question 题面/答案/解析（那些由重生 update 覆盖）。
+     *
+     * @param questionId 题目 id（必填）
+     */
+    void deleteBlock(Long questionId);
 }

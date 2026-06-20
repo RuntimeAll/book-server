@@ -24,7 +24,6 @@
         <result property="subjectId" column="subject_id"/>
         <result property="stemText" column="stem_text"/>
         <result property="stemImg" column="stem_img_url"/>
-        <result property="freeTag" column="free_tag"/>
         <result property="score" column="score_val"/>
         <result property="examYear" column="exam_year"/>
         <result property="examPaperId" column="exam_paper_id"/>
@@ -83,7 +82,6 @@
             q.subject_id,
             q.stem_text,
             q.stem_img_url,
-            q.free_tag,
             0 AS score_val,
             q.exam_year,
             q.exam_paper_id,
