@@ -23,6 +23,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -216,6 +217,24 @@ public class QuestionController {
     @PostMapping("/delete-block")
     public R<Void> deleteBlock(@RequestParam("questionId") Long questionId) {
         questionService.deleteBlock(questionId);
+        return R.ok();
+    }
+
+    /**
+     * PUT /teacher/question/promote/{id} — PRD-A-021 R1a 题库归属状态机·公开（草稿→正式）。
+     *
+     * <p>把本人草稿题（biz_question.status='0'）提升为已发布（'1'），从此进入公共/全站列表 + 卷库选题候选。
+     * 「公开」唯一动作。OWNER 校验（本人题 or superadmin，否则「无权公开非本人题目」）；已 '1' 幂等放行；
+     * 软删 '2' / 不存在 → 异常。
+     *
+     * <p>挂 {@code /teacher/**} 命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1，异常透传非 code:1）。
+     *
+     * @param id 题目 id（路径参数）
+     */
+    @SaCheckLogin
+    @PutMapping("/promote/{id}")
+    public R<Void> promote(@PathVariable("id") Long id) {
+        questionService.promote(id);
         return R.ok();
     }
 

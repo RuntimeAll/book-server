@@ -209,4 +209,21 @@ public interface IQuestionService {
      * @param questionId 题目 id（必填）
      */
     void deleteBlock(Long questionId);
+
+    /**
+     * PRD-A-021 R1a 题库归属状态机 —— 题草稿→正式（status 0→1）。
+     *
+     * <p>「公开」唯一动作：把本人草稿题（status='0'）提升为已发布（status='1'），从此进入公共/全站列表
+     * + 卷库选题候选。仅本人题（create_user=登录老师）或 superadmin 可 promote，否则抛 ServiceException
+     * 「无权公开非本人题目」。
+     *
+     * <p>幂等：题已是 '1' → 直接放行无副作用（不重复 UPDATE/不报错）。题不存在 / 已软删（status='2'）→
+     * 抛 ServiceException。
+     *
+     * <p>🔴 biz_question 无 tenant_id 列 + 老题 create_user≠登录 id，全程走
+     * {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹（同 deleteBlock 范式）。
+     *
+     * @param id 题目 id（必填）
+     */
+    void promote(Long id);
 }

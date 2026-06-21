@@ -567,9 +567,12 @@ public class QuestionServiceImpl implements IQuestionService {
                 q.setLabeledAt(now);
             }
             q.setAnnotateVersion(DEFAULT_ANNOTATE_VERSION);
-            // 系统列：服务端强制（绝不信前端 createBy/createUser/status/id）
+            // 系统列：服务端强制（绝不信前端 createBy/createUser/id）
             q.setVersion(DEFAULT_QUESTION_VERSION);
-            q.setStatus("1");
+            // PRD-A-021 R1a 题库归属状态机：新建缺省=草稿态 '0'（仅本人「我的题库」可见，
+            // 公共/全站列表只取 '1'）；调用方（toolkit）显式传 status 则按传（如直接落正式 '1'）。
+            // promote() 是 0→1 的唯一公开动作。
+            q.setStatus(StringUtils.isBlank(bo.getStatus()) ? "0" : bo.getStatus());
             q.setCreateUser(currentUserId);
             q.setCreateBy(ownerIdStr);
             q.setCreateTime(now);
@@ -890,6 +893,57 @@ public class QuestionServiceImpl implements IQuestionService {
     }
 
     /**
+     * PRD-A-021 R1a 归属状态机 —— 草稿→正式（status 0→1，唯一公开动作）。
+     *
+     * <p>OWNER 校验同 deleteBlock（本人题 or superadmin）；幂等（已 '1' 直接放行）；
+     * 软删（'2'）/ 不存在 → ServiceException。全程 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))}
+     * 包裹（biz_question 无 tenant_id + 老题 create_user≠登录 id）。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void promote(Long id) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录不能公开题目");
+        }
+        if (id == null) {
+            throw new ServiceException("questionId 不能为空");
+        }
+        String ownerIdStr = String.valueOf(currentUserId);
+        Date now = new Date();
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // OWNER 校验（裁剪查 id+create_user+status，规避数据权限注入 + free_tag 漂移列，同 deleteBlock）
+            BizQuestion q = bizQuestionMapper.selectOne(
+                new LambdaQueryWrapper<BizQuestion>()
+                    .select(BizQuestion::getId, BizQuestion::getCreateUser, BizQuestion::getStatus)
+                    .eq(BizQuestion::getId, id));
+            if (q == null) {
+                throw new ServiceException("题目不存在");
+            }
+            // 软删态不可公开
+            if ("2".equals(q.getStatus())) {
+                throw new ServiceException("题目已删除，不能公开");
+            }
+            boolean isOwner = q.getCreateUser() != null && q.getCreateUser().equals(currentUserId);
+            if (!isOwner && !LoginHelper.isSuperAdmin()) {
+                throw new ServiceException("无权公开非本人题目");
+            }
+            // 幂等：已是 '1'（已发布）→ 不重复 UPDATE，直接放行
+            if ("1".equals(q.getStatus())) {
+                return null;
+            }
+            // 草稿 '0' → 正式 '1'（create_user/create_by 不动；update_by/time 刷新）
+            BizQuestion upd = new BizQuestion();
+            upd.setId(id);
+            upd.setStatus("1");
+            upd.setUpdateBy(ownerIdStr);
+            upd.setUpdateTime(now);
+            bizQuestionMapper.updateById(upd);
+            return null;
+        }));
+    }
+
+    /**
      * 编辑工具：内容非空才 upsert 一行 biz_text_content（question_id + content_type 唯一）。
      *
      * <p>已有 FK（existingFkId 非空）→ updateById 改 content，返回该 FK（FK 不变）；
@@ -1134,7 +1188,15 @@ public class QuestionServiceImpl implements IQuestionService {
         QueryWrapper<BizQuestion> w = new QueryWrapper<>();
         // J 卡 hotfix（2026-05-22）：LEFT JOIN biz_question_favorite f 后，
         // id / create_time 列在 q 和 f 都存在，所有 column 引用必须带 q. 前缀避免 ambiguous。
-        w.eq("q.status", "1");
+        // PRD-A-021 R1a 归属状态机：
+        //   - mine=true「我的题库」→ 草稿+正式都看（status IN '0','1'）；owner 隔离由 page() 在
+        //     wrapper 外按 q.create_user=登录id 追加（见 page() line 118），故放宽 status 不泄漏他人草稿。
+        //   - 公共/全站（mine 非 true）→ 仍只取已发布 '1'，草稿 '0' / 软删 '2' 隐式过滤。
+        if (Boolean.TRUE.equals(bo.getMine())) {
+            w.in("q.status", "0", "1");
+        } else {
+            w.eq("q.status", "1");
+        }
 
         if (bo.getSubjectId() != null && !bo.getSubjectId().isEmpty() && !"0".equals(bo.getSubjectId())) {
             // ⚠️ BUG-2 真修（2026-05-21）：题↔章节关联走 biz_question_knowledge.knowledge_id，

@@ -25,7 +25,11 @@ import java.util.List;
  * auxTags 一并移除；toolkit 旧 body 多带这几键也无害，Jackson 忽略未知属性。）
  *
  * <p>🔴 绝不从 body 接收 {@code createBy / createUser / status / id} —— 服务端强制
- * （create_user/create_by = 登录老师；status='1' 已发布；id = 雪花）。前端传了也忽略。
+ * （create_user/create_by = 登录老师；id = 雪花）。前端传了也忽略。
+ *
+ * <p>🔴 PRD-A-021 R1a 起 {@code status} 从「服务端强制 '1'」改「可选透传」：缺省服务端落草稿态 '0'
+ * （仅本人「我的题库」可见），调用方（toolkit）显式传 '1' 才直接落正式。createBy/createUser/id
+ * 仍服务端强制忽略，status 是唯一新放开的可选透传字段。
  *
  * @author backend-dev
  */
@@ -54,6 +58,13 @@ public class CreateQuestionBo implements Serializable {
     private String analyze;
 
     // ===== 可选：biz_question 直列 =====
+
+    /**
+     * PRD-A-021 R1a 归属状态机：'0'=草稿（缺省，仅本人「我的题库」可见）/ '1'=正式（公共/全站可见）。
+     * 缺省（空白）→ 服务端落 '0'；调用方（toolkit）显式传 '1' 才直接落正式。promote() 是 0→1 唯一公开动作。
+     * → biz_question.status
+     */
+    private String status;
 
     /** 难度 1-4 星（字段名 difficult 非 difficulty）→ biz_question.difficult */
     private Integer difficult;
