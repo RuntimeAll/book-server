@@ -736,6 +736,31 @@ public class QuestionServiceImpl implements IQuestionService {
             bizQuestionAiMapper.delete(aiDel);
             writeQuestionAi(qid, bo, now);
 
+            // 5. PRD-A-022 批1 掉图回归修复：blockJson 非空白 → 校验 §10.1 + upsert biz_question_block
+            //    （与 updateBlock 同语义：已有行覆盖、无则插入）。举一反三入库走「先 update 内容
+            //    再 promote」时，配图（变式 figure_url / 母题切图）只进 blockJson，update 不认它就掉图。
+            //    🔴 blockJson 为空白时**不动** biz_question_block（绝不清空，避免无图题被误删块）。
+            if (StringUtils.isNotBlank(bo.getBlockJson())) {
+                BlockJsonValidator.validate(bo.getBlockJson());
+                BizQuestionBlock existingBlock = bizQuestionBlockMapper.selectById(qid);
+                if (existingBlock == null) {
+                    BizQuestionBlock block = new BizQuestionBlock();
+                    block.setQuestionId(qid);
+                    block.setBlockJson(bo.getBlockJson());
+                    block.setV(1);
+                    block.setUpdateBy(currentUserId);
+                    block.setCreateTime(now);
+                    block.setUpdateTime(now);
+                    bizQuestionBlockMapper.insert(block);
+                } else {
+                    existingBlock.setBlockJson(bo.getBlockJson());
+                    existingBlock.setV(1);
+                    existingBlock.setUpdateBy(currentUserId);
+                    existingBlock.setUpdateTime(now);
+                    bizQuestionBlockMapper.updateById(existingBlock);
+                }
+            }
+
             return null;
         }));
 
