@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckLogin;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateQuestionBo;
+import org.dromara.book.domain.bo.DiscardDraftsBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateAttrsBo;
@@ -236,6 +237,24 @@ public class QuestionController {
     public R<Void> promote(@PathVariable("id") Long id) {
         questionService.promote(id);
         return R.ok();
+    }
+
+    /**
+     * POST /teacher/question/discard-drafts — PRD-A-022 批0 批量软删草稿。
+     *
+     * <p>举一反三「换一批」时批量软删旧草稿。一条 UPDATE 把本人草稿题（status='0'）软删为 '2'：
+     * {@code WHERE id IN(ids) AND create_user=登录 id AND status='0'} —— owner + 仅草稿双约束，
+     * 绝不碰他人题、绝不碰已发布 '1'。ids 空 / null → 返回 0，不报错。
+     *
+     * <p>挂在 {@code /teacher/**}，自动命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
+     *
+     * @param bo 入参（ids = 待软删草稿题 id 列表）
+     * @return 受影响行数（实际软删的草稿数）
+     */
+    @SaCheckLogin
+    @PostMapping("/discard-drafts")
+    public R<Integer> discardDrafts(@RequestBody DiscardDraftsBo bo) {
+        return R.ok(questionService.discardDrafts(bo.getIds()));
     }
 
     /**

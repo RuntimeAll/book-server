@@ -944,6 +944,38 @@ public class QuestionServiceImpl implements IQuestionService {
     }
 
     /**
+     * PRD-A-022 批0 —— 批量软删草稿（status 0→2）。
+     *
+     * <p>一条 UPDATE：{@code SET status='2',update_by,update_time WHERE id IN(ids)
+     * AND create_user=登录 id AND status='0'}。owner + 仅草稿双约束（绝不碰他人题 / 已发布 '1'）。
+     * 全程 {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹（biz_question 无
+     * tenant_id + 老题 create_user≠登录 id，同 promote 范式）。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int discardDrafts(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return 0;
+        }
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录不能删除草稿");
+        }
+        String ownerIdStr = String.valueOf(currentUserId);
+        Date now = new Date();
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            LambdaUpdateWrapper<BizQuestion> uw = new LambdaUpdateWrapper<BizQuestion>()
+                .set(BizQuestion::getStatus, "2")
+                .set(BizQuestion::getUpdateBy, ownerIdStr)
+                .set(BizQuestion::getUpdateTime, now)
+                .in(BizQuestion::getId, ids)
+                .eq(BizQuestion::getCreateUser, currentUserId)
+                .eq(BizQuestion::getStatus, "0");
+            return bizQuestionMapper.update(null, uw);
+        }));
+    }
+
+    /**
      * 编辑工具：内容非空才 upsert 一行 biz_text_content（question_id + content_type 唯一）。
      *
      * <p>已有 FK（existingFkId 非空）→ updateById 改 content，返回该 FK（FK 不变）；
@@ -1188,12 +1220,12 @@ public class QuestionServiceImpl implements IQuestionService {
         QueryWrapper<BizQuestion> w = new QueryWrapper<>();
         // J 卡 hotfix（2026-05-22）：LEFT JOIN biz_question_favorite f 后，
         // id / create_time 列在 q 和 f 都存在，所有 column 引用必须带 q. 前缀避免 ambiguous。
-        // PRD-A-021 R1a 归属状态机：
-        //   - mine=true「我的题库」→ 草稿+正式都看（status IN '0','1'）；owner 隔离由 page() 在
-        //     wrapper 外按 q.create_user=登录id 追加（见 page() line 118），故放宽 status 不泄漏他人草稿。
+        // PRD-A-022 D4：mine 只看已发布，草稿(0)不进我的题库（durability-only，入库 promote 后才进列表）。
+        //   - mine=true「我的题库」→ 仅已发布（status='1'）；草稿 '0' 不进我的题库，软删 '2' 隐式过滤。
+        //     owner 隔离由 page() 在 wrapper 外按 q.create_user=登录id 追加（见 page() line 118）。
         //   - 公共/全站（mine 非 true）→ 仍只取已发布 '1'，草稿 '0' / 软删 '2' 隐式过滤。
         if (Boolean.TRUE.equals(bo.getMine())) {
-            w.in("q.status", "0", "1");
+            w.eq("q.status", "1");
         } else {
             w.eq("q.status", "1");
         }

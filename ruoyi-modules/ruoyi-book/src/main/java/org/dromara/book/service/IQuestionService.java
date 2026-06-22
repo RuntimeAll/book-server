@@ -226,4 +226,21 @@ public interface IQuestionService {
      * @param id 题目 id（必填）
      */
     void promote(Long id);
+
+    /**
+     * PRD-A-022 批0 —— 批量软删草稿（POST /teacher/question/discard-drafts）。
+     *
+     * <p>举一反三「换一批」时批量软删旧草稿。一条 UPDATE：
+     * {@code biz_question SET status='2' WHERE id IN(ids) AND create_user=登录 id AND status='0'}
+     * —— owner + 仅草稿 双约束，绝不碰他人题、绝不碰已发布 '1'。
+     *
+     * <p>ids 空 / null → 直接返回 0，不报错。未登录抛 {@link ServiceException}。
+     *
+     * <p>🔴 biz_question 无 tenant_id 列 + 老题 create_user≠登录 id，全程走
+     * {@code TenantHelper.ignore(DataPermissionHelper.ignore(...))} 包裹（同 promote 范式）。
+     *
+     * @param ids 待软删的草稿题 id 列表
+     * @return 受影响行数（实际软删的草稿数）
+     */
+    int discardDrafts(List<Long> ids);
 }
