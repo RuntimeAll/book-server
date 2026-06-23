@@ -132,6 +132,15 @@ public class BizQuestion implements Serializable {
      */
     private String status;
 
+    /**
+     * 是否公开 0/1（PRD-A-023 B10 公共题库审核闸）：
+     * 0=私有/未公开（默认，入库即此态，仅「我的题库」可见）；1=超管审核通过公开（进公共题库）。
+     *
+     * <p>🔴「入库 ≠ 公开」：status='1' 仅代表已入库；公共题库查询额外要求 is_public=1。
+     * create/promote 路径不动本列（默认 0），仅 {@code setPublic}（超管专属）置 1。
+     */
+    private Integer isPublic;
+
     private String createBy;
 
     /**

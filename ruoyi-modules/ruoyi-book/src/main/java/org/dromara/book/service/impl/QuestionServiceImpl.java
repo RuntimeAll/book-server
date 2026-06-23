@@ -969,6 +969,61 @@ public class QuestionServiceImpl implements IQuestionService {
     }
 
     /**
+     * PRD-A-023 B10 公共题库审核闸：超管把题目置为公开（is_public 0→1）。
+     *
+     * <p>🔴「入库 ≠ 公开」治理:
+     * <ul>
+     *   <li>入库（create/promote）只让题进「我的题库」（status='1'），is_public 默认 0 = 私有，永不进公共库。</li>
+     *   <li>本方法是唯一把 is_public 置 1（公开进公共库）的动作，且<b>仅超级管理员可调</b>——
+     *       老师调用直接抛「无权」→ 老师的题（含举一反三入库题）永不公开。</li>
+     * </ul>
+     *
+     * <p>校验：未登录 / id 空 / 题不存在 / 软删 → 异常；非超管 → 「仅超级管理员可审核公开题目」。
+     * 已 public=1 幂等放行。status 不动（公开前应已 status='1' 入库；草稿置公开亦只动 is_public）。
+     *
+     * @param id 题目 id
+     */
+    @Override
+    public void setPublic(Long id) {
+        Long currentUserId = LoginHelper.getUserId();
+        if (currentUserId == null) {
+            throw new ServiceException("未登录不能审核公开题目");
+        }
+        if (id == null) {
+            throw new ServiceException("questionId 不能为空");
+        }
+        // 审核闸：仅超级管理员可公开题目（老师永不可调 → 老师题永不进公共库）
+        if (!LoginHelper.isSuperAdmin()) {
+            throw new ServiceException("仅超级管理员可审核公开题目");
+        }
+        String ownerIdStr = String.valueOf(currentUserId);
+        Date now = new Date();
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            BizQuestion q = bizQuestionMapper.selectOne(
+                new LambdaQueryWrapper<BizQuestion>()
+                    .select(BizQuestion::getId, BizQuestion::getStatus, BizQuestion::getIsPublic)
+                    .eq(BizQuestion::getId, id));
+            if (q == null) {
+                throw new ServiceException("题目不存在");
+            }
+            if ("2".equals(q.getStatus())) {
+                throw new ServiceException("题目已删除，不能公开");
+            }
+            // 幂等：已公开 → 直接放行
+            if (q.getIsPublic() != null && q.getIsPublic() == 1) {
+                return null;
+            }
+            BizQuestion upd = new BizQuestion();
+            upd.setId(id);
+            upd.setIsPublic(1);
+            upd.setUpdateBy(ownerIdStr);
+            upd.setUpdateTime(now);
+            bizQuestionMapper.updateById(upd);
+            return null;
+        }));
+    }
+
+    /**
      * PRD-A-022 批0 —— 批量软删草稿（status 0→2）。
      *
      * <p>一条 UPDATE：{@code SET status='2',update_by,update_time WHERE id IN(ids)
@@ -1248,11 +1303,14 @@ public class QuestionServiceImpl implements IQuestionService {
         // PRD-A-022 D4：mine 只看已发布，草稿(0)不进我的题库（durability-only，入库 promote 后才进列表）。
         //   - mine=true「我的题库」→ 仅已发布（status='1'）；草稿 '0' 不进我的题库，软删 '2' 隐式过滤。
         //     owner 隔离由 page() 在 wrapper 外按 q.create_user=登录id 追加（见 page() line 118）。
-        //   - 公共/全站（mine 非 true）→ 仍只取已发布 '1'，草稿 '0' / 软删 '2' 隐式过滤。
+        //     私有题（is_public=0）照常在「我的题库」可见——本分支不加 is_public 过滤。
+        //   - 公共/全站（mine 非 true）→ status='1' AND is_public=1（PRD-A-023 B10 审核闸）。
+        //     「入库 ≠ 公开」：老师入库题 is_public=0 永不进公共库；唯超管 setPublic 置 1 才公开。
         if (Boolean.TRUE.equals(bo.getMine())) {
             w.eq("q.status", "1");
         } else {
             w.eq("q.status", "1");
+            w.eq("q.is_public", 1);
         }
 
         if (bo.getSubjectId() != null && !bo.getSubjectId().isEmpty() && !"0".equals(bo.getSubjectId())) {

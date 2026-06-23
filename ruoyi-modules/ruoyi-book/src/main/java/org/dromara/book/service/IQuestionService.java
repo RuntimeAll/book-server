@@ -228,6 +228,19 @@ public interface IQuestionService {
     void promote(Long id);
 
     /**
+     * PRD-A-023 B10 公共题库审核闸 —— 超管把题目置为公开（PUT /teacher/question/set-public/{id}）。
+     *
+     * <p>唯一把 {@code is_public} 0→1 的动作，<b>仅超级管理员可调</b>（{@code LoginHelper.isSuperAdmin()}）；
+     * 老师调用抛「仅超级管理员可审核公开题目」→ 老师题（含举一反三入库题）永不进公共库。
+     * 「入库 ≠ 公开」：create/promote 只让题进我的题库（status='1'，is_public 默认 0 私有）。
+     *
+     * <p>校验：未登录 / id 空 / 非超管 / 题不存在 / 软删（status='2'）→ 异常；已 is_public=1 幂等放行。
+     *
+     * @param id 题目 id（必填）
+     */
+    void setPublic(Long id);
+
+    /**
      * PRD-A-022 批0 —— 批量软删草稿（POST /teacher/question/discard-drafts）。
      *
      * <p>举一反三「换一批」时批量软删旧草稿。一条 UPDATE：

@@ -240,6 +240,25 @@ public class QuestionController {
     }
 
     /**
+     * PUT /teacher/question/set-public/{id} — PRD-A-023 B10 公共题库审核闸·超管公开题目。
+     *
+     * <p>把题目置为公开（is_public 0→1，进公共题库）。<b>仅超级管理员可调</b>：老师调用抛
+     * 「仅超级管理员可审核公开题目」→ 老师的题（含举一反三入库题）永不进公共题库。
+     * 「入库 ≠ 公开」：入库（create/promote）只让题进我的题库（私有 is_public=0），本端点是唯一公开动作。
+     *
+     * <p>挂 {@code /teacher/**} 命中 {@link org.dromara.book.controller.MisiktEnvelopeAdvice}
+     * 包 envelope（200→code 1，异常透传非 code:1，老师无权时前端按非 code:1 报错）。
+     *
+     * @param id 题目 id（路径参数）
+     */
+    @SaCheckLogin
+    @PutMapping("/set-public/{id}")
+    public R<Void> setPublic(@PathVariable("id") Long id) {
+        questionService.setPublic(id);
+        return R.ok();
+    }
+
+    /**
      * POST /teacher/question/discard-drafts — PRD-A-022 批0 批量软删草稿。
      *
      * <p>举一反三「换一批」时批量软删旧草稿。一条 UPDATE 把本人草稿题（status='0'）软删为 '2'：
