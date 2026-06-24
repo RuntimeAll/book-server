@@ -51,12 +51,13 @@ public class AutoPaperServiceImpl implements IAutoPaperService {
     @Value("${book.front-base-url:http://localhost:5173}")
     private String frontBaseUrl;
 
-    /** misikt 真实题型顺序：1=选择 → 4=填空 → 5=简答 */
-    private static final int[] TYPE_ORDER = {1, 4, 5};
+    /** misikt 真实题型顺序：1=选择 → 4=填空 → 5=简答 → 6=作图（PRD-C-204 B1 追加 6，1/4/5 原行为不变） */
+    private static final int[] TYPE_ORDER = {1, 4, 5, 6};
     private static final Map<Integer, String> TYPE_TITLE = Map.of(
         1, "一、选择题",
         4, "二、填空题",
-        5, "三、简答题"
+        5, "三、简答题",
+        6, "四、作图题"
     );
 
     /** 候选拉取放大系数 — 抵消全局去重损耗（page 返回可能含已被其他 outline 项选走的题） */

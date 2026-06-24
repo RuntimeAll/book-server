@@ -390,11 +390,13 @@ public class QuestionServiceImpl implements IQuestionService {
             byType.computeIfAbsent(q.getQuestionType(), k -> new ArrayList<>()).add(q);
         }
 
-        // 按 misikt 真实题型顺序 1 → 4 → 5 生成 sections；不存在的题型跳过
-        List<ExamSectionVo> sections = new ArrayList<>(3);
+        // 按 misikt 真实题型顺序 1 → 4 → 5 → 6 生成 sections；不存在的题型跳过
+        // PRD-C-204 B1：追加 type=6=作图（否则作图题进筐被静默丢弃），不改 1/4/5 原行为
+        List<ExamSectionVo> sections = new ArrayList<>(4);
         addSectionIfPresent(sections, byType, 1, "一、选择题");
         addSectionIfPresent(sections, byType, 4, "二、填空题");
         addSectionIfPresent(sections, byType, 5, "三、简答题");
+        addSectionIfPresent(sections, byType, 6, "四、作图题");
 
         vo.setSections(sections);
         return vo;
