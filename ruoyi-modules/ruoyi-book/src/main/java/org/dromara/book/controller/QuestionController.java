@@ -17,6 +17,7 @@ import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PatternVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
+import org.dromara.book.domain.vo.QuestionLineageVo;
 import org.dromara.book.service.IQuestionService;
 import org.dromara.common.core.domain.R;
 import org.dromara.common.core.exception.ServiceException;
@@ -328,5 +329,27 @@ public class QuestionController {
     @GetMapping("/patterns")
     public R<List<PatternVo>> patterns(@RequestParam(value = "subjectId", required = false) String subjectId) {
         return R.ok(questionService.listPatterns(subjectId));
+    }
+
+    /**
+     * GET /teacher/question/{id}/lineage — PRD-C-204 题目血缘查询。
+     *
+     * <p>按 biz_question.mother_question_id 自关联推断角色并返回母题 + 兄弟/子变式：
+     * <ul>
+     *   <li>该题是变式 → {@code {role:"variant", mother:母题, variants:同母全兄弟(含自己)}}</li>
+     *   <li>该题被别的题指为母题 → {@code {role:"mother", mother:自己, variants:全部子题}}</li>
+     *   <li>都不是 → {@code {role:"none", mother:null, variants:[]}}</li>
+     * </ul>
+     *
+     * <p>每个节点轻量：{@code {id(String 防雪花精度丢), stemBrief(题干前 60 字纯文本),
+     * questionType, difficult, variantRelation}}。挂 {@code /teacher/**} 命中
+     * {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
+     *
+     * @param id 题目 id（路径参数）
+     */
+    @SaCheckLogin
+    @GetMapping("/{id}/lineage")
+    public R<QuestionLineageVo> lineage(@PathVariable("id") Long id) {
+        return R.ok(questionService.queryLineage(id));
     }
 }
