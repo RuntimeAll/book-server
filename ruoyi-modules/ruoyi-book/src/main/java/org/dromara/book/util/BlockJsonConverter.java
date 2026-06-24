@@ -147,9 +147,25 @@ public final class BlockJsonConverter {
 
     // ===== stem 处理：抽图 → 切段 → 每段切小问 =====
 
+    /** 行内小问号（不限行首）：用于「内联 (1)…(2)…」也切段。 */
+    private static final Pattern SUBQ_INLINE_PATTERN =
+        Pattern.compile("[（(]\\s*\\d{1,2}\\s*[)）]");
+
     private static void appendStemRows(ObjectMapper om, ArrayNode rows, String stem) {
+        // 🔴 PRD-C-204：题干含 ≥2 个小问标记但写在「同一行内联」(如「计算：(1)…；(2)…」)时，
+        // 行首切法(SUBQ_LINE)切不到 → 先在每个 (n) 前注入断行，让其也拆成各自一块。
+        // 守卫 ≥2：避免把单个 (1) 引用误当小问切。仅作用于多小问题干，单小问/普通题干不动。
+        String s = stem;
+        Matcher mc = SUBQ_INLINE_PATTERN.matcher(stem);
+        int cnt = 0;
+        while (mc.find()) {
+            cnt++;
+        }
+        if (cnt >= 2) {
+            s = SUBQ_INLINE_PATTERN.matcher(stem).replaceAll("\n\n$0");
+        }
         // 2. 抽图：把 stem 按图位切成 [文本段, 图, 文本段, …]
-        List<Segment> segments = splitByImages(stem);
+        List<Segment> segments = splitByImages(s);
         for (Segment seg : segments) {
             if (seg.isImage) {
                 addRow(rows, imageBlock(om, seg.url, seg.width));
