@@ -7,6 +7,7 @@ import org.dromara.book.domain.bo.IngestAiBo;
 import org.dromara.book.domain.bo.IngestBookBo;
 import org.dromara.book.domain.bo.IngestKgContentBo;
 import org.dromara.book.domain.bo.IngestKgTreeBo;
+import org.dromara.book.domain.bo.IngestPatternBo;
 import org.dromara.book.domain.bo.IngestQuestionBo;
 import org.dromara.book.domain.entity.BizBook;
 import org.dromara.book.domain.entity.BizBookQuestion;
@@ -16,6 +17,8 @@ import org.dromara.book.domain.entity.BizQuestionAi;
 import org.dromara.book.domain.entity.BizQuestionBlock;
 import org.dromara.book.domain.entity.BizQuestionImage;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
+import org.dromara.book.domain.entity.BizQuestionPattern;
+import org.dromara.book.domain.entity.BizQuestionPatternRel;
 import org.dromara.book.domain.entity.BizSubject;
 import org.dromara.book.domain.entity.BizSubjectContent;
 import org.dromara.book.domain.entity.BizTextContent;
@@ -28,6 +31,8 @@ import org.dromara.book.mapper.BizQuestionBlockMapper;
 import org.dromara.book.mapper.BizQuestionImageMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
+import org.dromara.book.mapper.BizQuestionPatternMapper;
+import org.dromara.book.mapper.BizQuestionPatternRelMapper;
 import org.dromara.book.mapper.BizSubjectContentMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
 import org.dromara.book.mapper.BizTextContentMapper;
@@ -88,6 +93,8 @@ public class IngestServiceImpl implements IIngestService {
     private final BizQuestionImageMapper bizQuestionImageMapper;
     private final BizQuestionAiMapper bizQuestionAiMapper;
     private final BizQuestionBlockMapper bizQuestionBlockMapper;
+    private final BizQuestionPatternMapper bizQuestionPatternMapper;
+    private final BizQuestionPatternRelMapper bizQuestionPatternRelMapper;
 
     private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
 
@@ -479,6 +486,34 @@ public class IngestServiceImpl implements IIngestService {
                 bizBookQuestionMapper.insert(bq);
             }
 
+            // biz_question_pattern_rel（题型关联，PRD-C-204）—— 可选，按 uk_q_p(question_id,pattern_id) upsert。
+            // 🔴 只追加、不破坏现有 question 录入：patterns 为 null/空 时本段完全跳过，行为与扩展前一致。
+            if (bo.getPatterns() != null && !bo.getPatterns().isEmpty()) {
+                Set<Long> seenPid = new HashSet<>();
+                for (IngestQuestionBo.PatternRef pr : bo.getPatterns()) {
+                    if (pr == null || pr.getPatternId() == null || !seenPid.add(pr.getPatternId())) {
+                        continue;
+                    }
+                    BizQuestionPatternRel existRel = bizQuestionPatternRelMapper.selectOne(
+                        new LambdaQueryWrapper<BizQuestionPatternRel>()
+                            .eq(BizQuestionPatternRel::getQuestionId, qid)
+                            .eq(BizQuestionPatternRel::getPatternId, pr.getPatternId())
+                            .last("limit 1"));
+                    BizQuestionPatternRel rel = new BizQuestionPatternRel();
+                    rel.setQuestionId(qid);
+                    rel.setPatternId(pr.getPatternId());
+                    rel.setIsPrimary(pr.getIsPrimary() != null ? pr.getIsPrimary() : 1);
+                    rel.setSource(StringUtils.isBlank(pr.getSource()) ? "main" : pr.getSource());
+                    if (existRel == null) {
+                        rel.setCreateTime(now);
+                        bizQuestionPatternRelMapper.insert(rel);
+                    } else {
+                        rel.setId(existRel.getId());
+                        bizQuestionPatternRelMapper.updateById(rel);
+                    }
+                }
+            }
+
             // biz_question_block（blockJson 非空校验后写，重跑覆盖；PK=questionId）
             if (StringUtils.isNotBlank(bo.getBlockJson())) {
                 BlockJsonValidator.validate(bo.getBlockJson());
@@ -571,6 +606,49 @@ public class IngestServiceImpl implements IIngestService {
         Map<String, Object> r = new HashMap<>();
         r.put("aiId", aiId);
         return r;
+    }
+
+    // ==================== 题型目录（PRD-C-204） ====================
+
+    @Override
+    public Map<String, Object> upsertPattern(IngestPatternBo bo) {
+        if (bo == null || StringUtils.isBlank(bo.getName())) {
+            throw new ServiceException("name 不能为空");
+        }
+        Map<String, Object> result = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 幂等键 = (anchor_subject_id, name)（uk_anchor_name）。命中则更新返回旧 id，否则新建。
+            LambdaQueryWrapper<BizQuestionPattern> q = new LambdaQueryWrapper<BizQuestionPattern>()
+                .eq(BizQuestionPattern::getName, bo.getName());
+            if (StringUtils.isBlank(bo.getAnchorSubjectId())) {
+                q.isNull(BizQuestionPattern::getAnchorSubjectId);
+            } else {
+                q.eq(BizQuestionPattern::getAnchorSubjectId, bo.getAnchorSubjectId());
+            }
+            BizQuestionPattern existing = bizQuestionPatternMapper.selectOne(q.last("limit 1"));
+
+            BizQuestionPattern row = new BizQuestionPattern();
+            row.setName(bo.getName());
+            row.setAnchorSubjectId(bo.getAnchorSubjectId());
+            row.setSource(StringUtils.isBlank(bo.getSource()) ? "main" : bo.getSource());
+            row.setSort(bo.getSort() != null ? bo.getSort() : 0);
+            row.setDescription(bo.getDescription());
+            row.setBookId(bo.getBookId());
+
+            boolean created = existing == null;
+            if (created) {
+                row.setStatus("0");
+                row.setCreateTime(new Date());
+                bizQuestionPatternMapper.insert(row);
+            } else {
+                row.setId(existing.getId());
+                bizQuestionPatternMapper.updateById(row);
+            }
+            Map<String, Object> r = new HashMap<>();
+            r.put("patternId", row.getId());
+            r.put("created", created);
+            return r;
+        }));
+        return result;
     }
 
     // ==================== helpers ====================

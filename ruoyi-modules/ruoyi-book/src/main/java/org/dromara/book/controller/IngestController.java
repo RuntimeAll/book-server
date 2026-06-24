@@ -7,6 +7,7 @@ import org.dromara.book.domain.bo.IngestBookBo;
 import org.dromara.book.domain.bo.IngestImageBo;
 import org.dromara.book.domain.bo.IngestKgContentBo;
 import org.dromara.book.domain.bo.IngestKgTreeBo;
+import org.dromara.book.domain.bo.IngestPatternBo;
 import org.dromara.book.domain.bo.IngestQuestionBo;
 import org.dromara.book.service.IIngestService;
 import org.dromara.common.satoken.utils.LoginHelper;
@@ -93,6 +94,16 @@ public class IngestController {
     public Map<String, Object> question(@RequestBody IngestQuestionBo bo) {
         Long teacherId = LoginHelper.getUserId();
         return ingestService.ingestQuestion(bo, teacherId);
+    }
+
+    /**
+     * POST /teacher/ingest/pattern — upsert 题型目录（PRD-C-204）。
+     * 幂等：按 (anchorSubjectId,name) 命中则更新返回旧 id，否则新建 → {patternId, created}。
+     */
+    @SaCheckLogin
+    @PostMapping("/pattern")
+    public Map<String, Object> pattern(@RequestBody IngestPatternBo bo) {
+        return ingestService.upsertPattern(bo);
     }
 
     // ===== 组4 AI 打标 =====

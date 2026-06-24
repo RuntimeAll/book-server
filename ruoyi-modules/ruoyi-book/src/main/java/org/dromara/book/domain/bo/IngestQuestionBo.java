@@ -62,6 +62,9 @@ public class IngestQuestionBo implements Serializable {
     /** 教辅编排 → biz_book_question */
     private BookRef book;
 
+    /** 题型关联（可选）→ biz_question_pattern_rel（按 uk_q_p upsert）—— PRD-C-204 */
+    private List<PatternRef> patterns;
+
     /** 出处年份 */
     private String examYear;
 
@@ -116,5 +119,18 @@ public class IngestQuestionBo implements Serializable {
         private String bookDifficulty;
         private String role;
         private Integer inBlockSeq;
+    }
+
+    /** 题型关联引用（PRD-C-204）→ biz_question_pattern_rel */
+    @Data
+    public static class PatternRef implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+        /** 题型 id（biz_question_pattern.id，必填，需先经 /ingest/pattern 建好） */
+        private Long patternId;
+        /** 是否主题型：1=主 / 0=次（默认 1） */
+        private Integer isPrimary;
+        /** 来源：'main' / 'AI'（默认 'main'） */
+        private String source;
     }
 }

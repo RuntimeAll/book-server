@@ -4,6 +4,7 @@ import org.dromara.book.domain.bo.IngestAiBo;
 import org.dromara.book.domain.bo.IngestBookBo;
 import org.dromara.book.domain.bo.IngestKgContentBo;
 import org.dromara.book.domain.bo.IngestKgTreeBo;
+import org.dromara.book.domain.bo.IngestPatternBo;
 import org.dromara.book.domain.bo.IngestQuestionBo;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -39,4 +40,11 @@ public interface IIngestService {
 
     /** 组4：upsert biz_question_ai（DNA），回写 biz_question 打标元，返回 {aiId}。 */
     Map<String, Object> upsertAi(Long questionId, IngestAiBo bo, Long teacherId);
+
+    /**
+     * PRD-C-204：upsert 题型目录 biz_question_pattern。
+     * 幂等键 = (anchorSubjectId, name)，命中则更新返回旧 id，否则新建。
+     * 返回 {patternId, created}。
+     */
+    Map<String, Object> upsertPattern(IngestPatternBo bo);
 }
