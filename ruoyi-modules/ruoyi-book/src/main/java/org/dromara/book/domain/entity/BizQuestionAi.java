@@ -83,4 +83,36 @@ public class BizQuestionAi implements Serializable {
 
     /** 创建时间（DDL 无 fill，服务端显式 set now） */
     private Date createTime;
+
+    // ===== PRD-C-204 B0 新增 DNA 字段（JSON 列以 String 承载 JSON 串）=====
+
+    /** 数学思想/方法标签（JSON 数组串）← BO.tags 旧路径仍用；DDL math_thoughts JSON */
+    private String mathThoughts;
+
+    /** 自由标签（JSON 数组串）← BO.tags */
+    private String tags;
+
+    /** 难度判定理由 */
+    private String difficultyReason;
+
+    /** 参数化槽位（JSON 数组串）← BO.parametricSlots */
+    private String parametricSlots;
+
+    /** 建模框架（JSON 串）← BO.modelingFrame */
+    private String modelingFrame;
+
+    /** 条件集（JSON 串）← BO.conditions */
+    private String conditions;
+
+    /** 变式画像（JSON 串）← BO.variationProfile */
+    private String variationProfile;
+
+    /** 难点（JSON 数组串）← BO.hardPoints（与 breakthroughPoints 并存，B0 新列） */
+    private String hardPoints;
+
+    /** 验证种类（DDL DEFAULT 'LLM??'）← BO.verifyKind */
+    private String verifyKind;
+
+    /** DNA 类型 ← BO.dnaType */
+    private String dnaType;
 }

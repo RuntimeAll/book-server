@@ -56,6 +56,28 @@ public class BizQuestion implements Serializable {
     private String subjectId;
 
     /**
+     * 是否压轴题 0/1（DB is_anchor NOT NULL DEFAULT 0）—— PRD-C-204 B1 录入映射新增。
+     * 仅录入接口写入，现有 CRUD 不读不写本字段。
+     */
+    private Integer isAnchor;
+
+    /**
+     * 题干哈希 char(32)（DB stem_hash）—— PRD-C-204 B1 录入幂等键载体：
+     * 录入接口存 md5(externalKey) 做去重判存在。现有 CRUD 不读不写本字段。
+     */
+    private String stemHash;
+
+    /**
+     * 出处原文（DB source_raw）—— PRD-C-204 B1 录入映射新增。
+     */
+    private String sourceRaw;
+
+    /**
+     * 母题来源（DB mother_source）—— PRD-C-204 B1 录入映射新增。
+     */
+    private String motherSource;
+
+    /**
      * 题干文本（LaTeX 源 / 纯文本）— PRD-B-006 后保留双写过渡，不 DROP；
      * 长文本"外置"事实来源走 {@link #stemTextContentId} -> biz_text_content.content。
      */
