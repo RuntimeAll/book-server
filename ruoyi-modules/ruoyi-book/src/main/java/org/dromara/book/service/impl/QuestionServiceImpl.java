@@ -247,9 +247,18 @@ public class QuestionServiceImpl implements IQuestionService {
         // PRD-A-015：批量回填结构化网格块 JSON（与单题 selectById 对称），供卷库预览/PDF 导出
         //   走 QuestionBlockRender 结构化渲染；null=未结构化，FE 回落旧富文本/图。
         Map<Long, String> blockMap = new LinkedHashMap<>();
+        // PRD-C-204：答案/解析 blockJson 也批量回填，卷库/PDF 三端与详情一致结构化渲染。
+        Map<Long, String> answerBlockMap = new LinkedHashMap<>();
+        Map<Long, String> analyzeBlockMap = new LinkedHashMap<>();
         for (BizQuestionBlock b : bizQuestionBlockMapper.selectBatchIds(ids)) {
             if (b.getBlockJson() != null) {
                 blockMap.put(b.getQuestionId(), b.getBlockJson());
+            }
+            if (b.getAnswerBlockJson() != null) {
+                answerBlockMap.put(b.getQuestionId(), b.getAnswerBlockJson());
+            }
+            if (b.getAnalyzeBlockJson() != null) {
+                analyzeBlockMap.put(b.getQuestionId(), b.getAnalyzeBlockJson());
             }
         }
 
@@ -261,6 +270,8 @@ public class QuestionServiceImpl implements IQuestionService {
             vo.setFreeTags(ftMap.getOrDefault(vo.getId(), new ArrayList<>()));
             vo.setPatterns(patternMap.getOrDefault(vo.getId(), new ArrayList<>()));
             vo.setBlockJson(blockMap.get(vo.getId()));
+            vo.setAnswerBlockJson(answerBlockMap.get(vo.getId()));
+            vo.setAnalyzeBlockJson(analyzeBlockMap.get(vo.getId()));
             byId.put(vo.getId(), vo);
         }
 
