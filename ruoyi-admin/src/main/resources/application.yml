@@ -285,6 +285,11 @@ xss:
   # 排除链接
   excludeUrls:
     - /system/notice
+    # 🔴 PRD-C-204: 题库录入/格式化是内部结构化数据管线(管理员鉴权,数学内容含 < > 不等式)，
+    # XSS 过滤器会把 <...> 当 HTML 标签静默剥除(如 a<10$...">=10" 被吃成乱码 → 破坏不等式/损坏JSON)。
+    # 这两组端点排除 XSS 过滤；渲染侧已有 DOMPurify(v-safe-html)兜底，安全不破。
+    - /teacher/ingest/**
+    - /teacher/format/**
 
 --- # 分布式锁 lock4j 全局配置
 lock4j:
