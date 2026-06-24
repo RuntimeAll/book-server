@@ -50,6 +50,10 @@ public final class BlockJsonConverter {
     private static final Pattern SUBQ_LINE_PATTERN =
         Pattern.compile("(?m)^\\s*[（(](\\d{1,3})[）)]");
 
+    /** LaTeX 命令（\frac \sqrt \pm …）：可视长度估算时整体抹掉命令名，不计入字符数。 */
+    private static final Pattern LATEX_CMD_PATTERN =
+        Pattern.compile("\\\\[a-zA-Z]+");
+
     private static final int DEFAULT_IMG_WIDTH = 45;
     private static final String DEFAULT_IMG_ALIGN = "center";
     private static final String OPTION_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -189,11 +193,135 @@ public final class BlockJsonConverter {
         return true;
     }
 
+    /**
+     * 选项 → option 块，按可视长度智能分组布局：
+     * <ul>
+     *   <li>短选项横排（1 行 N cell），中等 2×2 网格，长选项竖排（各自一行）。</li>
+     *   <li>任一选项含图 → N=4 走 2×2，否则各自一行（图选项偏高，别强行横排）。</li>
+     * </ul>
+     * 🔴 逃生仓：长度/分组任何异常 → 退回「各选项各自一行」（原竖排行为），绝不抛。
+     */
     private static void appendOptionRows(ObjectMapper om, ArrayNode rows, List<String> options) {
+        // 先把每个选项构造成 option 块（构造本身已带逃生仓）
+        List<ObjectNode> optBlocks = new ArrayList<>(options.size());
         for (int i = 0; i < options.size(); i++) {
-            String content = options.get(i);
-            String label = labelOf(i);
-            addRow(rows, optionBlock(om, label, content));
+            optBlocks.add(optionBlock(om, labelOf(i), options.get(i)));
+        }
+
+        List<Integer> groups;
+        try {
+            boolean hasImage = options.stream().anyMatch(BlockJsonConverter::optionHasImage);
+            int maxLen = 0;
+            for (String opt : options) {
+                maxLen = Math.max(maxLen, visualLen(opt));
+            }
+            groups = decideLayout(options.size(), maxLen, hasImage);
+        } catch (Exception e) {
+            // 逃生仓：分组算崩 → 各自一行
+            groups = null;
+        }
+        if (groups == null) {
+            for (ObjectNode opt : optBlocks) {
+                addRow(rows, opt);
+            }
+            return;
+        }
+
+        // 按分组把 option 块铺成行（每组 = 一行的 cell 数）
+        int idx = 0;
+        for (int cnt : groups) {
+            List<ObjectNode> rowCells = new ArrayList<>(cnt);
+            for (int k = 0; k < cnt && idx < optBlocks.size(); k++) {
+                rowCells.add(optBlocks.get(idx++));
+            }
+            addMultiCellRow(rows, rowCells);
+        }
+        // 防御：分组没覆盖到的尾部选项（理论不该发生）兜底各自一行
+        while (idx < optBlocks.size()) {
+            addRow(rows, optBlocks.get(idx++));
+        }
+    }
+
+    /**
+     * 布局决策：返回每行的选项数列表（如 [4]=横排 / [2,2]=2×2 / [1,1,1,1]=竖排）。
+     *
+     * @param n        选项数
+     * @param maxLen   最长选项可视长度
+     * @param hasImage 是否有选项含图
+     * @return 每行 cell 数的列表
+     */
+    private static List<Integer> decideLayout(int n, int maxLen, boolean hasImage) {
+        if (hasImage) {
+            // 图选项：仅 N=4 走 2×2，其余各自一行（图偏高，不强行横排）
+            return (n == 4) ? List.of(2, 2) : verticalGroups(n);
+        }
+        if (n == 4) {
+            if (maxLen <= 5) {
+                return List.of(4);            // 很短（纯数字/单符号，如 2003）→ 1 行 4 cell 横排
+            }
+            if (maxLen <= 20) {
+                return List.of(2, 2);         // 中等（含简短公式 ±√9=±3）→ 2×2 网格
+            }
+            return verticalGroups(4);         // 长选项 → 竖排
+        }
+        if (n == 2 || n == 3) {
+            if (maxLen <= 12) {
+                return List.of(n);            // 短 → 1 行 N cell 横排
+            }
+            return verticalGroups(n);         // 否则竖排
+        }
+        // N≥5 或其他 → 竖排兜底
+        return verticalGroups(n);
+    }
+
+    /** 竖排分组：n 个各占一行（[1,1,…]）。 */
+    private static List<Integer> verticalGroups(int n) {
+        List<Integer> g = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            g.add(1);
+        }
+        return g;
+    }
+
+    /**
+     * 估算选项可视长度：去掉 {@code $ \ { }} 和常见 LaTeX 命令后的字符数（作长度代理）。
+     * 任何异常 → 退回原始长度（不影响逃生仓，仅长度估算的局部兜底）。
+     */
+    private static int visualLen(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return 0;
+        }
+        try {
+            String s = raw;
+            // LaTeX 命令（\frac \sqrt \pm 等）→ 折成 1 个占位字符：命令渲染后约占 1 个符号宽，
+            // 既不按原文长度高估、也不删成 0 低估（删 0 会把 $\pm\sqrt{9}=\pm3$ 误判成超短选项）。
+            s = LATEX_CMD_PATTERN.matcher(s).replaceAll("#");
+            // 去结构性符号 $ \ { }（剩余裸反斜杠/花括号不计入可视宽度）
+            s = s.replaceAll("[$\\\\{}]", "");
+            // 折叠连续空白为单字符再去首尾
+            s = s.replaceAll("\\s+", " ").strip();
+            return s.length();
+        } catch (Exception e) {
+            return raw.length();
+        }
+    }
+
+    /** 选项内容是否含图（markdown 图语法）。 */
+    private static boolean optionHasImage(String content) {
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+        try {
+            Matcher m = IMG_PATTERN.matcher(content);
+            while (m.find()) {
+                String url = m.group(1);
+                if (url != null && !url.isBlank()) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -258,6 +386,19 @@ public final class BlockJsonConverter {
         ObjectNode row = rows.objectNode();
         ArrayNode cells = row.putArray("cells");
         cells.add(block);
+        rows.add(row);
+    }
+
+    /** 把多个 block 并排放进一 row（前端按 repeat(N,1fr) 渲染成 N 列）。空列表不出行。 */
+    private static void addMultiCellRow(ArrayNode rows, List<ObjectNode> blocks) {
+        if (blocks == null || blocks.isEmpty()) {
+            return;
+        }
+        ObjectNode row = rows.objectNode();
+        ArrayNode cells = row.putArray("cells");
+        for (ObjectNode b : blocks) {
+            cells.add(b);
+        }
         rows.add(row);
     }
 
