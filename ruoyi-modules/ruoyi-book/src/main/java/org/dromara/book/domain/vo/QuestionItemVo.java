@@ -176,4 +176,12 @@ public class QuestionItemVo implements Serializable {
      * AI 打标状态（biz_question.label_status）：0=未标 / 1=AI已标 / 2=已审核。
      */
     private Integer labelStatus;
+
+    /**
+     * 题型徽标（PRD-C-204）：该题挂接的题型数组 [{patternId,name,isPrimary}]。
+     *
+     * <p>来源 biz_question_pattern_rel JOIN biz_question_pattern，page/list/select
+     * 二次批量回填（仿 freeTags/blockJson，非 N+1）。没题型的题返空数组。
+     */
+    private List<PatternRefVo> patterns;
 }

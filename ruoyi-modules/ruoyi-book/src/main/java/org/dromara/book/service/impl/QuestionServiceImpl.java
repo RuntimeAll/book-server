@@ -17,12 +17,16 @@ import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionAi;
 import org.dromara.book.domain.entity.BizQuestionBlock;
 import org.dromara.book.domain.entity.BizQuestionKnowledge;
+import org.dromara.book.domain.entity.BizQuestionPattern;
+import org.dromara.book.domain.entity.BizQuestionPatternRel;
 import org.dromara.book.domain.entity.BizTextContent;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
 import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.PatternRefVo;
+import org.dromara.book.domain.vo.PatternVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
@@ -32,6 +36,8 @@ import org.dromara.book.mapper.BizQuestionBlockMapper;
 import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
+import org.dromara.book.mapper.BizQuestionPatternMapper;
+import org.dromara.book.mapper.BizQuestionPatternRelMapper;
 import org.dromara.book.mapper.BizTextContentMapper;
 import org.dromara.book.service.IQuestionBasketService;
 import org.dromara.book.service.IQuestionService;
@@ -81,6 +87,8 @@ public class QuestionServiceImpl implements IQuestionService {
     private final BizQuestionAiMapper bizQuestionAiMapper;
     private final BizTextContentMapper bizTextContentMapper;
     private final BizQuestionBlockMapper bizQuestionBlockMapper;
+    private final BizQuestionPatternMapper bizQuestionPatternMapper;
+    private final BizQuestionPatternRelMapper bizQuestionPatternRelMapper;
     private final IQuestionBasketService questionBasketService;
 
     /** 副 kp 上限（≤3，越界丢弃，见字段映射文档 secondary_kps） */
@@ -128,6 +136,8 @@ public class QuestionServiceImpl implements IQuestionService {
             List<Long> ids = records.stream().map(QuestionItemVo::getId).collect(Collectors.toList());
             Map<Long, List<QuestionKnowledgeVo>> uMap = loadKnowledgesByQuestionIds(ids, "U");
             Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
+            // PRD-C-204：批量回填题型徽标（仿 freeTags，非 N+1）；没题型的题回填空数组。
+            Map<Long, List<PatternRefVo>> patternMap = loadPatternsByQuestionIds(ids);
             // PRD-A-015：批量回填结构化网格块 JSON（仿 listByIds），令列表卡片也能走
             // QuestionBlockRender 渲染（图片/选项/公式与详情一致），不再「列表端空返」。
             Map<Long, String> blockMap = new LinkedHashMap<>();
@@ -139,6 +149,7 @@ public class QuestionServiceImpl implements IQuestionService {
             for (QuestionItemVo vo : records) {
                 vo.setQuestionKnowledges(uMap.getOrDefault(vo.getId(), Collections.emptyList()));
                 vo.setFreeTags(ftMap.getOrDefault(vo.getId(), Collections.emptyList()));
+                vo.setPatterns(patternMap.getOrDefault(vo.getId(), Collections.emptyList()));
                 vo.setBlockJson(blockMap.get(vo.getId()));
             }
         }
@@ -160,6 +171,8 @@ public class QuestionServiceImpl implements IQuestionService {
         vo.setQuestionKnowledges(loadKnowledgesByQuestionIds(ids, "U").getOrDefault(id, new ArrayList<>()));
         vo.setQuestionStdKnowledges(loadKnowledgesByQuestionIds(ids, "S").getOrDefault(id, new ArrayList<>()));
         vo.setFreeTags(loadFreeTagsByQuestionIds(ids).getOrDefault(id, new ArrayList<>()));
+        // PRD-C-204：回填题型徽标（没题型返空数组）。
+        vo.setPatterns(loadPatternsByQuestionIds(ids).getOrDefault(id, new ArrayList<>()));
         // PRD-A-015：回填结构化网格块 JSON（biz_question_block by question_id；
         // 有则 set，FE 渲染优先用它；null=未结构化，FE 回落旧富文本/图）。
         BizQuestionBlock block = bizQuestionBlockMapper.selectById(id);
@@ -226,6 +239,8 @@ public class QuestionServiceImpl implements IQuestionService {
         Map<Long, List<QuestionKnowledgeVo>> uMap = loadKnowledgesByQuestionIds(ids, "U");
         Map<Long, List<QuestionKnowledgeVo>> sMap = loadKnowledgesByQuestionIds(ids, "S");
         Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(ids);
+        // PRD-C-204：批量回填题型徽标（没题型返空数组）。
+        Map<Long, List<PatternRefVo>> patternMap = loadPatternsByQuestionIds(ids);
         // PRD-A-015：批量回填结构化网格块 JSON（与单题 selectById 对称），供卷库预览/PDF 导出
         //   走 QuestionBlockRender 结构化渲染；null=未结构化，FE 回落旧富文本/图。
         Map<Long, String> blockMap = new LinkedHashMap<>();
@@ -241,6 +256,7 @@ public class QuestionServiceImpl implements IQuestionService {
             vo.setQuestionKnowledges(uMap.getOrDefault(vo.getId(), new ArrayList<>()));
             vo.setQuestionStdKnowledges(sMap.getOrDefault(vo.getId(), new ArrayList<>()));
             vo.setFreeTags(ftMap.getOrDefault(vo.getId(), new ArrayList<>()));
+            vo.setPatterns(patternMap.getOrDefault(vo.getId(), new ArrayList<>()));
             vo.setBlockJson(blockMap.get(vo.getId()));
             byId.put(vo.getId(), vo);
         }
@@ -1360,6 +1376,20 @@ public class QuestionServiceImpl implements IQuestionService {
         if (bo.getLabelStatus() != null) {
             w.eq("q.label_status", bo.getLabelStatus());
         }
+        // PRD-C-204：按题型筛题（可选）。非 null 才预查 biz_question_pattern_rel 拿该题型 question_id 集合，
+        // 参数化 q.id IN(...)；空集合 → 1=0（无命中）。patternId 为 null 时本段整段跳过，行为不变。
+        if (bo.getPatternId() != null) {
+            List<Long> patternQuestionIds = bizQuestionPatternRelMapper.selectList(
+                new LambdaQueryWrapper<BizQuestionPatternRel>()
+                    .eq(BizQuestionPatternRel::getPatternId, bo.getPatternId())
+                    .select(BizQuestionPatternRel::getQuestionId)
+            ).stream().map(BizQuestionPatternRel::getQuestionId).distinct().collect(Collectors.toList());
+            if (patternQuestionIds.isEmpty()) {
+                w.apply("1=0");
+            } else {
+                w.in("q.id", patternQuestionIds);
+            }
+        }
         // notTaskQuestion=1：V0.1 schema 无 biz_task_question 表（M6 才上），
         // 入参收下但不施加过滤 — 等同 0=不限。撞 M6 起卡时再补 SQL。
         // if (bo.getNotTaskQuestion() != null && bo.getNotTaskQuestion() == 1) { ... }
@@ -1412,5 +1442,75 @@ public class QuestionServiceImpl implements IQuestionService {
             grouped.computeIfAbsent(row.getQuestionId(), k -> new ArrayList<>()).add(pure);
         }
         return grouped;
+    }
+
+    /**
+     * 批量按 question_id 拉题型徽标并按 questionId 分组（PRD-C-204）。
+     *
+     * <p>两步：① biz_question_pattern_rel 查 questionId 集合下的全部关联（pattern_id + isPrimary）；
+     * ② 用到的 pattern_id 批量查 biz_question_pattern 拿 name。组装 {patternId,name,isPrimary}。
+     * 主题型(isPrimary=1)在前。空集合返空 Map（page 端点没题型的题回填空数组）。
+     *
+     * @param questionIds 题目 ID 集合（空集合返空 Map）
+     */
+    private Map<Long, List<PatternRefVo>> loadPatternsByQuestionIds(Collection<Long> questionIds) {
+        if (questionIds == null || questionIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            List<BizQuestionPatternRel> rels = bizQuestionPatternRelMapper.selectList(
+                new LambdaQueryWrapper<BizQuestionPatternRel>()
+                    .in(BizQuestionPatternRel::getQuestionId, questionIds));
+            if (rels == null || rels.isEmpty()) {
+                return Collections.<Long, List<PatternRefVo>>emptyMap();
+            }
+            Set<Long> patternIds = rels.stream()
+                .map(BizQuestionPatternRel::getPatternId).collect(Collectors.toSet());
+            Map<Long, String> nameMap = bizQuestionPatternMapper.selectList(
+                    new LambdaQueryWrapper<BizQuestionPattern>()
+                        .select(BizQuestionPattern::getId, BizQuestionPattern::getName)
+                        .in(BizQuestionPattern::getId, patternIds))
+                .stream().collect(Collectors.toMap(BizQuestionPattern::getId, BizQuestionPattern::getName));
+            Map<Long, List<PatternRefVo>> grouped = new java.util.HashMap<>();
+            for (BizQuestionPatternRel rel : rels) {
+                PatternRefVo vo = new PatternRefVo();
+                vo.setPatternId(rel.getPatternId());
+                vo.setName(nameMap.get(rel.getPatternId()));
+                vo.setIsPrimary(rel.getIsPrimary());
+                grouped.computeIfAbsent(rel.getQuestionId(), k -> new ArrayList<>()).add(vo);
+            }
+            // 主题型(isPrimary=1)排前
+            for (List<PatternRefVo> list : grouped.values()) {
+                list.sort((a, b) -> Integer.compare(
+                    b.getIsPrimary() == null ? 0 : b.getIsPrimary(),
+                    a.getIsPrimary() == null ? 0 : a.getIsPrimary()));
+            }
+            return grouped;
+        }));
+    }
+
+    @Override
+    public List<PatternVo> listPatterns(String subjectId) {
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            LambdaQueryWrapper<BizQuestionPattern> w = new LambdaQueryWrapper<BizQuestionPattern>()
+                .eq(BizQuestionPattern::getStatus, "0");
+            // anchor_subject_id 在 subjectId 前缀下（likeRight，复用题↔章节同款 id 前缀匹配）。
+            // subjectId 空 / "0" → 不过滤（返全部启用题型）。SQL 注入防护：数字串才施加。
+            if (StringUtils.isNotBlank(subjectId) && !"0".equals(subjectId)) {
+                if (!subjectId.matches("^\\d+$")) {
+                    return Collections.<PatternVo>emptyList();
+                }
+                w.likeRight(BizQuestionPattern::getAnchorSubjectId, subjectId);
+            }
+            w.orderByAsc(BizQuestionPattern::getAnchorSubjectId).orderByAsc(BizQuestionPattern::getSort);
+            return bizQuestionPatternMapper.selectList(w).stream().map(p -> {
+                PatternVo vo = new PatternVo();
+                vo.setId(p.getId());
+                vo.setName(p.getName());
+                vo.setAnchorSubjectId(p.getAnchorSubjectId());
+                vo.setSort(p.getSort());
+                return vo;
+            }).collect(Collectors.toList());
+        }));
     }
 }

@@ -14,6 +14,7 @@ import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.PatternVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.service.IQuestionService;
@@ -310,5 +311,22 @@ public class QuestionController {
     @PostMapping("/update-attrs")
     public R<QuestionDetailVo> updateAttrs(@Validated @RequestBody UpdateAttrsBo bo) {
         return R.ok(questionService.updateAttrs(bo));
+    }
+
+    /**
+     * GET /teacher/question/patterns?subjectId={id} — PRD-C-204 列题型（解题 pattern）。
+     *
+     * <p>返回 anchor_subject_id 在 subjectId 前缀下（likeRight，复用题↔章节同款 id 前缀匹配）
+     * 的启用题型列表 [{id,name,anchorSubjectId,sort}]，按 anchor+sort 排。给前端「点知识点 →
+     * 题型下拉收窄 / 虚拟子层」用。subjectId 空 / "0" → 返全部启用题型。
+     *
+     * <p>挂 {@code /teacher/**} 命中 {@link MisiktEnvelopeAdvice} 包 envelope（200→code 1）。
+     *
+     * @param subjectId 知识点 / 小节 id（biz_subject.id 前缀，可选）
+     */
+    @SaCheckLogin
+    @GetMapping("/patterns")
+    public R<List<PatternVo>> patterns(@RequestParam(value = "subjectId", required = false) String subjectId) {
+        return R.ok(questionService.listPatterns(subjectId));
     }
 }

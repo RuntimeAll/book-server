@@ -10,6 +10,7 @@ import org.dromara.book.domain.bo.UpdateQuestionBo;
 import org.dromara.book.domain.vo.ExamDataVo;
 import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.PatternVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 
@@ -256,4 +257,16 @@ public interface IQuestionService {
      * @return 受影响行数（实际软删的草稿数）
      */
     int discardDrafts(List<Long> ids);
+
+    /**
+     * PRD-C-204 —— 列题型（GET /teacher/question/patterns?subjectId=）。
+     *
+     * <p>返回 anchor_subject_id 在 subjectId 前缀下（likeRight，复用题↔章节同款 id 前缀匹配）
+     * 的启用题型（status='0'）列表，按 anchorSubjectId + sort 排。给前端「点知识点 → 题型下拉
+     * 收窄 / 虚拟子层」用。subjectId 空 / "0" → 返回全部启用题型；非数字串 → 返空 list。
+     *
+     * @param subjectId 知识点 / 小节 ID（biz_subject.id 前缀；空 / "0" 不过滤）
+     * @return 题型列表（{id,name,anchorSubjectId,sort}）
+     */
+    List<PatternVo> listPatterns(String subjectId);
 }

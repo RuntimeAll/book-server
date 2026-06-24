@@ -79,4 +79,10 @@ public class QuestionPageBo implements Serializable {
      * 按打标态筛选（biz_question.label_status）：0=未标 / 1=AI已标 / 2=已审核。非 null 才过滤；null=不限。
      */
     private Integer labelStatus;
+
+    /**
+     * 按题型筛选（PRD-C-204，biz_question_pattern.id）：非 null 才 JOIN biz_question_pattern_rel
+     * 只返回该题型的题；null=不过滤（行为不变）。
+     */
+    private Long patternId;
 }
