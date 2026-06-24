@@ -50,6 +50,19 @@ public final class BlockJsonConverter {
     private static final Pattern SUBQ_LINE_PATTERN =
         Pattern.compile("(?m)^\\s*[（(](\\d{1,3})[）)]");
 
+    /**
+     * 纯富文本（答案/解析）结构标记：在标记**前**插断行，让连续段落能按逻辑切块。
+     * 零宽前瞻匹配 → replaceAll 把标记起点替成换行（标记本身留在新段开头）：
+     * 选项分析（A选项: / A 选项：）｜小问（（1）/(1)）｜步骤（①②③ / 第一步）。
+     * 🔴 仅服务于「拆行更好读」，切错最多多/少一行，转换器整体仍有逃生仓不抛。
+     */
+    private static final Pattern RICH_BREAK_PATTERN =
+        Pattern.compile(
+            "(?=[ABCDEFGＡＢＣＤ]\\s*选\\s*项\\s*[：:])"
+          + "|(?=[（(]\\s*\\d{1,2}\\s*[)）])"
+          + "|(?=[①②③④⑤⑥⑦⑧⑨⑩⑪⑫])"
+          + "|(?=第\\s*[一二三四五六七八九十]+\\s*步)");
+
     /** LaTeX 命令（\frac \sqrt \pm …）：可视长度估算时整体抹掉命令名，不计入字符数。 */
     private static final Pattern LATEX_CMD_PATTERN =
         Pattern.compile("\\\\[a-zA-Z]+");
@@ -89,6 +102,46 @@ public final class BlockJsonConverter {
         } catch (Exception e) {
             // 6. 总逃生仓：任何失败 → 整题干 markdown text 块 + 选项块兜底
             return fallback(om, stem, type, options);
+        }
+    }
+
+    /**
+     * 纯富文本（答案/解析/将来变式解析）→ blockJson。<b>对外永不抛</b>。
+     *
+     * <p>与 {@link #convert} 共用 image/text 块原语，但<b>无 options 概念</b>，且额外按
+     * {@link #RICH_BREAK_PATTERN}（选项分析/小问/步骤标记）先插断行再切块——解析常是「无换行
+     * 连续段」，靠这步把 A选项/B选项/（1）/（2）/①② 拆成各自一块，渲染不再糊成一坨。
+     *
+     * @param md 富文本 markdown（如 analyzeText）
+     * @return 合法 blockJson（{@code {v:1,rows:[...]}}），识别不了整段兜成一个 text 块
+     */
+    public static String convertRichText(String md) {
+        ObjectMapper om = JsonUtils.getObjectMapper();
+        try {
+            ObjectNode root = om.createObjectNode();
+            root.put("v", 1);
+            ArrayNode rows = root.putArray("rows");
+            if (md != null && !md.isBlank()) {
+                // 1. 结构标记前插断行（零宽前瞻 → 标记留新段首）
+                String normalized = RICH_BREAK_PATTERN.matcher(md).replaceAll("\n\n");
+                // 2. 按图位切段，文本段再按空行切成多块
+                for (Segment seg : splitByImages(normalized)) {
+                    if (seg.isImage) {
+                        addRow(rows, imageBlock(om, seg.url, seg.width));
+                    } else if (seg.text != null) {
+                        for (String part : seg.text.split("\\n{2,}")) {
+                            String p = part.strip();
+                            if (!p.isEmpty()) {
+                                addRow(rows, textBlock(om, p));
+                            }
+                        }
+                    }
+                }
+            }
+            return om.writeValueAsString(root);
+        } catch (Exception e) {
+            // 逃生仓：整段当一个 markdown text 块
+            return fallback(om, md, null, null);
         }
     }
 

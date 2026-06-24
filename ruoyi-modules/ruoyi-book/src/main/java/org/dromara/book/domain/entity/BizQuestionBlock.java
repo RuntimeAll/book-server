@@ -51,6 +51,18 @@ public class BizQuestionBlock implements Serializable {
     private String blockJson;
 
     /**
+     * 答案 blockJson（C-204 统一富文本格式化层；走 convertRichText，三端同组件渲染）。null=回落旧富文本。
+     */
+    @TableField("answer_block_json")
+    private String answerBlockJson;
+
+    /**
+     * 解析 blockJson（C-204；选项分析/小问/步骤拆块）。null=回落旧富文本。
+     */
+    @TableField("analyze_block_json")
+    private String analyzeBlockJson;
+
+    /**
      * schema 版本号（当前 1）
      */
     @TableField("v")

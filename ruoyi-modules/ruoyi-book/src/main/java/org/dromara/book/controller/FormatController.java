@@ -57,6 +57,30 @@ public class FormatController {
         return result;
     }
 
+    /**
+     * POST /teacher/format/rich —— 纯富文本（答案/解析/变式解析）确定性转 blockJson。
+     * 无 options，按选项分析/小问/步骤标记拆块（解析常是无换行连续段）。
+     *
+     * @param body {@code {md:"<markdown>"}}
+     * @return {@code {blockJson:"<JSON字符串>"}}；转换器永不抛、识别不了整段兜一个 text 块
+     */
+    @SaCheckLogin
+    @PostMapping("/rich")
+    public Map<String, Object> rich(@RequestBody Map<String, Object> body) {
+        Object md = body == null ? null : body.get("md");
+        String blockJson = BlockJsonConverter.convertRichText(md == null ? null : md.toString());
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            BlockJsonValidator.validate(blockJson);
+            result.put("blockJson", blockJson);
+        } catch (Exception e) {
+            // 理论不可达（convertRichText 逃生仓产物恒合法）；防御性兜底到空文档，绝不 500
+            result.put("blockJson", "{\"v\":1,\"rows\":[]}");
+            result.put("degraded", true);
+        }
+        return result;
+    }
+
     /** 兜底：整题干当一个 markdown text 块（+ 选项块）。本身仍走转换器的总逃生仓路径。 */
     private String degradeToMarkdown(FormatToBlockBo bo) {
         // 构造一个「只有原始 stem 一个 text 块」的最小输入，复用转换器逃生仓。

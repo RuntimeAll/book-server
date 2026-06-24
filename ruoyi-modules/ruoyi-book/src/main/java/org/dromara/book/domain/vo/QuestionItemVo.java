@@ -173,6 +173,17 @@ public class QuestionItemVo implements Serializable {
     private String blockJson;
 
     /**
+     * PRD-C-204 答案 blockJson（统一富文本格式化层；走 convertRichText）。详情页有则走
+     * QuestionBlockRender 结构化渲染，null=回落旧富文本（answerTextContent/answer）。
+     */
+    private String answerBlockJson;
+
+    /**
+     * PRD-C-204 解析 blockJson（选项分析/小问/步骤拆块，三端统一渲染）。null=回落旧富文本。
+     */
+    private String analyzeBlockJson;
+
+    /**
      * AI 打标状态（biz_question.label_status）：0=未标 / 1=AI已标 / 2=已审核。
      */
     private Integer labelStatus;

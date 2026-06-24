@@ -178,6 +178,9 @@ public class QuestionServiceImpl implements IQuestionService {
         BizQuestionBlock block = bizQuestionBlockMapper.selectById(id);
         if (block != null) {
             vo.setBlockJson(block.getBlockJson());
+            // PRD-C-204：答案/解析 blockJson（统一富文本格式化层），有则详情页走 QuestionBlockRender
+            vo.setAnswerBlockJson(block.getAnswerBlockJson());
+            vo.setAnalyzeBlockJson(block.getAnalyzeBlockJson());
         }
         // PRD-A-015 属性编辑页：回填 5 维 AI 打标 + 打标元数据 + N1 高级列（select 自定义 SQL 未含）。
         // 列裁剪查 entity 再拷（不改大 ResultMap；避开 free_tag 全列扫漂移坑），TenantHelper.ignore
