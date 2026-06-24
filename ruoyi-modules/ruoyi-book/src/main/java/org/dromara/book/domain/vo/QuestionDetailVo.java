@@ -98,4 +98,15 @@ public class QuestionDetailVo extends QuestionItemVo {
     private Integer annotateVersion;
     /** 标注完整度（annotate_status：0未标/1已标全/2部分） */
     private Integer annotateStatus;
+
+    // ── PRD-C-204 题库核实增维 — 全维 DNA 嵌套对象（来源 biz_question_ai 最新版一行；无行则 null）──
+    /**
+     * 全维 DNA（solutionSkeleton / scenario / assessmentType / hardPoints / tags / 锚定 / 打标元 …）。
+     *
+     * <p>来源 biz_question_ai 按 question_id 取最新 annotate_version 一行。ai 表无行 → {@code null}（FE 自行兜底）。
+     * JSON 串列原样吐 String，FE 自己 parse（详见 {@link QuestionDnaVo}）。
+     */
+    private QuestionDnaVo dna;
+
+    // examYear / examPaperName / labelStatus 已在基类 QuestionItemVo 声明（PRD-C-204 selectById 一并回填）。
 }

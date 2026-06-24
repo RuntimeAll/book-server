@@ -13,6 +13,7 @@ import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PatternVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
+import org.dromara.book.domain.vo.QuestionLineageVo;
 
 import java.util.List;
 
@@ -269,4 +270,25 @@ public interface IQuestionService {
      * @return 题型列表（{id,name,anchorSubjectId,sort}）
      */
     List<PatternVo> listPatterns(String subjectId);
+
+    /**
+     * PRD-C-204 —— 题目血缘查询（GET /teacher/question/{id}/lineage）。
+     *
+     * <p>按 biz_question.mother_question_id 自关联推断角色：
+     * <ul>
+     *   <li>该题 mother_question_id 非空 → {@code role='variant'}：mother=母题；
+     *       variants=同一母题下全部兄弟（含自己）</li>
+     *   <li>为空且有别的题以本题为 mother_question_id → {@code role='mother'}：mother=自己；
+     *       variants=全部子题</li>
+     *   <li>都不满足 → {@code role='none'}：mother=null，variants=[]</li>
+     * </ul>
+     *
+     * <p>每个节点轻量（{@link org.dromara.book.domain.vo.LineageNodeVo}）：
+     * id（雪花全 string）/ stemBrief（题干前 60 字纯文本）/ questionType / difficult / variantRelation。
+     * 软删题（status='2'）剔除。biz_question 无 tenant_id，走 ignore 包裹。
+     *
+     * @param id 题目 id（必填；不存在返 role='none' 空壳）
+     * @return 血缘 VO（role + mother + variants）
+     */
+    QuestionLineageVo queryLineage(Long id);
 }
