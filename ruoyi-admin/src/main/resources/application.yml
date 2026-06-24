@@ -290,6 +290,9 @@ xss:
     # 这两组端点排除 XSS 过滤；渲染侧已有 DOMPurify(v-safe-html)兜底，安全不破。
     - /teacher/ingest/**
     - /teacher/format/**
+    # 🔴 PRD-C-204 题库核实增维：update-attrs 现收 DNA 文本(solutionSkeleton/hardPoints 含数学 < >)，
+    # 不排除则 XssFilter 静默剥 <...> 腐蚀数学。改完需重启 BE 才生效。
+    - /teacher/question/update-attrs
 
 --- # 分布式锁 lock4j 全局配置
 lock4j:

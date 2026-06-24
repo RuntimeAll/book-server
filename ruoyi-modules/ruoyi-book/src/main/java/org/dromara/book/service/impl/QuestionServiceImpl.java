@@ -27,9 +27,12 @@ import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PatternRefVo;
 import org.dromara.book.domain.vo.PatternVo;
+import org.dromara.book.domain.vo.LineageNodeVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
+import org.dromara.book.domain.vo.QuestionDnaVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
+import org.dromara.book.domain.vo.QuestionLineageVo;
 import org.dromara.book.mapper.BizFreeTagWriteMapper;
 import org.dromara.book.mapper.BizQuestionAiMapper;
 import org.dromara.book.mapper.BizQuestionBlockMapper;
@@ -194,7 +197,9 @@ public class QuestionServiceImpl implements IQuestionService {
                     BizQuestion::getLabelConfidence, BizQuestion::getLabeledBy, BizQuestion::getLabeledAt,
                     BizQuestion::getBaseScore, BizQuestion::getImportSource, BizQuestion::getRegionCode,
                     BizQuestion::getSourceType, BizQuestion::getMotherQuestionId, BizQuestion::getVariantRelation,
-                    BizQuestion::getAnnotateVersion, BizQuestion::getAnnotateStatus)
+                    BizQuestion::getAnnotateVersion, BizQuestion::getAnnotateStatus,
+                    // PRD-C-204：补出处年份 / 出处试卷名 / 打标状态（核实页要展示）
+                    BizQuestion::getExamYear, BizQuestion::getExamPaperName, BizQuestion::getLabelStatus)
                 .eq(BizQuestion::getId, id))));
         if (attr != null) {
             vo.setDim1KpId(attr.getDim1KpId());
@@ -213,8 +218,63 @@ public class QuestionServiceImpl implements IQuestionService {
             vo.setVariantRelation(attr.getVariantRelation());
             vo.setAnnotateVersion(attr.getAnnotateVersion());
             vo.setAnnotateStatus(attr.getAnnotateStatus());
+            // PRD-C-204：主表出处 / 打标状态列回填
+            vo.setExamYear(attr.getExamYear());
+            vo.setExamPaperName(attr.getExamPaperName());
+            vo.setLabelStatus(attr.getLabelStatus());
         }
+        // PRD-C-204：全维 DNA 嵌套对象（biz_question_ai 最新版一行 → QuestionDnaVo；无行 dna=null）
+        vo.setDna(loadQuestionAi(id));
         return vo;
+    }
+
+    /**
+     * PRD-C-204 — 查 biz_question_ai 最新 annotate_version 一行，镜像成 {@link QuestionDnaVo}。
+     *
+     * <p>biz_question_ai 无 tenant_id 列（mapper 类级 {@code @InterceptorIgnore(tenantLine)}），
+     * 继承的 selectOne 仍可能被多租户/数据权限拦截器命中，故线程级 {@code TenantHelper.ignore +
+     * DataPermissionHelper.ignore} 兜底。UNIQUE(question_id, annotate_version)，按 version 倒序取首条。
+     * 该题在 ai 表无行 → 返 null（详情页 dna=null，FE 兜底，不抛）。
+     *
+     * <p>JSON 串列（hardPoints / breakthroughPoints / tags / mathThoughts / parametricSlots /
+     * modelingFrame / conditions / variationProfile）原样 String 透传，不二次序列化。
+     */
+    private QuestionDnaVo loadQuestionAi(Long questionId) {
+        if (questionId == null) {
+            return null;
+        }
+        BizQuestionAi ai = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            bizQuestionAiMapper.selectOne(new LambdaQueryWrapper<BizQuestionAi>()
+                .eq(BizQuestionAi::getQuestionId, questionId)
+                .orderByDesc(BizQuestionAi::getAnnotateVersion)
+                .last("LIMIT 1"))));
+        if (ai == null) {
+            return null;
+        }
+        QuestionDnaVo dna = new QuestionDnaVo();
+        dna.setAnnotateVersion(ai.getAnnotateVersion());
+        dna.setSolutionSkeleton(ai.getSolutionSkeleton());
+        dna.setScenario(ai.getScenario());
+        dna.setAssessmentType(ai.getAssessmentType());
+        dna.setHardPointCount(ai.getHardPointCount());
+        dna.setBreakthroughPoints(ai.getBreakthroughPoints());
+        dna.setHardPoints(ai.getHardPoints());
+        dna.setTags(ai.getTags());
+        dna.setMathThoughts(ai.getMathThoughts());
+        dna.setParametricSlots(ai.getParametricSlots());
+        dna.setModelingFrame(ai.getModelingFrame());
+        dna.setConditions(ai.getConditions());
+        dna.setVariationProfile(ai.getVariationProfile());
+        dna.setVerifyKind(ai.getVerifyKind());
+        dna.setDnaType(ai.getDnaType());
+        dna.setDifficultyReason(ai.getDifficultyReason());
+        dna.setAnchorId(ai.getAnchorId());
+        dna.setReasoning(ai.getReasoning());
+        dna.setConfidence(ai.getConfidence());
+        dna.setNeedAnchorReview(ai.getNeedAnchorReview());
+        dna.setLabelStatus(ai.getLabelStatus());
+        dna.setLabeledBy(ai.getLabeledBy());
+        return dna;
     }
 
     /**
@@ -517,11 +577,243 @@ public class QuestionServiceImpl implements IQuestionService {
               .set(bo.getRegionCode() != null, BizQuestion::getRegionCode, bo.getRegionCode())
               .set(bo.getVariantRelation() != null, BizQuestion::getVariantRelation, bo.getVariantRelation())
               .set(bo.getMotherQuestionId() != null, BizQuestion::getMotherQuestionId, bo.getMotherQuestionId())
-              .set(bo.getAnnotateStatus() != null, BizQuestion::getAnnotateStatus, bo.getAnnotateStatus());
+              .set(bo.getAnnotateStatus() != null, BizQuestion::getAnnotateStatus, bo.getAnnotateStatus())
+              // PRD-C-204：主表出处列（条件 set，null 不改）
+              .set(bo.getExamYear() != null, BizQuestion::getExamYear, bo.getExamYear())
+              .set(bo.getExamPaperName() != null, BizQuestion::getExamPaperName, bo.getExamPaperName());
             bizQuestionMapper.update(null, uw);
+
+            // PRD-C-204：DNA 维 upsert biz_question_ai —— 任一 DNA 字段传了才动 ai 表
+            //   （按 question_id 取最新版：有则 update、无则 insert annotate_version=1）。
+            //   条件 set 语义：传了的列才覆盖，null 保持原值（不传不清空），与主表回写一致。
+            upsertQuestionAiAttrs(bo);
             return null;
         }));
         return selectById(bo.getQuestionId());
+    }
+
+    /**
+     * PRD-C-204 — update-attrs 的 biz_question_ai 增量 upsert。
+     *
+     * <p>触发条件：bo 里任一 DNA 字段非 null（solutionSkeleton / scenario / assessmentType /
+     * hardPoints / tags）。否则整段跳过、不动 ai 表。
+     *
+     * <p>upsert 策略：按 question_id 取最新 annotate_version 一行。
+     * <ul>
+     *   <li>有行 → 条件 set 覆盖（仅传了的列；null 不改，避免局部保存清空其它 DNA 维），刷 labeled_by/at</li>
+     *   <li>无行 → insert 一行 annotate_version=1，labeled_by='manual-edit'、labeled_at=now、
+     *       hard_point_count=hardPoints.size()（缺则 0）</li>
+     * </ul>
+     *
+     * <p>hardPoints / tags 数组 → JSON 串落 hard_points + breakthrough_points / tags 列。
+     * 调用方已在 {@code TenantHelper.ignore + DataPermissionHelper.ignore} 线程包裹内（本方法不再重复包）。
+     */
+    private void upsertQuestionAiAttrs(UpdateAttrsBo bo) {
+        boolean touched = bo.getSolutionSkeleton() != null || bo.getScenario() != null
+            || bo.getAssessmentType() != null || bo.getHardPoints() != null || bo.getTags() != null;
+        if (!touched) {
+            return;
+        }
+        Date now = new Date();
+        String hardPointsJson = bo.getHardPoints() == null ? null
+            : JsonUtils.toJsonString(bo.getHardPoints());
+        Integer hardPointCount = bo.getHardPoints() == null ? null : bo.getHardPoints().size();
+        String tagsJson = bo.getTags() == null ? null : JsonUtils.toJsonString(bo.getTags());
+
+        BizQuestionAi existing = bizQuestionAiMapper.selectOne(new LambdaQueryWrapper<BizQuestionAi>()
+            .eq(BizQuestionAi::getQuestionId, bo.getQuestionId())
+            .orderByDesc(BizQuestionAi::getAnnotateVersion)
+            .last("LIMIT 1"));
+
+        if (existing == null) {
+            // 无行 → insert annotate_version=1，仅写传了的 DNA 列，余留 null
+            BizQuestionAi ai = new BizQuestionAi();
+            ai.setQuestionId(bo.getQuestionId());
+            ai.setAnnotateVersion(DEFAULT_ANNOTATE_VERSION);
+            ai.setSolutionSkeleton(bo.getSolutionSkeleton());
+            ai.setScenario(bo.getScenario());
+            ai.setAssessmentType(bo.getAssessmentType());
+            if (hardPointsJson != null) {
+                ai.setHardPoints(hardPointsJson);
+                ai.setBreakthroughPoints(hardPointsJson);
+                ai.setHardPointCount(hardPointCount);
+            } else {
+                ai.setHardPointCount(0);
+            }
+            ai.setTags(tagsJson);
+            ai.setLabeledBy("manual-edit");
+            ai.setLabeledAt(now);
+            ai.setCreateTime(now);
+            bizQuestionAiMapper.insert(ai);
+        } else {
+            // 有行 → 条件 set 覆盖（仅传了的列），刷打标元
+            LambdaUpdateWrapper<BizQuestionAi> aw = new LambdaUpdateWrapper<>();
+            aw.eq(BizQuestionAi::getId, existing.getId())
+              .set(bo.getSolutionSkeleton() != null, BizQuestionAi::getSolutionSkeleton, bo.getSolutionSkeleton())
+              .set(bo.getScenario() != null, BizQuestionAi::getScenario, bo.getScenario())
+              .set(bo.getAssessmentType() != null, BizQuestionAi::getAssessmentType, bo.getAssessmentType())
+              .set(hardPointsJson != null, BizQuestionAi::getHardPoints, hardPointsJson)
+              .set(hardPointsJson != null, BizQuestionAi::getBreakthroughPoints, hardPointsJson)
+              .set(hardPointsJson != null, BizQuestionAi::getHardPointCount, hardPointCount)
+              .set(tagsJson != null, BizQuestionAi::getTags, tagsJson)
+              .set(BizQuestionAi::getLabeledBy, "manual-edit")
+              .set(BizQuestionAi::getLabeledAt, now);
+            bizQuestionAiMapper.update(null, aw);
+        }
+    }
+
+    /**
+     * PRD-C-204 — 题目血缘查询。详见 {@link IQuestionService#queryLineage}。
+     *
+     * <p>biz_question 无 tenant_id 列 + 老题 create_user≠登录 id，全程 {@code TenantHelper.ignore +
+     * DataPermissionHelper.ignore} 包裹（否则数据权限拦截器注入 AND create_by 致查不到他人题/母题）。
+     */
+    @Override
+    public QuestionLineageVo queryLineage(Long id) {
+        QuestionLineageVo vo = new QuestionLineageVo();
+        vo.setRole("none");
+        vo.setMother(null);
+        vo.setVariants(Collections.emptyList());
+        if (id == null) {
+            return vo;
+        }
+
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            // 查本题（取血缘 + 轻量列；软删题也读，便于判角色，但不会进 variants 列表）
+            BizQuestion self = bizQuestionMapper.selectOne(new LambdaQueryWrapper<BizQuestion>()
+                .select(BizQuestion::getId, BizQuestion::getMotherQuestionId, BizQuestion::getVariantRelation,
+                    BizQuestion::getQuestionType, BizQuestion::getDifficult, BizQuestion::getStatus,
+                    BizQuestion::getStemText, BizQuestion::getStemTextContentId)
+                .eq(BizQuestion::getId, id));
+            if (self == null) {
+                return vo; // 题不存在 → role='none' 空壳
+            }
+
+            Long motherId = self.getMotherQuestionId();
+            if (motherId != null) {
+                // 角色 = variant：mother = 母题；variants = 同母全兄弟（含自己）
+                vo.setRole("variant");
+                BizQuestion mother = bizQuestionMapper.selectOne(new LambdaQueryWrapper<BizQuestion>()
+                    .select(BizQuestion::getId, BizQuestion::getVariantRelation, BizQuestion::getQuestionType,
+                        BizQuestion::getDifficult, BizQuestion::getStatus,
+                        BizQuestion::getStemText, BizQuestion::getStemTextContentId)
+                    .eq(BizQuestion::getId, motherId)
+                    .ne(BizQuestion::getStatus, "2"));
+                List<BizQuestion> siblings = bizQuestionMapper.selectList(new LambdaQueryWrapper<BizQuestion>()
+                    .select(BizQuestion::getId, BizQuestion::getVariantRelation, BizQuestion::getQuestionType,
+                        BizQuestion::getDifficult, BizQuestion::getStatus,
+                        BizQuestion::getStemText, BizQuestion::getStemTextContentId)
+                    .eq(BizQuestion::getMotherQuestionId, motherId)
+                    .ne(BizQuestion::getStatus, "2")
+                    .orderByAsc(BizQuestion::getId));
+                vo.setMother(toLineageNode(mother));
+                vo.setVariants(toLineageNodes(siblings));
+                return vo;
+            }
+
+            // mother_question_id 为空 → 查是否有别的题以本题为母题
+            List<BizQuestion> children = bizQuestionMapper.selectList(new LambdaQueryWrapper<BizQuestion>()
+                .select(BizQuestion::getId, BizQuestion::getVariantRelation, BizQuestion::getQuestionType,
+                    BizQuestion::getDifficult, BizQuestion::getStatus,
+                    BizQuestion::getStemText, BizQuestion::getStemTextContentId)
+                .eq(BizQuestion::getMotherQuestionId, id)
+                .ne(BizQuestion::getStatus, "2")
+                .orderByAsc(BizQuestion::getId));
+            if (children != null && !children.isEmpty()) {
+                // 角色 = mother：mother = 自己；variants = 全部子题
+                vo.setRole("mother");
+                vo.setMother(toLineageNode(self));
+                vo.setVariants(toLineageNodes(children));
+                return vo;
+            }
+
+            // 既非变式也无子题 → role='none'（已是初值）
+            return vo;
+        }));
+    }
+
+    /**
+     * 批量装配 {@link LineageNodeVo}（stemBrief 走批量补 stem 文本，规避 N+1）。
+     */
+    private List<LineageNodeVo> toLineageNodes(List<BizQuestion> list) {
+        if (list == null || list.isEmpty()) {
+            return new ArrayList<>();
+        }
+        // 批量补 stem_text 为空的题的题干文本（来源 biz_text_content content_type='S'）
+        List<Long> needTextQids = new ArrayList<>();
+        for (BizQuestion q : list) {
+            if (StringUtils.isBlank(q.getStemText())) {
+                needTextQids.add(q.getId());
+            }
+        }
+        Map<Long, String> stemTextMap = loadStemTexts(needTextQids);
+        List<LineageNodeVo> result = new ArrayList<>(list.size());
+        for (BizQuestion q : list) {
+            result.add(buildLineageNode(q, stemTextMap));
+        }
+        return result;
+    }
+
+    /**
+     * 单条装配（mother 节点用）。
+     */
+    private LineageNodeVo toLineageNode(BizQuestion q) {
+        if (q == null) {
+            return null;
+        }
+        Map<Long, String> stemTextMap = StringUtils.isBlank(q.getStemText())
+            ? loadStemTexts(Collections.singletonList(q.getId()))
+            : Collections.emptyMap();
+        return buildLineageNode(q, stemTextMap);
+    }
+
+    private LineageNodeVo buildLineageNode(BizQuestion q, Map<Long, String> stemTextMap) {
+        LineageNodeVo node = new LineageNodeVo();
+        node.setId(q.getId());
+        node.setQuestionType(q.getQuestionType());
+        node.setDifficult(q.getDifficult());
+        node.setVariantRelation(q.getVariantRelation());
+        String stem = StringUtils.isNotBlank(q.getStemText())
+            ? q.getStemText() : stemTextMap.get(q.getId());
+        node.setStemBrief(briefPlainText(stem, 60));
+        return node;
+    }
+
+    /**
+     * 批量查 biz_text_content content_type='S' 的题干文本（按 question_id 映射）。
+     */
+    private Map<Long, String> loadStemTexts(List<Long> questionIds) {
+        if (questionIds == null || questionIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<BizTextContent> rows = bizTextContentMapper.selectList(new LambdaQueryWrapper<BizTextContent>()
+            .select(BizTextContent::getQuestionId, BizTextContent::getContent)
+            .eq(BizTextContent::getContentType, "S")
+            .in(BizTextContent::getQuestionId, questionIds));
+        Map<Long, String> map = new LinkedHashMap<>(rows.size() * 2);
+        for (BizTextContent tc : rows) {
+            if (tc.getQuestionId() != null) {
+                map.put(tc.getQuestionId(), tc.getContent());
+            }
+        }
+        return map;
+    }
+
+    /**
+     * 题干摘要：剥 HTML 标签 + 折叠空白，截前 maxLen 字（血缘卡片轻量展示，FE 不做长题面渲染）。
+     */
+    private String briefPlainText(String raw, int maxLen) {
+        if (StringUtils.isBlank(raw)) {
+            return "";
+        }
+        // 剥 HTML 标签 → 折叠连续空白 → trim
+        String plain = raw.replaceAll("<[^>]+>", " ")
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (plain.length() <= maxLen) {
+            return plain;
+        }
+        return plain.substring(0, maxLen);
     }
 
     /**

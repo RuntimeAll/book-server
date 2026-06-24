@@ -8,6 +8,7 @@ import lombok.Data;
 import java.io.Serial;
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * PRD-A-015 属性编辑页回写入参 BO（{@code POST /teacher/question/update-attrs}）。
@@ -71,4 +72,27 @@ public class UpdateAttrsBo implements Serializable {
     private Long motherQuestionId;
     /** 标注完整度 0未标/1已标全/2部分（annotate_status） */
     private Integer annotateStatus;
+
+    // ── PRD-C-204 题库核实增维 — 主表出处列（条件 set 进 biz_question）──
+    /** 出处年份（exam_year） */
+    private String examYear;
+    /** 出处试卷名（exam_paper_name） */
+    private String examPaperName;
+
+    // ── PRD-C-204 题库核实增维 — DNA 维（upsert biz_question_ai；条件 set，null 不改）──
+    /**
+     * 解法骨架（solution_skeleton）。
+     *
+     * <p>🔴 含数学 {@code < > } 文本 — 端点 {@code /teacher/question/update-attrs} 必须挂进
+     * application.yml {@code xss.excludeUrls}，否则 XssFilter 静默剥标签腐蚀数学。
+     */
+    private String solutionSkeleton;
+    /** 场景（scenario） */
+    private String scenario;
+    /** 考察类型（assessment_type） */
+    private String assessmentType;
+    /** 难点（数组入参 → 存 JSON 串到 biz_question_ai.hard_points + breakthrough_points） */
+    private List<String> hardPoints;
+    /** 自由标签 DNA（数组入参 → 存 JSON 串到 biz_question_ai.tags） */
+    private List<String> tags;
 }
