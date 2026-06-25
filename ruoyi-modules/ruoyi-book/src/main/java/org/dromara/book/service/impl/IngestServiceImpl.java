@@ -241,6 +241,18 @@ public class IngestServiceImpl implements IIngestService {
         return upsertImageAsset(bytes, suffix, contentType, assetKind, localPath);
     }
 
+    @Override
+    public Map<String, Object> uploadImageBytes(byte[] bytes, String suffix, String contentType,
+                                                String assetKind, String srcRef) {
+        if (bytes == null || bytes.length == 0) {
+            throw new ServiceException("图字节为空");
+        }
+        if (bytes.length > MAX_FILE_SIZE) {
+            throw new ServiceException("图片不能超过 10MB");
+        }
+        return upsertImageAsset(bytes, suffix, contentType, assetKind, srcRef);
+    }
+
     /** 上传 OSS + 去重 upsert image_asset（sha256 命中则不重传）。 */
     private Map<String, Object> upsertImageAsset(byte[] bytes, String suffix, String contentType,
                                                  String assetKind, String srcRef) {

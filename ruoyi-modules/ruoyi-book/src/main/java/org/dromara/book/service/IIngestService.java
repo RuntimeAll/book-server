@@ -32,6 +32,19 @@ public interface IIngestService {
     /** 组2：上传图本地路径分支 → OSS + 去重 image_asset，返回 {assetId, ossUrl, dedup}。 */
     Map<String, Object> uploadImageByLocalPath(String localPath, String assetKind);
 
+    /**
+     * PRD-A-002 路B：原始字节直传 OSS + 去重 image_asset，返回 {assetId, ossUrl, dedup}。
+     * 供录题 worker（异步线程，持字节非 MultipartFile）复用，落库逻辑与 multipart 分支同。
+     *
+     * @param bytes       图字节
+     * @param suffix      后缀（含点，如 ".png"）
+     * @param contentType MIME
+     * @param assetKind   资产分类（null → figure）
+     * @param srcRef      来源引用（文件名/路径）
+     */
+    Map<String, Object> uploadImageBytes(byte[] bytes, String suffix, String contentType,
+                                         String assetKind, String srcRef);
+
     /** 组3：upsert 教辅 + 教辅树，返回 {bookId, bookSubjectNodes:n}。 */
     Map<String, Object> upsertBook(IngestBookBo bo);
 

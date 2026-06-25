@@ -205,6 +205,9 @@ tenant:
     - biz_dna_edit_log
     # PRD-A-015 题目结构化网格块存储表（V23，无 tenant_id，同上单租户约定）
     - biz_question_block
+    # PRD-A-002 路B 批量录题作业 + 拆出题暂存表（V27，无 tenant_id，同上单租户约定）
+    - biz_ingest_job
+    - biz_ingest_job_item
 
 # MyBatisPlus配置
 # https://baomidou.com/config/
