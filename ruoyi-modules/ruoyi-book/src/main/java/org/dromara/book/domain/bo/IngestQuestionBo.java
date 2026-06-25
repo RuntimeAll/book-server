@@ -80,6 +80,12 @@ public class IngestQuestionBo implements Serializable {
     /** 母题来源 */
     private String motherSource;
 
+    /**
+     * 题目状态：'0'草稿 / '1'已发布 / '2'软删（PRD-A-002 录题闭环）。
+     * 缺省 null → service 兜底 '1'（不破 PRD-C-204 老调用方）；路A/路B 录题传 '0' 落草稿。
+     */
+    private String status;
+
     @Data
     public static class KnowledgeRef implements Serializable {
         @Serial

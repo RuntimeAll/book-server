@@ -395,7 +395,8 @@ public class IngestServiceImpl implements IIngestService {
             q.setImportSource(StringUtils.isBlank(bo.getImportSource()) ? "main" : bo.getImportSource());
             q.setImportBatchId(bo.getImportBatchId());
             q.setVersion(1010);
-            q.setStatus("1");
+            // PRD-A-002: status 入参化（缺省兜底 '1' 不破 C-204 老调用方；录题传 '0' 落草稿）
+            q.setStatus(StringUtils.isBlank(bo.getStatus()) ? "1" : bo.getStatus());
             if (created) {
                 q.setCreateUser(teacherId);
                 q.setCreateBy(ownerIdStr);
