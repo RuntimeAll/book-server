@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.IngestJobCommitBo;
+import org.dromara.book.domain.bo.IngestJobItemEditBo;
 import org.dromara.book.domain.entity.BizIngestJob;
 import org.dromara.book.domain.entity.BizIngestJobItem;
 import org.dromara.book.domain.vo.IngestJobVo;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -252,6 +254,52 @@ public class IngestJobController {
         }));
         Map<String, Object> r = new HashMap<>();
         r.put("dropped", true);
+        return r;
+    }
+
+    /**
+     * 6) PUT /teacher/ingest/job/{jobId}/item/{itemId} — 审核页「就地改题」（PRD-A-002 B5）。
+     *
+     * <p>改拆错的题面/答案/解析/题型，存回 biz_ingest_job_item（入库前暂存编辑，commit 读改后值）。
+     * 仅 pending 项可改（已入库 committed 不可改）；仅更新非 null 字段。校验归属。
+     */
+    @SaCheckLogin
+    @PutMapping("/job/{jobId}/item/{itemId}")
+    public Map<String, Object> updateItem(@PathVariable("jobId") Long jobId,
+                                          @PathVariable("itemId") Long itemId,
+                                          @RequestBody(required = false) IngestJobItemEditBo bo) {
+        requireOwnedJob(jobId);
+        BizIngestJobItem item = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            itemMapper.selectById(itemId)));
+        if (item == null || !jobId.equals(item.getJobId())) {
+            throw new ServiceException("拆出题不存在或不属于该作业");
+        }
+        if (!BizIngestJobItem.STATUS_PENDING.equals(item.getItemStatus())) {
+            throw new ServiceException("该题已入库或已弃，不可编辑");
+        }
+        if (bo != null) {
+            TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+                BizIngestJobItem upd = new BizIngestJobItem();
+                upd.setId(itemId);
+                if (bo.getStemText() != null) {
+                    upd.setStemText(bo.getStemText());
+                }
+                if (bo.getAnswerText() != null) {
+                    upd.setAnswerText(bo.getAnswerText());
+                }
+                if (bo.getAnalyzeText() != null) {
+                    upd.setAnalyzeText(bo.getAnalyzeText());
+                }
+                if (bo.getQuestionType() != null) {
+                    upd.setQuestionType(bo.getQuestionType());
+                }
+                upd.setUpdateTime(new Date());
+                itemMapper.updateById(upd);
+                return null;
+            }));
+        }
+        Map<String, Object> r = new HashMap<>();
+        r.put("updated", true);
         return r;
     }
 
