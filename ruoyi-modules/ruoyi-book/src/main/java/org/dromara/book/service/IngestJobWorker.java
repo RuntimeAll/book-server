@@ -107,7 +107,21 @@ public class IngestJobWorker {
             imageBase64 = new ArrayList<>(1);
             imageBase64.add(b64);
             updateMeta(jobId, "image", "slow");
-        } else if ("pdf".equals(ext) || "docx".equals(ext) || "doc".equals(ext)) {
+        } else if ("docx".equals(ext)) {
+            // DOCX 文字层抽取（POI XWPF 经 ruoyi-common-excel 传递依赖已在类路径，零新依赖）→ 快档
+            try {
+                markdown = extractDocxText(rawBytes);
+            } catch (Exception e) {
+                log.error("[ingest-worker] docx parse fail jobId={} err={}", jobId, e.getMessage(), e);
+                markFailed(jobId, "Word document parse failed: " + safeMsg(e));
+                return;
+            }
+            if (StringUtils.isBlank(markdown)) {
+                markFailed(jobId, "Word document has no extractable text (scanned/image Word, use image upload)");
+                return;
+            }
+            updateMeta(jobId, "docx", "fast");
+        } else if ("pdf".equals(ext) || "doc".equals(ext)) {
             // PDF/DOCX：无 POI/PDFBox 依赖 → 不支持自动抽取，友好降级（不崩）
             markFailed(jobId, "暂不支持该文件格式的自动抽取（当前支持图片；PDF/Word 文字层后续接入）");
             return;
@@ -346,6 +360,17 @@ public class IngestJobWorker {
             jobMapper.updateById(upd);
             return null;
         }));
+    }
+
+    /** DOCX 文字层抽取（POI XWPF·含段落+表格文本，经 EasyExcel 传递依赖已在类路径）。返回纯文本喂 /split。 */
+    private static String extractDocxText(byte[] bytes) throws Exception {
+        try (org.apache.poi.xwpf.usermodel.XWPFDocument doc =
+                 new org.apache.poi.xwpf.usermodel.XWPFDocument(new java.io.ByteArrayInputStream(bytes));
+             org.apache.poi.xwpf.extractor.XWPFWordExtractor ex =
+                 new org.apache.poi.xwpf.extractor.XWPFWordExtractor(doc)) {
+            String text = ex.getText();
+            return text == null ? "" : text.trim();
+        }
     }
 
     private static String extOf(String fileName) {
