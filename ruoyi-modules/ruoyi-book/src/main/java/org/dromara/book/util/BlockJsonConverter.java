@@ -151,18 +151,92 @@ public final class BlockJsonConverter {
     private static final Pattern SUBQ_INLINE_PATTERN =
         Pattern.compile("[（(]\\s*\\d{1,2}\\s*[)）]");
 
+    /**
+     * 「引用连接字」：(N) 前紧跟这些字时，该 (N) 是对前文小问的句中引用、不是新小问起点。
+     * 例：「在（2）的条件下」「由（1）得」「将（3）代入」。守卫用，命中则不切。
+     */
+    private static final String REF_LEAD_CHARS = "在的与和对由把将这那从据如按用借参照依结合根";
+
+    /**
+     * 判断 stem 中位于 {@code idx} 的 {@code (N)} 是否为「真小问起点」（而非句中引用）。
+     *
+     * <p>🔴 G8 守卫：题干里既有真小问标记 (1)(2)(3)…，也有对前文小问的引用
+     * （「（3）在（2）的条件下…」「（4）在（1）（2）（3）的条件下…」）。早先的内联注入对
+     * <b>任意位置</b>的 (N) 都断行 → 把句子切碎、引用切成孤儿段。此守卫只在真起点放行。
+     *
+     * <p>判据（满足其一 = 真起点，注入断行）：
+     * <ul>
+     *   <li>(N) 前是串首 / 换行（紧跟行首）；或</li>
+     *   <li>(N) 前是分隔/引导标点（{@code ；;。：:？?！!}）或 ≥2 个空格
+     *       （上一小问已结束，或「计算：(1)…」这类引导冒号后的首小问）。</li>
+     * </ul>
+     * 反之（满足其一 = 句中引用，不切）：
+     * <ul>
+     *   <li>(N) 前紧跟连接字（在/的/与/和/对/由/把/将/这/那…，见 {@link #REF_LEAD_CHARS}）；或</li>
+     *   <li>(N) 前紧跟另一个 {@code )/）}（如「（1）（2）（3）」连排引用）。</li>
+     * </ul>
+     * 其余暧昧情况（前面是普通汉字/标点，既非分隔也非连接字）→ 宁可<b>不切</b>（保守，
+     * 宁漏拆个别真小问也别把句子切碎，符合「谨慎正则」要求）。
+     */
+    private static boolean isRealSubQStart(String stem, int idx) {
+        // 跳过 (N) 前的空白，定位「前一个非空白字符」
+        int j = idx - 1;
+        int spaceRun = 0;
+        while (j >= 0 && Character.isWhitespace(stem.charAt(j))) {
+            // 换行 = 行首起点，直接判真
+            if (stem.charAt(j) == '\n' || stem.charAt(j) == '\r') {
+                return true;
+            }
+            spaceRun++;
+            j--;
+        }
+        // 串首（前面只有空白或全空）→ 真起点
+        if (j < 0) {
+            return true;
+        }
+        char prev = stem.charAt(j);
+        // 引用：前紧跟连接字 → 不切
+        if (REF_LEAD_CHARS.indexOf(prev) >= 0) {
+            return false;
+        }
+        // 引用：前紧跟另一个右括号（连排引用「（1）（2）」）→ 不切
+        if (prev == ')' || prev == '）') {
+            return false;
+        }
+        // 分隔/引导标点（；;。：:？?！!）→ 上一小问结束 或 引导冒号（「计算：(1)…」）→ 真起点
+        if (prev == '；' || prev == ';' || prev == '。'
+            || prev == '：' || prev == ':'
+            || prev == '？' || prev == '?' || prev == '！' || prev == '!') {
+            return true;
+        }
+        // 紧贴前文且只隔 ≥2 个空格 → 视作分隔 → 真起点
+        if (spaceRun >= 2) {
+            return true;
+        }
+        // 其余暧昧（前面是普通汉字/单空格/其它标点）→ 保守不切
+        return false;
+    }
+
     private static void appendStemRows(ObjectMapper om, ArrayNode rows, String stem) {
         // 🔴 PRD-C-204：题干含 ≥2 个小问标记但写在「同一行内联」(如「计算：(1)…；(2)…」)时，
         // 行首切法(SUBQ_LINE)切不到 → 先在每个 (n) 前注入断行，让其也拆成各自一块。
-        // 守卫 ≥2：避免把单个 (1) 引用误当小问切。仅作用于多小问题干，单小问/普通题干不动。
-        String s = stem;
+        // 🔴 G8 守卫：只在「真小问起点」处注入断行，句中引用「在（2）的…」「（1）（2）（3）」不切
+        // （见 isRealSubQStart）。守卫 ≥2 真起点：避免把单个引用误当小问；普通题干不动。
         Matcher mc = SUBQ_INLINE_PATTERN.matcher(stem);
-        int cnt = 0;
+        List<Integer> realStarts = new ArrayList<>();
         while (mc.find()) {
-            cnt++;
+            if (isRealSubQStart(stem, mc.start())) {
+                realStarts.add(mc.start());
+            }
         }
-        if (cnt >= 2) {
-            s = SUBQ_INLINE_PATTERN.matcher(stem).replaceAll("\n\n$0");
+        String s = stem;
+        if (realStarts.size() >= 2) {
+            // 从后往前在每个「真起点」前插断行（倒序避免位移失配）；引用位置一概不动。
+            StringBuilder sb = new StringBuilder(stem);
+            for (int k = realStarts.size() - 1; k >= 0; k--) {
+                sb.insert(realStarts.get(k), "\n\n");
+            }
+            s = sb.toString();
         }
         // 2. 抽图：把 stem 按图位切成 [文本段, 图, 文本段, …]
         List<Segment> segments = splitByImages(s);
