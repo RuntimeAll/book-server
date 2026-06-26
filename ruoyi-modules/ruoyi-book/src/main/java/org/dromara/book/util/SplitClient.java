@@ -89,12 +89,121 @@ public class SplitClient {
             .POST(HttpRequest.BodyPublishers.ofString(reqJson, StandardCharsets.UTF_8))
             .build();
 
+        JsonNode root = postJson("/split", body);
+        return parse(mapper.writeValueAsString(root));
+    }
+
+    // ============ PRD-A-002 B2 分层流水线：/ocr /solve /label（单题粒度） ============
+
+    /**
+     * 调 toolkit /ocr（TextIn 整页 → markdown 富文本）。
+     *
+     * @param fileBase64 pdf/图片字节 base64
+     * @return 抽出的 markdown；ok=false（TextIn 不可用/失败）返回 null，调用方降级 opus 读图
+     * @throws Exception 网络/超时/HTTP 非 2xx
+     */
+    public String ocr(String fileBase64) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("file_base64", fileBase64);
+        JsonNode root = postJson("/ocr", body);
+        if (!root.path("ok").asBoolean(false)) {
+            log.warn("[toolkit /ocr] ok=false error={}", textOrNull(root, "error"));
+            return null;
+        }
+        String md = textOrNull(root, "markdown");
+        return (md == null || md.isBlank()) ? null : md;
+    }
+
+    /**
+     * 调 toolkit /solve（单题解题 + 自动打标 + sympy 验算）。
+     *
+     * @return SolveResult（answer/analysis/dnaJson/dnaDifficulty/verifyVerdict）
+     * @throws Exception 网络/超时/HTTP 非 2xx
+     */
+    public SolveResult solve(String stem, List<String> options, String qtype, String gradeHint) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("stem", stem);
+        if (options != null && !options.isEmpty()) {
+            body.put("options", options);
+        }
+        if (qtype != null) {
+            body.put("qtype", qtype);
+        }
+        if (gradeHint != null && !gradeHint.isBlank()) {
+            body.put("grade_hint", gradeHint);
+        }
+        JsonNode root = postJson("/solve", body);
+        SolveResult r = new SolveResult();
+        r.setOk(root.path("ok").asBoolean(false));
+        r.setAnswer(textOrNull(root, "answer"));
+        r.setAnalysis(textOrNull(root, "analysis"));
+        applyDna(root.get("dna"), r);
+        JsonNode verify = root.get("verify");
+        if (verify != null && verify.isObject()) {
+            r.setVerifyVerdict(textOrNull(verify, "verdict"));
+        }
+        r.setError(textOrNull(root, "error"));
+        return r;
+    }
+
+    /**
+     * 调 toolkit /label（单题打标，有原卷答案/解析时不重解只产 DNA）。
+     *
+     * @return SolveResult（仅 dnaJson/dnaDifficulty 有值）
+     * @throws Exception 网络/超时/HTTP 非 2xx
+     */
+    public SolveResult label(String stem, List<String> options, String qtype, String answer, String analysis) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("stem", stem);
+        if (options != null && !options.isEmpty()) {
+            body.put("options", options);
+        }
+        if (qtype != null) {
+            body.put("qtype", qtype);
+        }
+        if (answer != null && !answer.isBlank()) {
+            body.put("answer", answer);
+        }
+        if (analysis != null && !analysis.isBlank()) {
+            body.put("analysis", analysis);
+        }
+        JsonNode root = postJson("/label", body);
+        SolveResult r = new SolveResult();
+        r.setOk(root.path("ok").asBoolean(false));
+        applyDna(root.get("dna"), r);
+        r.setError(textOrNull(root, "error"));
+        return r;
+    }
+
+    /** 把 dna 节点写进 SolveResult（dnaJson 整段 + difficulty）。 */
+    private void applyDna(JsonNode dnaNode, SolveResult r) {
+        if (dnaNode != null && !dnaNode.isNull() && dnaNode.isObject()) {
+            try {
+                r.setDnaJson(mapper.writeValueAsString(dnaNode));
+            } catch (Exception ignore) {
+                // dnaJson 写失败不致命，留空
+            }
+            if (dnaNode.has("difficulty") && dnaNode.get("difficulty").isNumber()) {
+                r.setDnaDifficulty(dnaNode.get("difficulty").asInt());
+            }
+        }
+    }
+
+    /** 通用 POST JSON → JsonNode（锁 HTTP/1.1，UTF-8）。HTTP 非 2xx 抛 IllegalStateException。 */
+    private JsonNode postJson(String path, Map<String, Object> body) throws Exception {
+        String reqJson = mapper.writeValueAsString(body);
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl.replaceAll("/+$", "") + path))
+            .timeout(TIMEOUT)
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(reqJson, StandardCharsets.UTF_8))
+            .build();
         HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
             String bodySnippet = resp.body() == null ? "" : resp.body().substring(0, Math.min(500, resp.body().length()));
-            throw new IllegalStateException("toolkit /split HTTP " + resp.statusCode() + "：" + bodySnippet);
+            throw new IllegalStateException("toolkit " + path + " HTTP " + resp.statusCode() + "：" + bodySnippet);
         }
-        return parse(resp.body());
+        return mapper.readTree(resp.body());
     }
 
     /** 手工解析：questions 内 options/dna 等异构，用 JsonNode 容错读，避免严格映射崩。 */
@@ -187,5 +296,26 @@ public class SplitClient {
         private String dnaJson;
         /** dna.difficulty（1-4，可空） */
         private Integer dnaDifficulty;
+    }
+
+    /** /solve 或 /label 的单题结果（B2 分层流水线）。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class SolveResult implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+        private boolean ok;
+        /** 答案（/solve 有；/label 不填） */
+        private String answer;
+        /** 解析（/solve 有；/label 不填） */
+        private String analysis;
+        /** dna 整段 JSON */
+        private String dnaJson;
+        /** dna.difficulty 1-4 */
+        private Integer dnaDifficulty;
+        /** sympy 验算 verdict（pass/fail/degrade，可空） */
+        private String verifyVerdict;
+        /** 错误（ok=false 时带因） */
+        private String error;
     }
 }

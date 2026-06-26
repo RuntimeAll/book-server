@@ -88,53 +88,67 @@ public class IngestJobWorker {
             log.warn("[ingest-worker] job 不存在 jobId={}", jobId);
             return;
         }
-        // 1. 抽取分流（置 EXTRACT_ING）
+        // ===== 1. 抽取分流：整页 → 富文本（B2 维护者拍板：路B 走 TextIn 外部 OCR）=====
         updateStatus(jobId, BizIngestJob.STATUS_EXTRACT_ING, null);
 
         String ext = extOf(job.getSourceFileName());
         boolean isImage = IMAGE_EXTS.contains(ext);
 
         String markdown = null;
-        List<String> imageBase64 = null;
+        List<String> imageBase64Fallback = null;   // 仅 TextIn 不可用时给 /split 兜底（opus 多模态读图）
+
+        if (rawBytes == null || rawBytes.length == 0) {
+            markFailed(jobId, "上传文件为空，无法拆题");
+            return;
+        }
+        String b64 = Base64.getEncoder().encodeToString(rawBytes);
 
         if (isImage) {
-            // 图片主干：source_type=image / lane=slow / base64 → /split image_base64
-            if (rawBytes == null || rawBytes.length == 0) {
-                markFailed(jobId, "上传图为空，无法拆题");
+            // 图片：优先 TextIn /ocr 转富文本；失败则退 opus 多模态读图（imageBase64 兜底）
+            markdown = tryOcr(jobId, b64);
+            if (StringUtils.isNotBlank(markdown)) {
+                updateMeta(jobId, "image", "fast");
+            } else {
+                imageBase64Fallback = new ArrayList<>(1);
+                imageBase64Fallback.add(b64);
+                updateMeta(jobId, "image", "slow");
+            }
+        } else if ("pdf".equals(ext)) {
+            // 🔴 PDF 现已支持（TextIn /ocr 整页转富文本）—— 旧实现直接 FAILED 是 B2 漏的真实路径
+            markdown = tryOcr(jobId, b64);
+            if (StringUtils.isBlank(markdown)) {
+                markFailed(jobId, "PDF 整页 OCR 失败（TextIn 不可用或为纯扫描无文字层），请改用清晰图片上传");
                 return;
             }
-            String b64 = Base64.getEncoder().encodeToString(rawBytes);
-            imageBase64 = new ArrayList<>(1);
-            imageBase64.add(b64);
-            updateMeta(jobId, "image", "slow");
+            updateMeta(jobId, "pdf", "fast");
         } else if ("docx".equals(ext)) {
-            // DOCX 文字层抽取（POI XWPF 经 ruoyi-common-excel 传递依赖已在类路径，零新依赖）→ 快档
+            // DOCX 文字层抽取（POI XWPF 已在类路径，零新依赖）→ 快档；POI 抽不出再退 TextIn
             try {
                 markdown = extractDocxText(rawBytes);
             } catch (Exception e) {
-                log.error("[ingest-worker] docx parse fail jobId={} err={}", jobId, e.getMessage(), e);
-                markFailed(jobId, "Word document parse failed: " + safeMsg(e));
-                return;
+                log.warn("[ingest-worker] docx POI 抽取异常 jobId={} err={}（转 TextIn 兜底）", jobId, e.getMessage());
+                markdown = null;
             }
             if (StringUtils.isBlank(markdown)) {
-                markFailed(jobId, "Word document has no extractable text (scanned/image Word, use image upload)");
+                markdown = tryOcr(jobId, b64);
+            }
+            if (StringUtils.isBlank(markdown)) {
+                markFailed(jobId, "Word 文档无可抽取文本（扫描/图片型 Word，请改用图片上传）");
                 return;
             }
             updateMeta(jobId, "docx", "fast");
-        } else if ("pdf".equals(ext) || "doc".equals(ext)) {
-            // PDF/DOCX：无 POI/PDFBox 依赖 → 不支持自动抽取，友好降级（不崩）
-            markFailed(jobId, "暂不支持该文件格式的自动抽取（当前支持图片；PDF/Word 文字层后续接入）");
-            return;
         } else {
-            markFailed(jobId, "暂不支持的文件格式（当前支持图片 jpg/png/webp/gif；PDF/Word 文字层后续接入）");
+            markFailed(jobId, "暂不支持的文件格式（当前支持 图片 jpg/png/webp/gif、PDF、Word docx）");
             return;
         }
 
-        // 2. 调 toolkit /split（置 SPLIT_ING）
+        // ===== 2. 拆单题（置 SPLIT_ING）：只拆题干 + 抽原卷解析，不在大调用里解题（B2 根因纠正）=====
         updateStatus(jobId, BizIngestJob.STATUS_SPLIT_ING, null);
+        // from_source 抽原卷答案；其余（ai_solve/stem_only）拆完单题再走 /solve，故 split 只拆题干
+        String splitMode = "from_source".equalsIgnoreCase(job.getAnswerMode()) ? "from_source" : "stem_only";
         SplitClient.SplitResponse resp;
         try {
-            resp = splitClient.split(markdown, imageBase64, job.getAnswerMode(), job.getGradeHint(), null);
+            resp = splitClient.split(markdown, imageBase64Fallback, splitMode, null, null);
         } catch (Exception e) {
             log.error("[ingest-worker] 调 /split 失败 jobId={} err={}", jobId, e.getMessage(), e);
             markFailed(jobId, "AI 拆题失败：" + safeMsg(e));
@@ -145,7 +159,7 @@ public class IngestJobWorker {
             return;
         }
 
-        // 3. 逐题写 biz_ingest_job_item（全程 ignore 包裹）
+        // ===== 3. 逐题写 biz_ingest_job_item（题干态，dna/答案待 SOLVING 回填）=====
         List<SplitClient.SplitQuestion> questions = resp.getQuestions() == null ? List.of() : resp.getQuestions();
         Date now = new Date();
         TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
@@ -174,24 +188,155 @@ public class IngestJobWorker {
             return null;
         }));
 
-        // 4. 回填作业计数 + dropped + DONE（N=0 也是 DONE，前端展空态）
-        BizIngestJob upd = new BizIngestJob();
-        upd.setId(jobId);
-        upd.setQuestionCount(questions.size());
+        // 回填作业计数 + dropped
+        BizIngestJob cnt = new BizIngestJob();
+        cnt.setId(jobId);
+        cnt.setQuestionCount(questions.size());
         if (resp.getDropped() != null && !resp.getDropped().isEmpty()) {
-            upd.setDroppedJson(JsonUtils.toJsonString(resp.getDropped()));
+            cnt.setDroppedJson(JsonUtils.toJsonString(resp.getDropped()));
         }
-        upd.setStatus(BizIngestJob.STATUS_DONE);
-        upd.setUpdateTime(new Date());
-        updateJob(upd);
-
+        cnt.setUpdateTime(new Date());
+        updateJob(cnt);
         log.info("[ingest-worker] 拆题完成 jobId={} 题数={} dropped={}",
             jobId, questions.size(), resp.getDropped() == null ? 0 : resp.getDropped().size());
 
-        // 5. commit_mode='direct' → 拆完直接全量入库（跳审核）
+        // ===== 4. 解题 + 打标（置 SOLVING）：单题粒度并发调 /solve 或 /label（B2 核心）=====
+        // stem_only 模式跳过（只录题干）；from_source/ai_solve 逐题 solve/label。
+        if (!"stem_only".equalsIgnoreCase(job.getAnswerMode()) && !questions.isEmpty()) {
+            updateStatus(jobId, BizIngestJob.STATUS_SOLVING, null);
+            solveAndLabelItems(jobId);
+        }
+
+        // ===== 5. DONE（N=0 也是 DONE，前端展空态）=====
+        BizIngestJob done = new BizIngestJob();
+        done.setId(jobId);
+        done.setStatus(BizIngestJob.STATUS_DONE);
+        done.setUpdateTime(new Date());
+        updateJob(done);
+
+        // ===== 6. commit_mode='direct' → 拆完直接全量入库（跳审核）=====
         if ("direct".equalsIgnoreCase(job.getCommitMode()) && !questions.isEmpty()) {
             autoCommitAll(jobId);
         }
+    }
+
+    /** TextIn /ocr 兜底包装：失败不抛，返回 null（调用方据此降级）。 */
+    private String tryOcr(Long jobId, String fileBase64) {
+        try {
+            return splitClient.ocr(fileBase64);
+        } catch (Exception e) {
+            log.warn("[ingest-worker] TextIn /ocr 异常 jobId={} err={}（降级处理）", jobId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 单题解题并发上限（每次 /solve 是 ~20-40s 网络调用，控并发护 toolkit/中转池）。 */
+    private static final int SOLVE_CONCURRENCY = 4;
+
+    /**
+     * SOLVING 步骤：对已拆出的 pending item **单题粒度并发** solve/label，回填答案/解析/DNA/验算。
+     *
+     * <p>🔴 B2 根因纠正核心：不再整卷一次大 JSON（截断崩），改逐题独立调用 —— 每次输出小、永不截断；
+     * 有原卷答案的题走 /label（不重解只打标），无答案的题走 /solve（解题+自动打标+验算）。
+     * 单题失败不拖垮整批（该题保留题干态）。worker 线程无请求上下文 → DB 写全程 ignore 包裹。
+     */
+    private void solveAndLabelItems(Long jobId) {
+        List<BizIngestJobItem> items = selectPendingItems(jobId);
+        if (items.isEmpty()) {
+            return;
+        }
+        BizIngestJob job = selectJob(jobId);
+        String gradeHint = job == null ? null : job.getGradeHint();
+        java.util.concurrent.ExecutorService pool =
+            java.util.concurrent.Executors.newFixedThreadPool(Math.min(SOLVE_CONCURRENCY, items.size()));
+        try {
+            List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
+            for (BizIngestJobItem item : items) {
+                futures.add(pool.submit(() -> solveOneItem(item, gradeHint)));
+            }
+            for (java.util.concurrent.Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    log.warn("[ingest-worker] 单题 solve/label 任务异常 jobId={} err={}", jobId, e.getMessage());
+                }
+            }
+        } finally {
+            pool.shutdown();
+        }
+    }
+
+    /** 单题 solve/label：有答案→/label（只打标），无答案→/solve（解题+打标+验算）。回填 item。 */
+    private void solveOneItem(BizIngestJobItem item, String gradeHint) {
+        try {
+            List<String> options = parseOptions(item.getOptionsJson());
+            String qtype = qtypeText(item.getQuestionType());
+            SplitClient.SolveResult r;
+            boolean hasAnswer = StringUtils.isNotBlank(item.getAnswerText());
+            if (hasAnswer) {
+                // 原卷自带答案：不重解，只打标
+                r = splitClient.label(item.getStemText(), options, qtype, item.getAnswerText(), item.getAnalyzeText());
+            } else {
+                // 无答案：AI 解题 + 自动打标 + 验算
+                r = splitClient.solve(item.getStemText(), options, qtype, gradeHint);
+            }
+            if (r == null) {
+                return;
+            }
+            BizIngestJobItem iu = new BizIngestJobItem();
+            iu.setId(item.getId());
+            if (!hasAnswer) {
+                if (StringUtils.isNotBlank(r.getAnswer())) {
+                    iu.setAnswerText(r.getAnswer());
+                }
+                if (StringUtils.isNotBlank(r.getAnalysis())) {
+                    iu.setAnalyzeText(r.getAnalysis());
+                }
+                if (r.getVerifyVerdict() != null) {
+                    iu.setVerifyVerdict(r.getVerifyVerdict());
+                }
+            }
+            if (StringUtils.isNotBlank(r.getDnaJson())) {
+                iu.setDnaJson(r.getDnaJson());
+            }
+            if (r.getDnaDifficulty() != null) {
+                iu.setDifficulty(mapDifficulty(r.getDnaDifficulty()));
+            }
+            iu.setUpdateTime(new Date());
+            TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+                itemMapper.updateById(iu);
+                return null;
+            }));
+        } catch (Exception e) {
+            // 单题失败不拖垮整批：保留题干态，仅记日志
+            log.warn("[ingest-worker] 单题 solve/label 失败 itemId={} err={}",
+                item == null ? null : item.getId(), e.getMessage());
+        }
+    }
+
+    /** options_json → List<String>（容错，解析失败返回空）。 */
+    private static List<String> parseOptions(String optionsJson) {
+        if (StringUtils.isBlank(optionsJson)) {
+            return List.of();
+        }
+        try {
+            List<String> list = JsonUtils.parseArray(optionsJson, String.class);
+            return list == null ? List.of() : list;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** 库题型码 → 文本（选择/填空/解答），喂 toolkit /solve。 */
+    private static String qtypeText(Integer code) {
+        if (code == null) {
+            return "解答";
+        }
+        return switch (code) {
+            case 1 -> "选择";
+            case 2 -> "填空";
+            default -> "解答";
+        };
     }
 
     /** direct 模式：拆完直接对所有 pending item 调 ingestQuestion 入库。 */

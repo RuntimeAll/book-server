@@ -17,6 +17,8 @@ import org.dromara.common.core.utils.StringUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.dromara.common.tenant.helper.TenantHelper;
+import org.dromara.system.domain.vo.SysOssVo;
+import org.dromara.system.service.ISysOssService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -57,6 +59,8 @@ public class IngestJobController {
     private final BizIngestJobItemMapper itemMapper;
     private final IIngestService ingestService;
     private final IngestJobWorker ingestJobWorker;
+    /** B5 源件留存：走若依标准 OSS service（注册 sys_oss 表，非直连 OssFactory 只写 image_asset）。 */
+    private final ISysOssService sysOssService;
 
     /** 允许上传后缀（图片主干 + pdf/docx 受理后由 worker 友好降级） */
     private static final long MAX_FILE_SIZE = 30L * 1024 * 1024;
@@ -93,31 +97,27 @@ public class IngestJobController {
         String fileName = StringUtils.defaultString(file.getOriginalFilename());
         String ext = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase() : "";
 
-        // 源文件留存 OSS（图片可作配图；非图也留底，失败不阻断建作业）
-        String sourceOssUrl = null;
-        String detectedSourceType = "text";
+        // 来源类型分流
+        String detectedSourceType;
         if (List.of("jpg", "jpeg", "png", "webp", "gif").contains(ext)) {
             detectedSourceType = "image";
-            try {
-                String suffix = "." + ext;
-                String contentType = switch (ext) {
-                    case "jpg", "jpeg" -> "image/jpeg";
-                    case "png" -> "image/png";
-                    case "webp" -> "image/webp";
-                    default -> "image/gif";
-                };
-                Map<String, Object> up = ingestService.uploadImageBytes(bytes, suffix, contentType, "figure",
-                    fileName.isEmpty() ? "ingest-batch:" + suffix : fileName);
-                Object url = up.get("ossUrl");
-                sourceOssUrl = url == null ? null : String.valueOf(url);
-            } catch (Exception ignore) {
-                // 源图 OSS 留存失败不阻断（拆题用内存字节，不依赖 OSS）；配图缺失审核页可见 has_figure 提示
-                sourceOssUrl = null;
-            }
         } else if ("pdf".equals(ext)) {
             detectedSourceType = "pdf";
         } else if ("docx".equals(ext) || "doc".equals(ext)) {
             detectedSourceType = "docx";
+        } else {
+            detectedSourceType = "text";
+        }
+
+        // 🔴 B5 源件留存（维护者拍板）：原图/源文件**全部留存，不丢**；OSS 上传**走若依标准 service
+        //   注册 sys_oss 表**（图片/pdf/docx 一视同仁），不再仅图片直连 OssFactory 写 image_asset。
+        //   失败不阻断建作业（拆题用内存字节，不依赖 OSS）；图片源件的 url 同时作 has_figure 题配图。
+        String sourceOssUrl = null;
+        try {
+            SysOssVo oss = sysOssService.upload(file);
+            sourceOssUrl = oss == null ? null : oss.getUrl();
+        } catch (Exception e) {
+            sourceOssUrl = null;
         }
 
         // 建 job(PENDING)

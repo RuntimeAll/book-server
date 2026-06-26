@@ -35,8 +35,10 @@ public class BizIngestJob implements Serializable {
     public static final String STATUS_PENDING = "PENDING";
     /** 状态：抽取中（分流抽取文字/图） */
     public static final String STATUS_EXTRACT_ING = "EXTRACT_ING";
-    /** 状态：拆题中（调 toolkit /split） */
+    /** 状态：拆题中（调 toolkit /split，只拆题干） */
     public static final String STATUS_SPLIT_ING = "SPLIT_ING";
+    /** 状态：解题打标中（B2 单题粒度并发调 /solve 或 /label） */
+    public static final String STATUS_SOLVING = "SOLVING";
     /** 状态：完成（拆题落 item，含 N=0 空态） */
     public static final String STATUS_DONE = "DONE";
     /** 状态：失败（error_msg 带因） */
