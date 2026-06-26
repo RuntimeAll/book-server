@@ -36,8 +36,11 @@ import java.util.Map;
 @Component
 public class SplitClient {
 
-    /** 连接 + 整体超时 120s（拆整卷 ~40s，留 3x 余量） */
-    private static final Duration TIMEOUT = Duration.ofSeconds(120);
+    // 🔴 整体超时 300s：整卷 OCR(TextIn) + 拆题(opus 读大 markdown 出多题)可达 100~240s（toolkit
+    // split_doc SPLIT_TIMEOUT_S=240），BE 需 > toolkit 内部 LLM 超时，否则 BE 先在 120s 砍断 →
+    // "request timed out"（实测整卷 2025杭州二模 SPLIT_ING 超 120s 踩）。单题 solve/label 仍 ~40s，
+    // 高上限不影响其正常返回。
+    private static final Duration TIMEOUT = Duration.ofSeconds(300);
 
     // 🔴 必须锁 HTTP_1_1：JDK HttpClient 默认 HTTP_2，向 uvicorn(h11 仅 HTTP/1.1) 发 HTTP/2 preface
     // 会被拒为 "Invalid HTTP request received" → 400（实测踩坑）。toolkit 是 HTTP/1.1 服务。
