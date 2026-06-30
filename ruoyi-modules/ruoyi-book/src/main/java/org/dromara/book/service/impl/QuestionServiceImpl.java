@@ -13,6 +13,7 @@ import org.dromara.book.domain.bo.UpdateAttrsBo;
 import org.dromara.book.domain.bo.UpdateBlockBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
+import org.dromara.book.domain.enums.BizQuestionType;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionAi;
 import org.dromara.book.domain.entity.BizQuestionBlock;
@@ -453,7 +454,7 @@ public class QuestionServiceImpl implements IQuestionService {
     }
 
     /**
-     * 组卷草稿 — section 顺序固定 1=选择 → 4=填空 → 5=简答（misikt 真实行为）。
+     * 组卷草稿 — section 顺序固定 1=选择 → 4=填空 → 5=解答（misikt 真实行为）。
      *
      * <p>实现策略：复用 {@link IQuestionBasketService#queryBasket}（已带 status='1' 过滤
      * + add_time 倒序 + questionKnowledges 回填），按 questionType 分组装 sections。
@@ -482,11 +483,12 @@ public class QuestionServiceImpl implements IQuestionService {
 
         // 按 misikt 真实题型顺序 1 → 4 → 5 → 6 生成 sections；不存在的题型跳过
         // PRD-C-204 B1：追加 type=6=作图（否则作图题进筐被静默丢弃），不改 1/4/5 原行为
+        // 题型名取自 BizQuestionType（SSOT=字典 biz_question_type），不再硬编码「简答题」等魔法值
         List<ExamSectionVo> sections = new ArrayList<>(4);
-        addSectionIfPresent(sections, byType, 1, "一、选择题");
-        addSectionIfPresent(sections, byType, 4, "二、填空题");
-        addSectionIfPresent(sections, byType, 5, "三、简答题");
-        addSectionIfPresent(sections, byType, 6, "四、作图题");
+        addSectionIfPresent(sections, byType, 1, "一、" + BizQuestionType.labelOf(1));
+        addSectionIfPresent(sections, byType, 4, "二、" + BizQuestionType.labelOf(4));
+        addSectionIfPresent(sections, byType, 5, "三、" + BizQuestionType.labelOf(5));
+        addSectionIfPresent(sections, byType, 6, "四、" + BizQuestionType.labelOf(6));
 
         vo.setSections(sections);
         return vo;

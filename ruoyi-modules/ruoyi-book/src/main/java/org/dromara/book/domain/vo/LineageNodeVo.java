@@ -27,7 +27,7 @@ public class LineageNodeVo implements Serializable {
     /** 题干前 60 字纯文本摘要（剥 HTML 标签 + 折叠空白） */
     private String stemBrief;
 
-    /** 题型 1选择/4填空/5简答/6作图 */
+    /** 题型 1选择/4填空/5解答/6作图 */
     private Integer questionType;
 
     /** 难度 1-4 星 */

@@ -30,7 +30,7 @@ import java.util.List;
  *   "sections": [
  *     {"sectionId": 3678, "title": "选择题", "sort": 1, "questions": [...]},
  *     {"sectionId": 3679, "title": "填空题", "sort": 3, "questions": [...]},
- *     {"sectionId": 3680, "title": "简答题", "sort": 4, "questions": [...]}
+ *     {"sectionId": 3680, "title": "解答题", "sort": 4, "questions": [...]}
  *   ]
  * }
  * </pre>

@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.dromara.book.domain.bo.AutoGenerateBo;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.enums.BizQuestionType;
 import org.dromara.book.domain.vo.AutoGeneratePaperVo;
 import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.ExamSectionVo;
@@ -17,6 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,14 +53,22 @@ public class AutoPaperServiceImpl implements IAutoPaperService {
     @Value("${book.front-base-url:http://localhost:5173}")
     private String frontBaseUrl;
 
-    /** misikt 真实题型顺序：1=选择 → 4=填空 → 5=简答 → 6=作图（PRD-C-204 B1 追加 6，1/4/5 原行为不变） */
+    /** misikt 真实题型顺序：1=选择 → 4=填空 → 5=解答 → 6=作图（PRD-C-204 B1 追加 6，1/4/5 原行为不变） */
     private static final int[] TYPE_ORDER = {1, 4, 5, 6};
-    private static final Map<Integer, String> TYPE_TITLE = Map.of(
-        1, "一、选择题",
-        4, "二、填空题",
-        5, "三、简答题",
-        6, "四、作图题"
-    );
+    /** 大题序号（一、二、三…），按 TYPE_ORDER 位次取。 */
+    private static final String[] CN_NUM = {"一", "二", "三", "四", "五", "六", "七", "八"};
+    /**
+     * 题型码 → 大题标题（如 5→"三、解答题"）。题型名取自 {@link BizQuestionType}（SSOT=字典
+     * biz_question_type），序号按 TYPE_ORDER 位次，不再硬编码「简答题」等魔法值。
+     */
+    private static final Map<Integer, String> TYPE_TITLE;
+    static {
+        Map<Integer, String> m = new LinkedHashMap<>();
+        for (int i = 0; i < TYPE_ORDER.length; i++) {
+            m.put(TYPE_ORDER[i], CN_NUM[i] + "、" + BizQuestionType.labelOf(TYPE_ORDER[i]));
+        }
+        TYPE_TITLE = Collections.unmodifiableMap(m);
+    }
 
     /** 候选拉取放大系数 — 抵消全局去重损耗（page 返回可能含已被其他 outline 项选走的题） */
     private static final int CANDIDATE_FACTOR = 5;

@@ -17,7 +17,7 @@ import java.util.List;
  * <ul>
  *   <li>questionType=1 → "一、选择题"</li>
  *   <li>questionType=4 → "二、填空题"</li>
- *   <li>questionType=5 → "三、简答题"</li>
+ *   <li>questionType=5 → "三、解答题"</li>
  * </ul>
  *
  * <p>title 编号固定按 questionType 1 → 4 → 5 顺序产出（即筐里没有选择题时，第一节直接 "一、填空题"，

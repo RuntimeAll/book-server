@@ -41,7 +41,7 @@ public class BizQuestion implements Serializable {
     private Long id;
 
     /**
-     * 题型：1=选择 / 4=填空 / 5=简答（misikt 真实只 3 种；DB 字典含 2 填空 3 判断保留备用）
+     * 题型：1=选择 / 4=填空 / 5=解答（misikt 真实只 3 种；DB 字典含 2 填空 3 判断保留备用）
      */
     private Integer questionType;
 

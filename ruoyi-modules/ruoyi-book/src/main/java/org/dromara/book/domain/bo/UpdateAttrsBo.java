@@ -35,7 +35,7 @@ public class UpdateAttrsBo implements Serializable {
     // ── 基础属性 ──
     /** 章节/知识点编码（subject_id，biz_subject 节点 id） */
     private String subjectId;
-    /** 题型 1选择/4填空/5简答（question_type） */
+    /** 题型 1选择/4填空/5解答（question_type） */
     private Integer questionType;
     /** 难度 1-4 星（difficult） */
     private Integer difficult;
