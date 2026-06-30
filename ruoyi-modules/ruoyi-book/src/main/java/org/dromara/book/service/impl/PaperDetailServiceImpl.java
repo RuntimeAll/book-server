@@ -1,12 +1,14 @@
 package org.dromara.book.service.impl;
 
 import lombok.RequiredArgsConstructor;
+import org.dromara.book.domain.entity.BizQuestionBlock;
 import org.dromara.book.domain.vo.FreeTagVo;
 import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.domain.vo.PaperSectionVo;
 import org.dromara.book.domain.vo.PaperSourceQuestionVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
 import org.dromara.book.mapper.BizPaperMapper;
+import org.dromara.book.mapper.BizQuestionBlockMapper;
 import org.dromara.book.mapper.BizQuestionFreeTagMapper;
 import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.service.IPaperDetailService;
@@ -54,6 +56,7 @@ public class PaperDetailServiceImpl implements IPaperDetailService {
     private final BizPaperMapper bizPaperMapper;
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
     private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
+    private final BizQuestionBlockMapper bizQuestionBlockMapper;
 
     @Override
     public PaperDetailVo getPaperDetail(Long paperId) {
@@ -79,16 +82,29 @@ public class PaperDetailServiceImpl implements IPaperDetailService {
         List<BizPaperMapper.QuestionWithSectionId> rawQuestions =
             bizPaperMapper.selectQuestionsByPaperIdWithSection(paperId, currentUserId);
 
-        // step 4 — 批量回填 freeTags + questionKnowledges
+        // step 4 — 批量回填 freeTags + questionKnowledges + blockJson
         if (rawQuestions != null && !rawQuestions.isEmpty()) {
             List<Long> qids = rawQuestions.stream()
                 .map(PaperSourceQuestionVo::getId)
                 .collect(Collectors.toList());
             Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(qids);
             Map<Long, List<QuestionKnowledgeVo>> kgMap = loadKnowledgesByQuestionIds(qids, "U");
+            // PRD-A-015：批量回填结构化网格块 JSON（与 listByIds 同源），卷库查看态走
+            //   QuestionBlockRender 结构化渲染（选项/图片/公式与题库·详情·PDF 四端一致）；
+            //   null=未结构化老题，FE 回落旧富文本/图。biz_question_block 一题一份，PK=question_id。
+            Map<Long, BizQuestionBlock> blockMap = new HashMap<>(qids.size() * 2);
+            for (BizQuestionBlock b : bizQuestionBlockMapper.selectBatchIds(qids)) {
+                blockMap.put(b.getQuestionId(), b);
+            }
             for (BizPaperMapper.QuestionWithSectionId q : rawQuestions) {
                 q.setFreeTags(ftMap.getOrDefault(q.getId(), Collections.emptyList()));
                 q.setQuestionKnowledges(kgMap.getOrDefault(q.getId(), Collections.emptyList()));
+                BizQuestionBlock block = blockMap.get(q.getId());
+                if (block != null) {
+                    q.setBlockJson(block.getBlockJson());
+                    q.setAnswerBlockJson(block.getAnswerBlockJson());
+                    q.setAnalyzeBlockJson(block.getAnalyzeBlockJson());
+                }
             }
         }
 
