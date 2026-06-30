@@ -32,6 +32,7 @@ import org.dromara.book.domain.vo.LineageNodeVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionDnaVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
+import org.dromara.book.domain.vo.QuestionModelVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
 import org.dromara.book.domain.vo.QuestionLineageVo;
 import org.dromara.book.mapper.BizFreeTagWriteMapper;
@@ -226,7 +227,25 @@ public class QuestionServiceImpl implements IQuestionService {
         }
         // PRD-C-204：全维 DNA 嵌套对象（biz_question_ai 最新版一行 → QuestionDnaVo；无行 dna=null）
         vo.setDna(loadQuestionAi(id));
+        // 解题模型（biz_question_model JOIN biz_solution_model，主模型在前；无命中 → 空列表）
+        vo.setModels(loadQuestionModels(id));
         return vo;
+    }
+
+    /**
+     * 查某题命中的解题模型，镜像成 {@link QuestionModelVo} 列表（主模型在前）。
+     *
+     * <p>biz_question_model / biz_solution_model 均无 tenant_id，但继承的拦截器仍可能命中，
+     * 故线程级 TenantHelper.ignore + DataPermissionHelper.ignore 兜底（与 loadQuestionAi 同款）。
+     * 无命中 → 空列表（详情页「解题模型」区不渲染，不抛）。
+     */
+    private List<QuestionModelVo> loadQuestionModels(Long questionId) {
+        if (questionId == null) {
+            return new ArrayList<>();
+        }
+        List<QuestionModelVo> models = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            bizQuestionMapper.selectQuestionModels(questionId)));
+        return models != null ? models : new ArrayList<>();
     }
 
     /**

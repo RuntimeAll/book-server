@@ -108,5 +108,12 @@ public class QuestionDetailVo extends QuestionItemVo {
      */
     private QuestionDnaVo dna;
 
+    /**
+     * 命中的解题模型列表（biz_question_model JOIN biz_solution_model，主模型在前）。
+     *
+     * <p>该题在 biz_question_model 无行 → 空列表。高级属性页「解题模型」区只读展示。
+     */
+    private List<QuestionModelVo> models;
+
     // examYear / examPaperName / labelStatus 已在基类 QuestionItemVo 声明（PRD-C-204 selectById 一并回填）。
 }
