@@ -93,6 +93,13 @@ public class PaperDetailVo implements Serializable {
     private String createBy;
 
     /**
+     * AI 命题分析（biz_paper.remark TEXT）—— 录入 agent 读透全卷后产出的教师视角定性总评（markdown）。
+     * <p>PRD-C-1000：与机器统计（前端现算的难度/题型分布）互补，这份是「这卷什么脾气/难在哪/怎么用」的判断层。
+     * nullable —— 老卷或未打标卷为空，前端无则不渲染该卡。
+     */
+    private String remark;
+
+    /**
      * 大题分组（按 biz_paper_section.sort ASC 排序；每个 section 内的 questions 按
      * biz_paper_question.sort ASC 排序 —— 跨 section 全局连续题号）
      */

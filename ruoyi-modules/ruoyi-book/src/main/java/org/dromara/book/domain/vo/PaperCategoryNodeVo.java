@@ -66,4 +66,18 @@ public class PaperCategoryNodeVo implements Serializable {
 
     /** 同层排序 */
     private Integer sort;
+
+    // ── 结构化维度（2026-07-01 字典化，前端按码 + useDictStore 渲染，不再解析 title）──
+    /** 学科 dict biz_edu_subject */
+    private Integer subject;
+    /** 学段 dict biz_edu_stage */
+    private Integer stage;
+    /** 年级 dict biz_edu_grade（中考/资料库=null） */
+    private Integer grade;
+    /** 册 dict biz_edu_volume（九年级/中考=null） */
+    private Integer volume;
+    /** 卷型 dict biz_paper_type */
+    private Integer paperType;
+    /** 节点类型 root/grade/ptype/exam/chapter/year/misc */
+    private String nodeKind;
 }

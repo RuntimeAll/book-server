@@ -76,6 +76,20 @@ public class SubjectNodeVo implements Serializable {
      */
     private Long nodeDataSum;
 
+    // ── KG 结构化维度（2026-07-01 字典化，仅 level=1 教材根有值；前端按码 + useDictStore 渲染，不再解析 title）──
+    /** 学科 dict biz_edu_subject */
+    private Integer subject;
+    /** 学段 dict biz_edu_stage */
+    private Integer stage;
+    /** 年级 dict biz_edu_grade */
+    private Integer grade;
+    /** 册 dict biz_edu_volume */
+    private Integer volume;
+    /** 版本基名 dict biz_edu_edition */
+    private Integer edition;
+    /** 版本年份 2024/2012/0 */
+    private Integer editionYear;
+
     /**
      * 子节点（嵌套树）
      */
