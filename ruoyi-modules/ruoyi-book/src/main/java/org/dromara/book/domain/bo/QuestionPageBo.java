@@ -40,7 +40,7 @@ public class QuestionPageBo implements Serializable {
     private String subjectId;
 
     /**
-     * 题型 1=选择 / 4=填空 / 5=简答（其他不存在；空表示不过滤）
+     * 题型 1=选择 / 4=填空 / 5=解答（其他不存在；空表示不过滤）
      */
     private Integer questionType;
 

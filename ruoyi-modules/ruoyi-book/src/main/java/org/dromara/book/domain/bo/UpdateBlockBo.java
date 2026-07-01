@@ -42,7 +42,7 @@ public class UpdateBlockBo implements Serializable {
 
     // ===== 可选元数据（传了才更新对应 biz_question 列 / biz_text_content 行） =====
 
-    /** 题型 1选择/4填空/5简答 → biz_question.question_type（传了才更新） */
+    /** 题型 1选择/4填空/5解答 → biz_question.question_type（传了才更新） */
     private Integer questionType;
 
     /** 难度 1-4 星 → biz_question.difficult（传了才更新） */

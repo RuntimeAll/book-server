@@ -41,7 +41,7 @@ public class CreateQuestionBo implements Serializable {
 
     // ===== 必填 =====
 
-    /** 题型：1=选择 / 4=填空 / 5=简答（misikt 真实 3 种），必填 → biz_question.question_type */
+    /** 题型：1=选择 / 4=填空 / 5=解答（misikt 真实 3 种），必填 → biz_question.question_type */
     @NotNull(message = "questionType 不能为空")
     private Integer questionType;
 

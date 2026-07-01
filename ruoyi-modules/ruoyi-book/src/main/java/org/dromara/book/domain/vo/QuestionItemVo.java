@@ -34,7 +34,7 @@ public class QuestionItemVo implements Serializable {
     private Long id;
 
     /**
-     * 题型 1=选择 / 4=填空 / 5=简答
+     * 题型 1=选择 / 4=填空 / 5=解答
      */
     private Integer questionType;
 

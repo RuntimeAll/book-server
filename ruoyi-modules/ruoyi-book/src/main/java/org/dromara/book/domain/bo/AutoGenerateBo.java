@@ -81,7 +81,7 @@ public class AutoGenerateBo implements Serializable {
         private String subjectName;
 
         /**
-         * 题型 1=选择 / 4=填空 / 5=简答。
+         * 题型 1=选择 / 4=填空 / 5=解答。
          */
         private Integer questionType;
 

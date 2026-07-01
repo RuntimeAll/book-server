@@ -9,7 +9,7 @@ import java.util.List;
 /**
  * POST /teacher/exam/paper/detail 响应内 sections 数组元素 VO（E 卡段②）。
  *
- * <p>大题分组：一个 paper 含多个 section（如"选择题/填空题/简答题"），每个 section
+ * <p>大题分组：一个 paper 含多个 section（如"选择题/填空题/解答题"），每个 section
  * 内含若干 question。
  *
  * <p>字段映射：
@@ -34,7 +34,7 @@ public class PaperSectionVo implements Serializable {
     private Long sectionId;
 
     /**
-     * 大题标题（"选择题" / "填空题" / "简答题"）
+     * 大题标题（"选择题" / "填空题" / "解答题"）
      */
     private String title;
 

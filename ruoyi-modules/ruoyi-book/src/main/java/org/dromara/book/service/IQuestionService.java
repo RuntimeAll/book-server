@@ -82,7 +82,7 @@ public interface IQuestionService {
      * 组卷草稿（POST /teacher/question/genExamData/）。
      *
      * <p>取当前用户试题筐内全部已发布题（status='1'），按 questionType 分组生成 sections —
-     * 1=选择/4=填空/5=简答，按 misikt 真实行为固定顺序 1→4→5；不出现的题型不返。
+     * 1=选择/4=填空/5=解答，按 misikt 真实行为固定顺序 1→4→5；不出现的题型不返。
      *
      * <p>草稿不落库，跟 misikt 一致（FE 工作台本地 state 操作）。
      *

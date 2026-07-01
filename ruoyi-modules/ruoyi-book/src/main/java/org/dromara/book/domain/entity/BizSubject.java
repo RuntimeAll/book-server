@@ -61,6 +61,25 @@ public class BizSubject implements Serializable {
      */
     private String mineVisible;
 
+    // ── KG 结构化维度（2026-07-01 枚举字典化，仅 level=1 教材根有值；解析 name 回填）──
+    /** 学科 dict biz_edu_subject（1数学 2科学） */
+    private Integer subject;
+
+    /** 学段 dict biz_edu_stage（1小学 2初中 3高中） */
+    private Integer stage;
+
+    /** 年级 dict biz_edu_grade（1一年级…9九年级 10高一…） */
+    private Integer grade;
+
+    /** 册 dict biz_edu_volume（1上册 2下册） */
+    private Integer volume;
+
+    /** 版本基名 dict biz_edu_edition（1浙教 2人教，不含年份） */
+    private Integer edition;
+
+    /** 版本年份（2024/2012/0） */
+    private Integer editionYear;
+
     private String createBy;
 
     @TableField(fill = FieldFill.INSERT)

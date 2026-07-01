@@ -5,8 +5,10 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Constants;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.vo.QuestionItemVo;
+import org.dromara.book.domain.vo.QuestionModelVo;
 
 import java.util.Collection;
 import java.util.List;
@@ -71,4 +73,23 @@ public interface BizQuestionMapper extends BizBaseMapper<BizQuestion> {
      * @return 详情 VO 列表（顺序不保证，由 Service LinkedHashMap by id 重排）
      */
     List<org.dromara.book.domain.vo.QuestionDetailVo> selectQuestionDetailByIds(@Param("ids") Collection<Long> ids);
+
+    /**
+     * 查某题命中的解题模型（biz_question_model JOIN biz_solution_model，主模型在前）。
+     *
+     * <p>详情页「解题模型」只读区用。两表均无 tenant_id，Service 侧 TenantHelper.ignore 兜底。
+     *
+     * @param questionId 题目 ID
+     * @return 模型 VO 列表（无命中 → 空列表）
+     */
+    @Select("""
+        SELECT qm.model_id AS modelId, sm.name AS name, sm.category AS category,
+               sm.difficulty_tier AS difficultyTier, sm.freq_band AS freqBand, sm.is_gold AS isGold,
+               qm.is_primary AS isPrimary, qm.role AS role, qm.source AS source
+        FROM biz_question_model qm
+        JOIN biz_solution_model sm ON sm.id = qm.model_id
+        WHERE qm.question_id = #{questionId}
+        ORDER BY qm.is_primary DESC, qm.id ASC
+        """)
+    List<QuestionModelVo> selectQuestionModels(@Param("questionId") Long questionId);
 }

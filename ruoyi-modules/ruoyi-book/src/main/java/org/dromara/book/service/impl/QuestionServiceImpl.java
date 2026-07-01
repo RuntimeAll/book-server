@@ -13,6 +13,7 @@ import org.dromara.book.domain.bo.UpdateAttrsBo;
 import org.dromara.book.domain.bo.UpdateBlockBo;
 import org.dromara.book.domain.bo.UpdateLabelBo;
 import org.dromara.book.domain.bo.UpdateQuestionBo;
+import org.dromara.book.domain.enums.BizQuestionType;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizQuestionAi;
 import org.dromara.book.domain.entity.BizQuestionBlock;
@@ -31,6 +32,7 @@ import org.dromara.book.domain.vo.LineageNodeVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.domain.vo.QuestionDnaVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
+import org.dromara.book.domain.vo.QuestionModelVo;
 import org.dromara.book.domain.vo.QuestionKnowledgeVo;
 import org.dromara.book.domain.vo.QuestionLineageVo;
 import org.dromara.book.mapper.BizFreeTagWriteMapper;
@@ -225,7 +227,25 @@ public class QuestionServiceImpl implements IQuestionService {
         }
         // PRD-C-204：全维 DNA 嵌套对象（biz_question_ai 最新版一行 → QuestionDnaVo；无行 dna=null）
         vo.setDna(loadQuestionAi(id));
+        // 解题模型（biz_question_model JOIN biz_solution_model，主模型在前；无命中 → 空列表）
+        vo.setModels(loadQuestionModels(id));
         return vo;
+    }
+
+    /**
+     * 查某题命中的解题模型，镜像成 {@link QuestionModelVo} 列表（主模型在前）。
+     *
+     * <p>biz_question_model / biz_solution_model 均无 tenant_id，但继承的拦截器仍可能命中，
+     * 故线程级 TenantHelper.ignore + DataPermissionHelper.ignore 兜底（与 loadQuestionAi 同款）。
+     * 无命中 → 空列表（详情页「解题模型」区不渲染，不抛）。
+     */
+    private List<QuestionModelVo> loadQuestionModels(Long questionId) {
+        if (questionId == null) {
+            return new ArrayList<>();
+        }
+        List<QuestionModelVo> models = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            bizQuestionMapper.selectQuestionModels(questionId)));
+        return models != null ? models : new ArrayList<>();
     }
 
     /**
@@ -453,7 +473,7 @@ public class QuestionServiceImpl implements IQuestionService {
     }
 
     /**
-     * 组卷草稿 — section 顺序固定 1=选择 → 4=填空 → 5=简答（misikt 真实行为）。
+     * 组卷草稿 — section 顺序固定 1=选择 → 4=填空 → 5=解答（misikt 真实行为）。
      *
      * <p>实现策略：复用 {@link IQuestionBasketService#queryBasket}（已带 status='1' 过滤
      * + add_time 倒序 + questionKnowledges 回填），按 questionType 分组装 sections。
@@ -482,11 +502,12 @@ public class QuestionServiceImpl implements IQuestionService {
 
         // 按 misikt 真实题型顺序 1 → 4 → 5 → 6 生成 sections；不存在的题型跳过
         // PRD-C-204 B1：追加 type=6=作图（否则作图题进筐被静默丢弃），不改 1/4/5 原行为
+        // 题型名取自 BizQuestionType（SSOT=字典 biz_question_type），不再硬编码「简答题」等魔法值
         List<ExamSectionVo> sections = new ArrayList<>(4);
-        addSectionIfPresent(sections, byType, 1, "一、选择题");
-        addSectionIfPresent(sections, byType, 4, "二、填空题");
-        addSectionIfPresent(sections, byType, 5, "三、简答题");
-        addSectionIfPresent(sections, byType, 6, "四、作图题");
+        addSectionIfPresent(sections, byType, 1, "一、" + BizQuestionType.labelOf(1));
+        addSectionIfPresent(sections, byType, 4, "二、" + BizQuestionType.labelOf(4));
+        addSectionIfPresent(sections, byType, 5, "三、" + BizQuestionType.labelOf(5));
+        addSectionIfPresent(sections, byType, 6, "四、" + BizQuestionType.labelOf(6));
 
         vo.setSections(sections);
         return vo;

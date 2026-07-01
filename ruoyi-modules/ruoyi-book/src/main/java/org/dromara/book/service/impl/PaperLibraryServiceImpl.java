@@ -146,6 +146,13 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         vo.setLevel(null);                 // misikt 真响应恒 null
         vo.setSort(e.getSort());
         vo.setNodeDataSum(null);           // misikt 真响应恒 null
+        // 结构化维度（字典码，语义下沉每节点；前端按码筛选不再解析 title）
+        vo.setSubject(e.getSubject());
+        vo.setStage(e.getStage());
+        vo.setGrade(e.getGrade());
+        vo.setVolume(e.getVolume());
+        vo.setPaperType(e.getPaperType());
+        vo.setNodeKind(e.getNodeKind());
         // children / hasChildren 留 markHasChildren 阶段处理
         return vo;
     }

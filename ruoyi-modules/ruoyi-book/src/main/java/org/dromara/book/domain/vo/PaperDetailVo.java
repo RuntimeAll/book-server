@@ -30,7 +30,7 @@ import java.util.List;
  *   "sections": [
  *     {"sectionId": 3678, "title": "选择题", "sort": 1, "questions": [...]},
  *     {"sectionId": 3679, "title": "填空题", "sort": 3, "questions": [...]},
- *     {"sectionId": 3680, "title": "简答题", "sort": 4, "questions": [...]}
+ *     {"sectionId": 3680, "title": "解答题", "sort": 4, "questions": [...]}
  *   ]
  * }
  * </pre>
@@ -91,6 +91,13 @@ public class PaperDetailVo implements Serializable {
      * 否则即公共卷（detail 越权 SQL 已保证只返本人或公共卷）→ 编辑/删除按钮锁死。
      */
     private String createBy;
+
+    /**
+     * AI 命题分析（biz_paper.remark TEXT）—— 录入 agent 读透全卷后产出的教师视角定性总评（markdown）。
+     * <p>PRD-C-1000：与机器统计（前端现算的难度/题型分布）互补，这份是「这卷什么脾气/难在哪/怎么用」的判断层。
+     * nullable —— 老卷或未打标卷为空，前端无则不渲染该卡。
+     */
+    private String remark;
 
     /**
      * 大题分组（按 biz_paper_section.sort ASC 排序；每个 section 内的 questions 按

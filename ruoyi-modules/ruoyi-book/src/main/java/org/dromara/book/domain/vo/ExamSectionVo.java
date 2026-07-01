@@ -24,12 +24,12 @@ public class ExamSectionVo implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 中文 section 标题，如 "一、选择题" / "二、填空题" / "三、简答题"。
+     * 中文 section 标题，如 "一、选择题" / "二、填空题" / "三、解答题"。
      */
     private String title;
 
     /**
-     * 题型代码 — 1=选择 / 4=填空 / 5=简答（misikt 真实只 3 种）。
+     * 题型代码 — 1=选择 / 4=填空 / 5=解答（misikt 真实只 3 种）。
      */
     private Integer questionType;
 

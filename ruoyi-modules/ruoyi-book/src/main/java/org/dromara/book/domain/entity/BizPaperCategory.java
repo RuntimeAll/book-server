@@ -38,4 +38,23 @@ public class BizPaperCategory implements Serializable {
 
     /** 同层排序（asc） */
     private Integer sort;
+
+    // ── 结构化维度（2026-07-01 枚举字典化，语义下沉每节点；解析 name 回填）──
+    /** 学科 dict biz_edu_subject */
+    private Integer subject;
+
+    /** 学段 dict biz_edu_stage */
+    private Integer stage;
+
+    /** 年级 dict biz_edu_grade（中考/资料库=null） */
+    private Integer grade;
+
+    /** 册 dict biz_edu_volume（九年级/中考=null） */
+    private Integer volume;
+
+    /** 卷型 dict biz_paper_type（1单元 2月考 3期中 4期末） */
+    private Integer paperType;
+
+    /** 节点类型 root/grade/ptype/exam/chapter/year/misc */
+    private String nodeKind;
 }

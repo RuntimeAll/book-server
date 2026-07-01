@@ -137,6 +137,7 @@
         <result property="examYear" column="exam_year"/>
         <result property="paperType" column="paper_type"/>
         <result property="createBy" column="create_by"/>
+        <result property="remark" column="remark"/>
     </resultMap>
 
     <!-- 试卷大题分组 ResultMap（PaperSectionVo） -->
@@ -210,7 +211,8 @@
             p.question_count AS question_count,
             p.exam_year     AS exam_year,
             p.paper_type    AS paper_type,
-            p.create_by     AS create_by
+            p.create_by     AS create_by,
+            p.remark        AS remark
         FROM biz_paper p
         WHERE p.id = #{paperId}
           AND p.status = '1'

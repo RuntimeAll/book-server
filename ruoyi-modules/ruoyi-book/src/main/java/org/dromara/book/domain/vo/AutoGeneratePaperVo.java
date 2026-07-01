@@ -87,7 +87,7 @@ public class AutoGeneratePaperVo implements Serializable {
         private Integer totalCount;
 
         /**
-         * 按题型分组的 sections（顺序 1=选择 → 4=填空 → 5=简答），复用 {@link ExamSectionVo}。
+         * 按题型分组的 sections（顺序 1=选择 → 4=填空 → 5=解答），复用 {@link ExamSectionVo}。
          */
         private List<ExamSectionVo> sections;
     }

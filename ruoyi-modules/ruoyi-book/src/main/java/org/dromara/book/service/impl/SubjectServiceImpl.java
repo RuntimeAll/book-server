@@ -122,6 +122,13 @@ public class SubjectServiceImpl implements ISubjectService {
         vo.setKey(e.getId());
         vo.setValue(e.getId());
         vo.setNodeDataSum(null);            // misikt 抓包恒 null
+        // KG 结构化维度（字典码，仅 level=1 教材根有值）
+        vo.setSubject(e.getSubject());
+        vo.setStage(e.getStage());
+        vo.setGrade(e.getGrade());
+        vo.setVolume(e.getVolume());
+        vo.setEdition(e.getEdition());
+        vo.setEditionYear(e.getEditionYear());
         return vo;
     }
 
