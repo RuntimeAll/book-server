@@ -4,12 +4,11 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.vo.CourseKgVo;
 import org.dromara.book.mapper.CourseKgMapper;
 import org.dromara.book.service.ICourseKgService;
+import org.dromara.common.core.utils.StringUtils;
+import org.dromara.common.json.utils.JsonUtils;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 课时知识梳理讲义 Service 实现（只读）。
@@ -25,9 +24,6 @@ public class CourseKgServiceImpl implements ICourseKgService {
 
     /** 教辅书 id（本课时演示卷） */
     private static final String BOOK_ID = "CC7S";
-
-    /** 从思维导图 content 里抠第一个 <img src="..."> */
-    private static final Pattern IMG_SRC = Pattern.compile("<img[^>]*\\bsrc\\s*=\\s*[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE);
 
     private final CourseKgMapper courseKgMapper;
 
@@ -45,13 +41,20 @@ public class CourseKgServiceImpl implements ICourseKgService {
         course.setName(str(courseRow.get("name")));
         vo.setCourse(course);
 
-        // 思维导图 URL —— 从课时节点 content_type=思维导图 的 content 抠 img src
-        vo.setMindmapUrl(extractImgSrc(courseKgMapper.selectMindmapContent(courseId)));
+        // 思维导图节点树（biz_mindmap_node）—— 前端按 parentKey 建树·秒出
+        for (Map<String, Object> n : courseKgMapper.selectMindmap(courseId)) {
+            CourseKgVo.MindmapNode node = new CourseKgVo.MindmapNode();
+            node.setNodeKey(str(n.get("nodeKey")));
+            node.setParentKey(str(n.get("parentKey")));
+            node.setText(str(n.get("text")));
+            node.setDetail(str(n.get("detail")));
+            node.setHasMark(intOf(n.get("hasMark")));
+            node.setColor(str(n.get("color")));
+            node.setSort(intOf(n.get("sort")));
+            vo.getMindmap().add(node);
+        }
 
-        // 内嵌例题（知识精讲）先查出来，按主知识点归到对应 kp
-        List<Map<String, Object>> examples = courseKgMapper.selectQuestionsByColumn(BOOK_ID, courseId, "知识精讲");
-
-        // 考点（level5） → 知识点（level6）
+        // 考点（level5） → 知识点（level6） → 结构化积木块（biz_kg_block）
         for (Map<String, Object> kdRow : courseKgMapper.selectKaodians(courseId)) {
             CourseKgVo.Kaodian kd = new CourseKgVo.Kaodian();
             kd.setId(str(kdRow.get("id")));
@@ -63,23 +66,17 @@ public class CourseKgServiceImpl implements ICourseKgService {
                 kp.setId(kpId);
                 kp.setName(str(kpRow.get("name")));
 
-                // blocks
+                // blocks —— payload 存 JSON 字符串, 这里解析成对象透传给前端
                 for (Map<String, Object> b : courseKgMapper.selectBlocks(kpId)) {
                     CourseKgVo.Block block = new CourseKgVo.Block();
+                    block.setSeq(intOf(b.get("seq")));
                     block.setType(str(b.get("type")));
-                    block.setContent(str(b.get("content")));
+                    block.setPayload(parsePayload(str(b.get("payload"))));
                     kp.getBlocks().add(block);
                 }
 
                 // keyConcepts
                 kp.setKeyConcepts(courseKgMapper.selectKeyConcepts(kpId));
-
-                // examples —— 主知识点 = 本 kp 的例题
-                for (Map<String, Object> ex : examples) {
-                    if (kpId.equals(str(ex.get("primaryKnowledgeId")))) {
-                        kp.getExamples().add(toExercise(ex));
-                    }
-                }
 
                 kd.getKps().add(kp);
             }
@@ -109,12 +106,17 @@ public class CourseKgServiceImpl implements ICourseKgService {
         return e;
     }
 
-    private static String extractImgSrc(String html) {
-        if (html == null) {
+    /** payload JSON 字符串解析成对象（Map/List）透传前端；空/非法则原样字符串兜底。 */
+    private static Object parsePayload(String payload) {
+        if (StringUtils.isBlank(payload)) {
             return null;
         }
-        Matcher m = IMG_SRC.matcher(html);
-        return m.find() ? m.group(1) : null;
+        Object parsed = JsonUtils.parseObject(payload, Object.class);
+        return parsed != null ? parsed : payload;
+    }
+
+    private static Integer intOf(Object o) {
+        return o instanceof Number ? ((Number) o).intValue() : null;
     }
 
     private static String str(Object o) {

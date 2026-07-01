@@ -24,10 +24,11 @@ public interface CourseKgMapper {
     @Select("SELECT id, name FROM biz_subject WHERE id = #{courseId} AND level = 4")
     Map<String, Object> selectCourse(@Param("courseId") String courseId);
 
-    /** 课时节点上 content_type=思维导图 的原始 content（含 <img src>）；取 sort 最小一条。 */
-    @Select("SELECT content FROM biz_subject_content WHERE subject_id = #{courseId} " +
-        "AND content_type = '思维导图' ORDER BY sort LIMIT 1")
-    String selectMindmapContent(@Param("courseId") String courseId);
+    /** 课时思维导图节点树（biz_mindmap_node，前端按 parentKey 建树）。 */
+    @Select("SELECT node_key AS nodeKey, parent_key AS parentKey, text, detail, " +
+        "       has_mark AS hasMark, color, sort " +
+        "FROM biz_mindmap_node WHERE course_id = #{courseId} ORDER BY sort, id")
+    List<Map<String, Object>> selectMindmap(@Param("courseId") String courseId);
 
     /** 考点（level5，直接子节点），按 sort。 */
     @Select("SELECT id, name FROM biz_subject WHERE parent_id = #{courseId} AND level = 5 ORDER BY sort")
@@ -37,9 +38,9 @@ public interface CourseKgMapper {
     @Select("SELECT id, name FROM biz_subject WHERE parent_id = #{kaodianId} AND level = 6 ORDER BY sort")
     List<Map<String, Object>> selectKps(@Param("kaodianId") String kaodianId);
 
-    /** 某知识点正文块（讲解/名师解读/表格），按 sort。 */
-    @Select("SELECT content_type AS type, content FROM biz_subject_content " +
-        "WHERE subject_id = #{kpId} AND content_type IN ('讲解','名师解读','表格') ORDER BY sort")
+    /** 某知识点结构化积木块（biz_kg_block：para/note/callout/image/table/example），按 seq。 */
+    @Select("SELECT seq, type, payload FROM biz_kg_block " +
+        "WHERE subject_id = #{kpId} ORDER BY seq")
     List<Map<String, Object>> selectBlocks(@Param("kpId") String kpId);
 
     /** 某知识点标红记忆点关键字，按 sort。 */

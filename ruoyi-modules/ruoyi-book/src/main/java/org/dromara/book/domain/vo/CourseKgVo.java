@@ -6,16 +6,20 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 课时知识梳理讲义 VO（只读）—— 供前端 1:1 还原教辅讲义页。
+ * 课时知识梳理讲义 VO（只读）—— 供前端画板/讲义页按结构化积木还原。
  *
  * <p>接口 GET /teacher/kg/course/{courseId}，命中 MisiktEnvelopeAdvice 包成
  * {code:1, message, response:CourseKgVo}。
  *
- * <p>树形：course(level4) → kaodians(level5) → kps(level6)；kp 挂 blocks/keyConcepts/examples；
- * exercises(习题精练) / boost(巩固提升) 平铺。qid 一律 String（biz_question.id 是 BIGINT，
- * 超出 JS 安全整数会丢精度，必须字符串传）。
+ * <p>🔴 v2 结构化数据模型（2026-07-01 重构）：内容不再是「一坨 HTML」，而是
+ * biz_kg_block「一块一行」的结构化积木（para/note/callout/image/table/example），
+ * 思维导图来自 biz_mindmap_node 节点树（前端建树·秒出），不再截图。
  *
- * @author backend-dev
+ * <p>树形：course(level4) → kaodians(level5) → kps(level6)；kp 挂 blocks/keyConcepts；
+ * exercises(习题精练) / boost(巩固提升) 仍平铺（来自 biz_book_question）。qid 一律 String
+ * （biz_question.id 是 BIGINT，超出 JS 安全整数会丢精度，必须字符串传）。
+ *
+ * @author codeplace-C
  */
 @Data
 public class CourseKgVo {
@@ -23,8 +27,8 @@ public class CourseKgVo {
     /** 课时节点 {id, name} */
     private Course course;
 
-    /** 课时节点上 content_type=思维导图 那条里的 <img src>；无则 null */
-    private String mindmapUrl;
+    /** 思维导图节点树（扁平列表，前端按 parentKey 建树·秒出）；来自 biz_mindmap_node */
+    private List<MindmapNode> mindmap = new ArrayList<>();
 
     /** 考点（level5）列表 */
     private List<Kaodian> kaodians = new ArrayList<>();
@@ -41,6 +45,25 @@ public class CourseKgVo {
         private String name;
     }
 
+    /** 思维导图节点（biz_mindmap_node 一行一节点） */
+    @Data
+    public static class MindmapNode {
+        /** 节点键，如 n1 */
+        private String nodeKey;
+        /** 父节点键；根节点为 null */
+        private String parentKey;
+        /** 节点文字 */
+        private String text;
+        /** 展开细节（可空） */
+        private String detail;
+        /** detail 是否含记忆点标红 */
+        private Integer hasMark;
+        /** 节点色（可空，一级分支上色） */
+        private String color;
+        /** 同层排序 */
+        private Integer sort;
+    }
+
     /** 考点（level5） */
     @Data
     public static class Kaodian {
@@ -54,24 +77,24 @@ public class CourseKgVo {
     public static class Kp {
         private String id;
         private String name;
-        /** 知识点正文块（讲解/名师解读/表格，按 sort） */
+        /** 知识点结构化积木块（para/note/callout/image/table/example，按 seq） */
         private List<Block> blocks = new ArrayList<>();
         /** 标红记忆点关键字（按 sort） */
         private List<String> keyConcepts = new ArrayList<>();
-        /** 内嵌例题（知识精讲，按 in_block_seq），归到本知识点 */
-        private List<Exercise> examples = new ArrayList<>();
     }
 
-    /** 知识点正文块 */
+    /** 知识点结构化积木块（biz_kg_block 一块一行） */
     @Data
     public static class Block {
-        /** 讲解 | 名师解读 | 表格 */
+        /** 显示顺序 */
+        private Integer seq;
+        /** 块类型：para | note | callout | image | table | example */
         private String type;
-        /** 富文本 HTML */
-        private String content;
+        /** 块负载（已解析成对象/数组，随 type 而异；结构见前端 renderer 约定） */
+        private Object payload;
     }
 
-    /** 题目（例题 / 习题 / 巩固） */
+    /** 题目（习题精练 / 巩固提升，来自 biz_book_question） */
     @Data
     public static class Exercise {
         /** biz_question.id（String 防精度丢失） */
