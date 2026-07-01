@@ -150,6 +150,8 @@ security:
     #    业务链路已确认不依赖登录用户(无 LoginHelper/getUserId),免登录安全。
     - /teacher/question/lazyTree
     - /teacher/paper/auto-generate
+    # 🔴 课时知识梳理讲义 只读接口(演示用,无登录用户依赖,纯读) —— 前端 1:1 还原讲义页调用。
+    - /teacher/kg/course/**
 
 # 业务自定义配置
 book:
