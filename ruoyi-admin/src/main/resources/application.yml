@@ -159,6 +159,23 @@ security:
     - /teacher/kg/questions
     - /teacher/kg/lecture
     - /teacher/kg/lecture-catalog
+    # 🔴 PRD-C-212 D5 未登录漫游(2026-07-04) —— 只放"只读端点"(含 misikt 风格的 POST 读),
+    #    以 book-ui src/api/question|paper 实际调用逐条核对; 写接口/个人化接口(收藏/篮子/笔记/
+    #    q-folder)一个不放,游客态由 FE 拦截器 401 静默降级。
+    #    题库:列表树(lazyTree 已在上方)/分页/详情/相似题/血缘/知识点标签/题目关联卷
+    - /teacher/question/page
+    - /teacher/question/select/**
+    - /teacher/question/similar/**
+    - /teacher/question/*/lineage
+    - /teacher/question/tagsByKp
+    - /teacher/qd/papers/**
+    #    卷库:列表树/分页/卷详情(原卷结构页)/原卷预览
+    - /teacher/exam/paper/lazyTree
+    - /teacher/exam/paper/page
+    - /teacher/exam/paper/detail
+    - /teacher/paper/source/**
+    #    字典(题型/难度/学科/学段等 label 渲染,RuoYi 原生只读查询)
+    - /system/dict/data/type/**
 
 # 业务自定义配置
 book:

@@ -196,11 +196,9 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             ? DEFAULT_PAGE_SIZE : bo.getPageSize();
 
         // 数据隔离：取当前登录用户 userId（create_by 存数字字符串）
+        // PRD-C-212 D5（2026-07-04）：公共卷库(scope!=mine)放开游客只读浏览（security.excludes
+        // 已放行 page/lazyTree/detail 只读端点）；「我的卷库」仍必须登录——登录闸只收窄到 mine 分支。
         Long currentUserId = LoginHelper.getUserId();
-        if (currentUserId == null) {
-            throw new ServiceException("未登录用户不能访问卷库");
-        }
-        String currentUserIdStr = String.valueOf(currentUserId);
 
         QueryWrapper<PaperListItemVo> wrapper = new QueryWrapper<>();
         wrapper.eq("p.status", "1");
@@ -209,8 +207,11 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         // 🔴 PRD-B-013: 共享标记列已 DROP；公共卷库语义 = 按 paper_category 分类树（subject_id 前缀）。
         // （2026-06-02 修：历史「共享开关」字段已在 PRD-B-013 V15 DROP 清掉，绝不依赖。）
         if ("mine".equals(bo.getScope())) {
+            if (currentUserId == null) {
+                throw new ServiceException("未登录用户不能访问我的卷库");
+            }
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
-            wrapper.eq("p.create_by", currentUserIdStr);
+            wrapper.eq("p.create_by", String.valueOf(currentUserId));
         }
         // else 公共卷库：不加 create_by 归属过滤，靠下方 subject_id 分类前缀筛
 
