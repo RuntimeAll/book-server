@@ -1268,3 +1268,20 @@ INSERT INTO sys_dict_data(dict_code,tenant_id,dict_sort,dict_label,dict_value,di
 INSERT INTO sys_dict_data(dict_code,tenant_id,dict_sort,dict_label,dict_value,dict_type,remark) VALUES('183','000000','7','计算题','7','biz_question_type',NULL);
 INSERT INTO sys_dict_data(dict_code,tenant_id,dict_sort,dict_label,dict_value,dict_type,remark) VALUES('184','000000','8','证明题','8','biz_question_type',NULL);
 INSERT INTO sys_dict_data(dict_code,tenant_id,dict_sort,dict_label,dict_value,dict_type,remark) VALUES('246','000000','9','实验探究题','9','biz_question_type','2026-07-02 定版A3:科学真卷分区实证新增');
+
+-- ============================================================
+-- PRD-C-211 系统管理中心（2026-07-03）：org_admin 权限种子
+-- 上线全量建库时必须带上；dev 库已 apply（探针期种入并复测通过）。
+-- 语义正本 = only-one/权限与内容归属模型-定版.md §2/§4 + PRD-C-211 D2 拍板：
+--   org_admin 可见 用户管理（全 CRUD+重置密码）+ 部门管理（只读），数据限本部门；
+--   建部门/角色/字典等系统级仅 superadmin（uid=1 内建放行，无需种）。
+-- ============================================================
+-- role 7 = org_admin（角色本体已于 2026-07-03 P2 期种入）
+-- data_scope='3'（本部门）—— 对齐权限模型"同部门精确匹配"；
+--   ⚠️ 勿配 '1'(全部) 的其他角色给 org_admin 账号：多角色数据范围取并集会顶掉本部门限制
+--   （踩坑实录：teacher001 曾挂遗留 data_admin(scope=1) 致数据范围失效）。
+UPDATE sys_role SET data_scope='3' WHERE role_id=7;
+-- 用户管理：目录1 + 列表100 + 查询/新增/修改/删除/重置密码按钮
+INSERT INTO sys_role_menu(role_id, menu_id) VALUES (7,1),(7,100),(7,1001),(7,1002),(7,1003),(7,1004),(7,1007);
+-- 部门管理：列表103 + 查询1017（只读；建部门=超管的机构管理权）
+INSERT INTO sys_role_menu(role_id, menu_id) VALUES (7,103),(7,1017);
