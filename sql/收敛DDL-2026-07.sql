@@ -1285,3 +1285,15 @@ UPDATE sys_role SET data_scope='3' WHERE role_id=7;
 INSERT INTO sys_role_menu(role_id, menu_id) VALUES (7,1),(7,100),(7,1001),(7,1002),(7,1003),(7,1004),(7,1007);
 -- 部门管理：列表103 + 查询1017（只读；建部门=超管的机构管理权）
 INSERT INTO sys_role_menu(role_id, menu_id) VALUES (7,103),(7,1017);
+
+-- ------------------------------------------------------------
+-- PRD-C-211 追加（2026-07-03）：角色收口全量种子（上线新库必带；dev 已同态）
+-- 正本 = only-one/权限与内容归属模型-定版.md §2/§6.1
+-- ------------------------------------------------------------
+INSERT INTO sys_role (role_id, tenant_id, role_name, role_key, role_sort, data_scope, menu_check_strictly, dept_check_strictly, status, del_flag, create_time, remark) VALUES
+(5,'000000','教师','teacher',5,'5',1,1,'0','0',NOW(),'机构成员老师:业务功能,无管理中心;数据仅本人'),
+(6,'000000','数据管理员','data_admin',6,'1',1,1,'0','0',NOW(),'🔴机器账号专用(灌库/打标agent):全数据范围;人类账号禁挂——多角色data_scope取并集会顶掉org_admin本机构限制'),
+(7,'000000','机构管理员','org_admin',7,'3',1,1,'0','0',NOW(),'机构负责人:管理中心见用户(本机构CRUD)+机构(只读);通常兼课=同时挂teacher;官方内容不可改')
+ON DUPLICATE KEY UPDATE remark=VALUES(remark), data_scope=VALUES(data_scope);
+-- RuoYi 演示角色停用（若新库沿用 RuoYi init 自带 role 3/4）
+UPDATE sys_role SET status='1', remark='RuoYi演示遗留,已停用勿挂(2026-07-03 角色收口)' WHERE role_id IN (3,4);
