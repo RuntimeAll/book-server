@@ -346,7 +346,7 @@ CREATE TABLE `biz_kg_lecture_frag` (
   `subject_id` varchar(20) NOT NULL COMMENT '挂载KG节点id(biz_subject.id);任意层:课时L4/知识点L5(原子)/节L3/章L2/册L1',
   `kg_level` tinyint NOT NULL COMMENT '节点层级=LENGTH(subject_id)/3:1册2章3节4课时5知识点(冗余,按层批量取)',
   `book_id` varchar(32) NOT NULL COMMENT '教辅套id(biz_book.id);崔崔=CC7S',
-  `owner_id` bigint NOT NULL DEFAULT '0' COMMENT '归属;0=官方,否则=个人用户id;个人片段按节点覆盖官方',
+  `owner_id` bigint NOT NULL DEFAULT '0' COMMENT '创建者user_id(权限模型v2=only-one/权限与内容归属模型-定版.md:官方=超管uid1;写=owner本人∥org_admin同部门∥superadmin;可见=官方+本部门互见+我;草稿仅本人)',
   `title` varchar(200) DEFAULT NULL COMMENT '片段标题,默认取节点名',
   `content_json` longtext COMMENT '本节点自身讲义片段(Tiptap JSON:讲解/例题kgExample(qid)/表/图/思维导图);空=纯汇聚节点',
   `stem_text` mediumtext COMMENT '片段纯文本镜像(全文检索/agent召回)',
