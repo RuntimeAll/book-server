@@ -1297,3 +1297,197 @@ INSERT INTO sys_role (role_id, tenant_id, role_name, role_key, role_sort, data_s
 ON DUPLICATE KEY UPDATE remark=VALUES(remark), data_scope=VALUES(data_scope);
 -- RuoYi 演示角色停用（若新库沿用 RuoYi init 自带 role 3/4）
 UPDATE sys_role SET status='1', remark='RuoYi演示遗留,已停用勿挂(2026-07-03 角色收口)' WHERE role_id IN (3,4);
+
+-- ============================================================
+-- PRD-C-213 教学安排与备课闭环（2026-07-05）：教学安排域 8 新表 + biz_question 3 新列
+-- 契约正本 = workplace/.prd_ccw/PRD-C/PRD-C-213/artifacts/契约/批0-契约冻结.md §二
+-- 落位：C 线 book-server（:8090，库 ai_lesson_prep），包 org.dromara.book，挂 /teacher/schedule/**。
+-- RuoYi 基类列 = create_dept/create_by(Long userId)/create_time/update_by/update_time/remark（BaseEntity 自动填充）。
+-- create_by = 归属老师（sys_user.id）。JSON 列在实体存 String，Service 侧 Jackson 解析。
+-- 🔴 无冗余聚合列：total_lessons / 学员数 / 已排已上请假数 / 进度 全走实时聚合查询。
+-- ============================================================
+
+-- ----- 1. biz_student（排课对象·学生档案 + 学生肖像 profile_json）-----
+DROP TABLE IF EXISTS `biz_student`;
+CREATE TABLE `biz_student` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `name` varchar(50) NOT NULL COMMENT '学生姓名',
+  `grade` varchar(30) DEFAULT NULL COMMENT '年级(如 四年级)',
+  `subject` varchar(30) DEFAULT NULL COMMENT '学科(如 思维数学)',
+  `textbook` varchar(100) DEFAULT NULL COMMENT '教材/进度环境说明',
+  `parent_phone` varchar(20) DEFAULT NULL COMMENT '家长电话',
+  `color` varchar(20) DEFAULT NULL COMMENT '日历着色(空则服务端色板轮转分配)',
+  `profile_json` json DEFAULT NULL COMMENT '学生肖像:{traits[],level{desc,target_layer},env,history[],error_signals[]}',
+  `archived` char(1) NOT NULL DEFAULT '0' COMMENT '归档:0在册/1归档(归档≠删,不进排课选择器)',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '归属老师(sys_user.id)',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  KEY `idx_owner` (`create_by`),
+  KEY `idx_archived` (`archived`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='排课对象·学生档案(含学生肖像)';
+
+-- ----- 2. biz_class（排课对象·班课档案 + 班级肖像同构）-----
+DROP TABLE IF EXISTS `biz_class`;
+CREATE TABLE `biz_class` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `name` varchar(50) NOT NULL COMMENT '班课名称',
+  `grade` varchar(30) DEFAULT NULL COMMENT '年级',
+  `subject` varchar(30) DEFAULT NULL COMMENT '学科',
+  `color` varchar(20) DEFAULT NULL COMMENT '日历着色(空则色板轮转)',
+  `profile_json` json DEFAULT NULL COMMENT '班级肖像(与学生肖像同构)',
+  `archived` char(1) NOT NULL DEFAULT '0' COMMENT '归档:0在册/1归档',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '归属老师(sys_user.id)',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  KEY `idx_owner` (`create_by`),
+  KEY `idx_archived` (`archived`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='排课对象·班课档案(含班级肖像)';
+
+-- ----- 3. biz_class_student（班课学员关系;学员数实时聚合不落列）-----
+DROP TABLE IF EXISTS `biz_class_student`;
+CREATE TABLE `biz_class_student` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `class_id` bigint NOT NULL COMMENT '班课id(biz_class.id)',
+  `student_id` bigint NOT NULL COMMENT '学生id(biz_student.id)',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '创建者',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_class_student` (`class_id`,`student_id`),
+  KEY `idx_student` (`student_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='班课学员关系';
+
+-- ----- 4. biz_course_plan（课程计划;无total_lessons/无target绑定列,均实时聚合)-----
+DROP TABLE IF EXISTS `biz_course_plan`;
+CREATE TABLE `biz_course_plan` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `name` varchar(100) NOT NULL COMMENT '计划名称',
+  `target_type` char(1) NOT NULL DEFAULT '0' COMMENT '适配对象类型:0学生/1班级',
+  `term_tag` varchar(20) DEFAULT NULL COMMENT '期段(字典:暑假/上学期/寒假/下学期)',
+  `year` int DEFAULT NULL COMMENT '年份',
+  `material_note` varchar(200) DEFAULT NULL COMMENT '素材池说明(如 学而思36周书·挑题制)',
+  `default_seg_template` json DEFAULT NULL COMMENT '默认分段模板[{name,style,topic}](lesson 空则继承)',
+  `status` char(1) NOT NULL DEFAULT '0' COMMENT '状态:0草稿/1启用/2归档',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '归属老师(sys_user.id)',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  KEY `idx_owner` (`create_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='课程计划(大纲层);total_lessons=count(lessons)实时聚合,绑定关系活在session.plan_id';
+
+-- ----- 5. biz_course_plan_lesson（计划课次·大纲/细备双精度)-----
+DROP TABLE IF EXISTS `biz_course_plan_lesson`;
+CREATE TABLE `biz_course_plan_lesson` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `plan_id` bigint NOT NULL COMMENT '所属计划id(biz_course_plan.id)',
+  `lesson_seq` int NOT NULL DEFAULT '0' COMMENT '课次序号(第几次课,顺延/排课按此)',
+  `title` varchar(100) DEFAULT NULL COMMENT '课次标题/主题',
+  `lesson_type` char(1) NOT NULL DEFAULT '0' COMMENT '课次类型:0教学/1测试',
+  `tag` varchar(50) DEFAULT NULL COMMENT '自由标签(吃透课①走这)',
+  `source_ref` varchar(200) DEFAULT NULL COMMENT '素材源(如 学而思四年级P25)',
+  `thinking_action` varchar(100) DEFAULT NULL COMMENT '思维动作(内部字段)',
+  `layer_target` varchar(20) DEFAULT NULL COMMENT '目标层数(挂课次;与题星级两刻度互不换算)',
+  `parent_copy` varchar(200) DEFAULT NULL COMMENT '家长版口语文案',
+  `kg_node_ids` json DEFAULT NULL COMMENT 'KG锚点(biz_subject.id 数组)',
+  `seg_template` json DEFAULT NULL COMMENT '本课分段配置[{name,style,topic}](空则继承plan)',
+  `prep_state` char(1) NOT NULL DEFAULT '0' COMMENT '内容态:0大纲态/1细备中/2已备好',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '创建者',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  KEY `idx_plan_seq` (`plan_id`,`lesson_seq`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='计划课次(大纲态无题也合法)';
+
+-- ----- 6. biz_schedule_session（排课场次)-----
+DROP TABLE IF EXISTS `biz_schedule_session`;
+CREATE TABLE `biz_schedule_session` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `target_type` char(1) NOT NULL DEFAULT '0' COMMENT '对象类型:0学生/1班级',
+  `target_id` bigint NOT NULL COMMENT '对象id(biz_student.id 或 biz_class.id)',
+  `plan_id` bigint DEFAULT NULL COMMENT '绑定计划id(可空)',
+  `plan_lesson_id` bigint DEFAULT NULL COMMENT '绑定课次id(可空;autoBind按lesson_seq绑)',
+  `session_date` date NOT NULL COMMENT '上课日期',
+  `start_time` time DEFAULT NULL COMMENT '开始时间',
+  `end_time` time DEFAULT NULL COMMENT '结束时间',
+  `session_type` char(1) NOT NULL DEFAULT '1' COMMENT '场次类型:1正课/2测试/3外部占位',
+  `session_status` char(1) NOT NULL DEFAULT '0' COMMENT '状态:0已排/1已上/2请假/3取消',
+  `prep_status` char(1) NOT NULL DEFAULT '0' COMMENT '场次备课态:0未备/1备课中/2已备好',
+  `lesson_locked` char(1) NOT NULL DEFAULT '0' COMMENT '内容锁定:0否/1是(顺延跳过锁定场次)',
+  `external_title` varchar(100) DEFAULT NULL COMMENT '外部占位标题',
+  `note` varchar(200) DEFAULT NULL COMMENT '备注',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '归属老师(sys_user.id;老师撞场口径按此)',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  KEY `idx_target_date` (`target_type`,`target_id`,`session_date`),
+  KEY `idx_date` (`session_date`),
+  KEY `idx_owner` (`create_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='排课场次';
+
+-- ----- 7. biz_prep_pack（备课包;1:1 course_plan_lesson 或散课 session,二选一)-----
+DROP TABLE IF EXISTS `biz_prep_pack`;
+CREATE TABLE `biz_prep_pack` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `plan_lesson_id` bigint DEFAULT NULL COMMENT '绑定课次id(与session_id二选一,uniq)',
+  `session_id` bigint DEFAULT NULL COMMENT '绑定散课场次id(与plan_lesson_id二选一,uniq)',
+  `segs` json DEFAULT NULL COMMENT '分段内容[{name,style,question_ids[str],rules,note}]',
+  `artifacts` json DEFAULT NULL COMMENT '产物[{seg,file,pages}]',
+  `status` char(1) NOT NULL DEFAULT '0' COMMENT '状态:0装配中/1已生成/2已备好',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '创建者',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_lesson` (`plan_lesson_id`),
+  UNIQUE KEY `uk_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='备课包(段内容物只有题目)';
+
+-- ----- 8. biz_session_review（课后回收;重复提交=覆盖并把上一版进prev_json)-----
+DROP TABLE IF EXISTS `biz_session_review`;
+CREATE TABLE `biz_session_review` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `session_id` bigint NOT NULL COMMENT '场次id(uniq)',
+  `item_results` json DEFAULT NULL COMMENT '逐题结果[{question_id?,seg,seq,result(对/错/卡),cause(计算/概念辨析/策略/其他)}]',
+  `teacher_note` varchar(1000) DEFAULT NULL COMMENT '老师备注',
+  `parent_msg` text COMMENT '生成的家长反馈消息',
+  `portrait_delta` json DEFAULT NULL COMMENT '写回profile的error_signals(by=system,status=pending,带session_id溯源)',
+  `prev_json` json DEFAULT NULL COMMENT '上一版整体快照(重复提交覆盖时留痕)',
+  `version` int NOT NULL DEFAULT '1' COMMENT '版本号(乐观锁,每次覆盖+1)',
+  `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
+  `create_by` bigint DEFAULT NULL COMMENT '创建者',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_by` bigint DEFAULT NULL COMMENT '更新者',
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `remark` varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_session` (`session_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='课后回收(对错错因→肖像delta+家长反馈)';
+
+-- ----- 9. biz_question ALTER：私有题池增列(星级/专项挂题;layer_target挂课次,两刻度互不换算)-----
+-- 🔴 应用前先 SHOW COLUMNS 确认三列不存在(存在则跳过);dev 用 pymysql 逐列判存在再 ADD。
+ALTER TABLE `biz_question`
+  ADD COLUMN `source_ref` varchar(200) DEFAULT NULL COMMENT 'PRD-C-213 素材源(私有题池:学而思四年级P25)',
+  ADD COLUMN `star_level` char(1) DEFAULT NULL COMMENT 'PRD-C-213 星级 1★/2★★/3★★★(专项卷分层)',
+  ADD COLUMN `topic_tag` varchar(50) DEFAULT NULL COMMENT 'PRD-C-213 专项名(自由文本,字典化后置)';
