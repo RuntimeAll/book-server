@@ -1491,3 +1491,14 @@ ALTER TABLE `biz_question`
   ADD COLUMN `source_ref` varchar(200) DEFAULT NULL COMMENT 'PRD-C-213 素材源(私有题池:学而思四年级P25)',
   ADD COLUMN `star_level` char(1) DEFAULT NULL COMMENT 'PRD-C-213 星级 1★/2★★/3★★★(专项卷分层)',
   ADD COLUMN `topic_tag` varchar(50) DEFAULT NULL COMMENT 'PRD-C-213 专项名(自由文本,字典化后置)';
+
+-- ── PRD-C-213 字典种子：课程计划期段 biz_term_tag（2026-07-05，值=中文文本与业务列零迁移）──
+-- 🔴 prod 手动执行 + 执行后必刷字典缓存（DELETE /system/dict/type/refreshCache 或重启 BE）。
+-- dict_id/dict_code 为示意占位，prod 插入时按该库雪花习惯取号（或由超管在字典管理 UI 录入等价数据）。
+INSERT INTO `sys_dict_type` (dict_id, tenant_id, dict_name, dict_type, create_dept, create_by, create_time, remark)
+VALUES (1826050689283072, '000000', '课程计划期段', 'biz_term_tag', 103, 1, NOW(), 'PRD-C-213 教学安排:课程计划term_tag(值=中文文本,与既有数据一致)');
+INSERT INTO `sys_dict_data` (dict_code, tenant_id, dict_sort, dict_label, dict_value, dict_type, css_class, list_class, is_default, create_dept, create_by, create_time, remark) VALUES
+(1826050689283073, '000000', 1, '暑假',   '暑假',   'biz_term_tag', '', 'primary', 'N', 103, 1, NOW(), 'PRD-C-213'),
+(1826050689283074, '000000', 2, '上学期', '上学期', 'biz_term_tag', '', 'primary', 'N', 103, 1, NOW(), 'PRD-C-213'),
+(1826050689283075, '000000', 3, '寒假',   '寒假',   'biz_term_tag', '', 'primary', 'N', 103, 1, NOW(), 'PRD-C-213'),
+(1826050689283076, '000000', 4, '下学期', '下学期', 'biz_term_tag', '', 'primary', 'N', 103, 1, NOW(), 'PRD-C-213');
