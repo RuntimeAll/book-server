@@ -1502,3 +1502,41 @@ INSERT INTO `sys_dict_data` (dict_code, tenant_id, dict_sort, dict_label, dict_v
 (1826050689283074, '000000', 2, '上学期', '上学期', 'biz_term_tag', '', 'primary', 'N', 103, 1, NOW(), 'PRD-C-213'),
 (1826050689283075, '000000', 3, '寒假',   '寒假',   'biz_term_tag', '', 'primary', 'N', 103, 1, NOW(), 'PRD-C-213'),
 (1826050689283076, '000000', 4, '下学期', '下学期', 'biz_term_tag', '', 'primary', 'N', 103, 1, NOW(), 'PRD-C-213');
+
+-- ============================================================
+-- PRD-C-213 修复轮（BUG-001 档案建模 + S1 计划归属）2026-07-05
+-- 台账 = workplace/.prd_ccw/PRD-C/PRD-C-213/bug/PRD-bug.md BUG-001/BUG-013
+-- 建模拍板：
+--   · biz_student/biz_class 删 grade/textbook 自由文本列，改「grade_no(1-12) + grade_year(学年锚) + textbook_edition(字典码)」；
+--     年级/学段/册次是【推导状态不落列】：当前年级 = grade_no + (当前学年起始年 - grade_year)，9/1 进位；
+--     期段边界（类常量，yml 覆盖口 edu.term.*）= 7/1-8/31 暑假、9/1-1/15 上学期、1/16-2/15 寒假、2/16-6/30 下学期。
+--     推导实现 = org.dromara.book.util.EduTermUtil。
+--   · grade_year 语义 = grade_no 生效学年的起始年（如 2026 = 2026-09-01 起学年）；暑期录入「升四」即 grade_no=4, grade_year=2026。
+--   · subject 列保留，改存字典码（biz_edu_subject：1数学/2科学/3语文/4英语）。
+--   · textbook_edition 存字典码（biz_edu_edition：1浙教/2人教/3北师大/4苏教），"人教版三年级下册"式全串由推导生成。
+--   · S1：biz_course_plan 加 target_id（计划归属对象，与 target_type 联合），建计划必传；换绑走
+--     POST /teacher/schedule/target/{targetType}/{targetId}/rebind-plan。
+-- 字典复用结论（2026-07-05 查 dev 库）：biz_edu_grade(1-12)/biz_term_tag 已有全量复用；
+--   biz_edu_edition 补 3北师大/4苏教、biz_edu_subject 补 3语文/4英语（seed 见 dev-fix 迁移脚本）。
+-- 🔴 本段为全量新建口径的收敛 ALTER；dev 存量库执行含回填的
+--   sql/dev-fix/2026-07-05-c213-r1a-student-remodel-plan-target.sql，不要直接跑本段删列。
+-- ============================================================
+
+ALTER TABLE `biz_student`
+  ADD COLUMN `grade_no` int DEFAULT NULL COMMENT '年级(1-12,字典biz_edu_grade;=grade_year学年就读年级,当前年级按9/1进位推导)' AFTER `name`,
+  ADD COLUMN `grade_year` int DEFAULT NULL COMMENT 'grade_no生效学年起始年(如2026=2026-09-01起学年)' AFTER `grade_no`,
+  ADD COLUMN `textbook_edition` varchar(20) DEFAULT NULL COMMENT '教材版本字典码(biz_edu_edition:1浙教/2人教/3北师大/4苏教)' AFTER `grade_year`,
+  MODIFY COLUMN `subject` varchar(30) DEFAULT NULL COMMENT '学科字典码(biz_edu_subject:1数学/2科学/3语文/4英语)',
+  DROP COLUMN `grade`,
+  DROP COLUMN `textbook`;
+
+ALTER TABLE `biz_class`
+  ADD COLUMN `grade_no` int DEFAULT NULL COMMENT '年级(1-12,字典biz_edu_grade;允许NULL)' AFTER `name`,
+  ADD COLUMN `grade_year` int DEFAULT NULL COMMENT 'grade_no生效学年起始年(允许NULL)' AFTER `grade_no`,
+  ADD COLUMN `textbook_edition` varchar(20) DEFAULT NULL COMMENT '教材版本字典码(biz_edu_edition)' AFTER `grade_year`,
+  MODIFY COLUMN `subject` varchar(30) DEFAULT NULL COMMENT '学科字典码(biz_edu_subject)',
+  DROP COLUMN `grade`;
+
+ALTER TABLE `biz_course_plan`
+  ADD COLUMN `target_id` bigint DEFAULT NULL COMMENT 'S1 计划归属对象id(biz_student.id 或 biz_class.id,与target_type联合;建计划必传)' AFTER `target_type`,
+  ADD KEY `idx_target` (`target_type`,`target_id`);
