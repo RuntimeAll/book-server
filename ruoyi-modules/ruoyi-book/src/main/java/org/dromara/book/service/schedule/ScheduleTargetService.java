@@ -189,8 +189,8 @@ public class ScheduleTargetService {
         }
     }
 
-    /** 卡片墙（含实时聚合）。targetType 空=学生+班级都返。 */
-    public List<Map<String, Object>> page(String targetType, String keyword, boolean includeArchived) {
+    /** 卡片墙（含实时聚合，FE PageResult&lt;TargetCardVO&gt; = {rows,total}）。targetType 空=学生+班级都返。 */
+    public Map<String, Object> page(String targetType, String keyword, boolean includeArchived) {
         Long uid = LoginHelper.getUserId();
         LocalDate today = LocalDate.now();
         List<Map<String, Object>> out = new ArrayList<>();
@@ -237,10 +237,10 @@ public class ScheduleTargetService {
                 out.add(m);
             }
         }
-        return out;
+        return ScheduleSessionService.pageResult(out);
     }
 
-    /** 详情（含 profile）。 */
+    /** 详情（含 profileJson）。 */
     public Map<String, Object> detail(Long id, String targetType) {
         Map<String, Object> m = new LinkedHashMap<>();
         if (isClass(targetType)) {
@@ -251,14 +251,18 @@ public class ScheduleTargetService {
             m.put("name", c.getName());
             m.put("grade", c.getGrade());
             m.put("subject", c.getSubject());
+            m.put("textbook", null);
+            m.put("parentPhone", null);
             m.put("color", c.getColor());
             m.put("archived", c.getArchived());
-            m.put("profile", parseJson(c.getProfileJson()));
+            m.put("profileJson", parseJson(c.getProfileJson()));
             List<Long> sids = classStudentMapper.selectList(
                     new LambdaQueryWrapper<BizClassStudent>().eq(BizClassStudent::getClassId, id))
                 .stream().map(BizClassStudent::getStudentId).toList();
             m.put("studentIds", sids.stream().map(String::valueOf).toList());
             m.put("studentCount", sids.size());
+            m.put("createTime", c.getCreateTime());
+            m.put("updateTime", c.getUpdateTime());
         } else {
             BizStudent s = studentMapper.selectById(id);
             if (s == null) throw new ServiceException("学生不存在");
@@ -271,7 +275,9 @@ public class ScheduleTargetService {
             m.put("parentPhone", s.getParentPhone());
             m.put("color", s.getColor());
             m.put("archived", s.getArchived());
-            m.put("profile", parseJson(s.getProfileJson()));
+            m.put("profileJson", parseJson(s.getProfileJson()));
+            m.put("createTime", s.getCreateTime());
+            m.put("updateTime", s.getUpdateTime());
         }
         return m;
     }
@@ -315,13 +321,12 @@ public class ScheduleTargetService {
                 .thenComparing(x -> x.getStartTime() == null ? "" : x.getStartTime()))
             .orElse(null);
         if (next != null) {
+            // FE TargetCardVO.nextSession = {sessionId, sessionDate, startTime, title?}
             Map<String, Object> ns = new LinkedHashMap<>();
-            ns.put("id", String.valueOf(next.getId()));
-            ns.put("date", String.valueOf(next.getSessionDate()));
-            ns.put("start", next.getStartTime());
-            ns.put("end", next.getEndTime());
+            ns.put("sessionId", String.valueOf(next.getId()));
+            ns.put("sessionDate", String.valueOf(next.getSessionDate()));
+            ns.put("startTime", next.getStartTime());
             ns.put("title", sessionTitle(next));
-            ns.put("prepStatus", "3".equals(next.getSessionType()) ? null : next.getPrepStatus());
             m.put("nextSession", ns);
         } else {
             m.put("nextSession", null);

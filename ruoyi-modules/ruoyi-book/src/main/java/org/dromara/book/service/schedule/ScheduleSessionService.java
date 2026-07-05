@@ -54,10 +54,63 @@ public class ScheduleSessionService {
 
     /** 预检冲突。 */
     public Map<String, Object> conflictCheck(String targetType, Long targetId, List<SessionItemBo> items) {
+        validateItems(items);
         List<Map<String, Object>> conflicts = detectConflicts(targetType, targetId, items, null);
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("conflicts", conflicts);
         return r;
+    }
+
+    /**
+     * 入参校验：非法日期/时间（None/空/格式错）→ 友好 400（说清哪条 item 哪个字段），不再抛 500 未知异常。
+     * date 必填且 yyyy-MM-dd；start/end 必填且 HH:mm[:ss] 且 start&lt;end。
+     */
+    private void validateItems(List<SessionItemBo> items) {
+        if (items == null || items.isEmpty()) {
+            throw new ServiceException("排课 items 不能为空", 400);
+        }
+        for (int i = 0; i < items.size(); i++) {
+            SessionItemBo it = items.get(i);
+            int n = i + 1;
+            if (it == null) {
+                throw new ServiceException("第" + n + "条排课为空", 400);
+            }
+            parseDateOr400(it.getDate(), n, "date");
+            int s = parseTimeOr400(it.getStart(), n, "start");
+            int e = parseTimeOr400(it.getEnd(), n, "end");
+            if (s >= e) {
+                throw new ServiceException("第" + n + "条排课时间无效：start(" + it.getStart()
+                    + ") 必须早于 end(" + it.getEnd() + ")", 400);
+            }
+        }
+    }
+
+    private void parseDateOr400(String date, int n, String field) {
+        if (date == null || date.isBlank()) {
+            throw new ServiceException("第" + n + "条排课缺少 " + field + " 字段", 400);
+        }
+        try {
+            LocalDate.parse(date.trim());
+        } catch (Exception ex) {
+            throw new ServiceException("第" + n + "条排课 " + field + " 格式错误（需 yyyy-MM-dd）：" + date, 400);
+        }
+    }
+
+    private int parseTimeOr400(String t, int n, String field) {
+        if (t == null || t.isBlank()) {
+            throw new ServiceException("第" + n + "条排课缺少 " + field + " 字段", 400);
+        }
+        String[] p = t.trim().split(":");
+        try {
+            int h = Integer.parseInt(p[0].trim());
+            int m = p.length > 1 ? Integer.parseInt(p[1].trim()) : 0;
+            if (h < 0 || h > 23 || m < 0 || m > 59) {
+                throw new NumberFormatException();
+            }
+            return h * 60 + m;
+        } catch (Exception ex) {
+            throw new ServiceException("第" + n + "条排课 " + field + " 时间格式错误（需 HH:mm）：" + t, 400);
+        }
     }
 
     /**
@@ -100,6 +153,7 @@ public class ScheduleSessionService {
 
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> batch(SessionBatchBo bo) {
+        validateItems(bo.getItems());
         List<Map<String, Object>> conflicts = detectConflicts(bo.getTargetType(), bo.getTargetId(), bo.getItems(), null);
         boolean force = Boolean.TRUE.equals(bo.getForce());
         Map<String, Object> r = new LinkedHashMap<>();
@@ -272,17 +326,25 @@ public class ScheduleSessionService {
         return out;
     }
 
-    /** 场次表。 */
-    public List<Map<String, Object>> page(Long targetId, String status) {
+    /** 场次表（FE PageResult&lt;SessionVO&gt; = {rows,total}）。 */
+    public Map<String, Object> page(Long targetId, String status) {
         Long uid = LoginHelper.getUserId();
         LambdaQueryWrapper<BizScheduleSession> w = new LambdaQueryWrapper<BizScheduleSession>()
             .eq(BizScheduleSession::getCreateBy, uid)
             .eq(targetId != null, BizScheduleSession::getTargetId, targetId)
             .eq(status != null && !status.isBlank(), BizScheduleSession::getSessionStatus, status)
             .orderByDesc(BizScheduleSession::getSessionDate);
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (BizScheduleSession s : sessionMapper.selectList(w)) out.add(sessionVo(s));
-        return out;
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (BizScheduleSession s : sessionMapper.selectList(w)) rows.add(sessionVo(s));
+        return pageResult(rows);
+    }
+
+    /** FE PageResult&lt;T&gt; = {rows,total}（本域无服务端分页，total=行数）。 */
+    static Map<String, Object> pageResult(List<Map<String, Object>> rows) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("rows", rows);
+        r.put("total", rows.size());
+        return r;
     }
 
     /** 概览统计。 */
@@ -330,21 +392,23 @@ public class ScheduleSessionService {
 
     // ─────────────────────── VO ───────────────────────
 
+    /**
+     * 场次 VO（键名对齐 FE 冻结契约 schedule.ts）。SessionVO / CalendarSessionVO / PrepTodoVO 三处共用：
+     * sessionDate/startTime/endTime（非 date/start/end）、color（非 targetColor）、lessonTitle。
+     */
     private Map<String, Object> sessionVo(BizScheduleSession s) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(s.getId()));
         m.put("targetType", s.getTargetType());
         m.put("targetId", String.valueOf(s.getTargetId()));
         m.put("targetName", targetName(s.getTargetType(), s.getTargetId()));
-        m.put("targetColor", targetColor(s.getTargetType(), s.getTargetId()));
+        m.put("color", targetColor(s.getTargetType(), s.getTargetId()));
         m.put("planId", s.getPlanId() == null ? null : String.valueOf(s.getPlanId()));
         m.put("planLessonId", s.getPlanLessonId() == null ? null : String.valueOf(s.getPlanLessonId()));
-        String lessonTitle = titleOf(s);
-        m.put("lessonTitle", lessonTitle);
-        m.put("planLessonTitle", lessonTitle);
-        m.put("date", String.valueOf(s.getSessionDate()));
-        m.put("start", s.getStartTime());
-        m.put("end", s.getEndTime());
+        m.put("lessonTitle", titleOf(s));
+        m.put("sessionDate", String.valueOf(s.getSessionDate()));
+        m.put("startTime", s.getStartTime());
+        m.put("endTime", s.getEndTime());
         m.put("sessionType", s.getSessionType());
         m.put("sessionStatus", s.getSessionStatus());
         // 外部占位无备课点
@@ -352,6 +416,8 @@ public class ScheduleSessionService {
         m.put("lessonLocked", s.getLessonLocked());
         m.put("externalTitle", s.getExternalTitle());
         m.put("note", s.getNote());
+        m.put("createTime", s.getCreateTime());
+        m.put("updateTime", s.getUpdateTime());
         return m;
     }
 

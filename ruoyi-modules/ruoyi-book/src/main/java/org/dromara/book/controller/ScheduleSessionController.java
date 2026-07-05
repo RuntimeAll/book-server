@@ -64,8 +64,8 @@ public class ScheduleSessionController {
 
     @SaCheckLogin
     @GetMapping("/session/page")
-    public R<List<Map<String, Object>>> page(@RequestParam(required = false) Long targetId,
-                                            @RequestParam(required = false) String status) {
+    public R<Map<String, Object>> page(@RequestParam(required = false) Long targetId,
+                                      @RequestParam(required = false) String status) {
         return R.ok(sessionService.page(targetId, status));
     }
 

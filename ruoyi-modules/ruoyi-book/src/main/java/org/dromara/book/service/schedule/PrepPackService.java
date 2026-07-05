@@ -213,6 +213,8 @@ public class PrepPackService {
         m.put("segs", pack.getSegs() == null ? null : JsonUtils.parseObject(pack.getSegs(), Object.class));
         m.put("artifacts", pack.getArtifacts() == null ? null : JsonUtils.parseObject(pack.getArtifacts(), Object.class));
         m.put("status", pack.getStatus());
+        m.put("createTime", pack.getCreateTime());
+        m.put("updateTime", pack.getUpdateTime());
         return m;
     }
 

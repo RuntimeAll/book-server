@@ -52,9 +52,9 @@ public class ScheduleTargetController {
     /** 卡片墙（含实时聚合）。 */
     @SaCheckLogin
     @GetMapping("/target/page")
-    public R<List<Map<String, Object>>> page(@RequestParam(required = false) String targetType,
-                                             @RequestParam(required = false) String keyword,
-                                             @RequestParam(required = false, defaultValue = "false") boolean includeArchived) {
+    public R<Map<String, Object>> page(@RequestParam(required = false) String targetType,
+                                      @RequestParam(required = false) String keyword,
+                                      @RequestParam(required = false, defaultValue = "false") boolean includeArchived) {
         return R.ok(targetService.page(targetType, keyword, includeArchived));
     }
 
@@ -82,12 +82,19 @@ public class ScheduleTargetController {
         return R.ok();
     }
 
-    /** 整体覆写 profile_json（老师改肖像，含转正/删除 pending 信号）。 */
+    /**
+     * 整体覆写 profile_json（老师改肖像，含转正/删除 pending 信号）。
+     * FE 传 {profileJson:{...}} → 解包取 profileJson 存；兼容直接传 profile 对象（MCP）。
+     */
     @SaCheckLogin
     @PutMapping("/target/{id}/profile")
     public R<Void> profile(@PathVariable Long id,
                           @RequestParam(required = false, defaultValue = "0") String targetType,
-                          @RequestBody Object profile) {
+                          @RequestBody Object body) {
+        Object profile = body;
+        if (body instanceof Map<?, ?> mp && mp.containsKey("profileJson")) {
+            profile = mp.get("profileJson");
+        }
         targetService.overwriteProfile(id, targetType, profile);
         return R.ok();
     }

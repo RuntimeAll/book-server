@@ -107,6 +107,8 @@ public class SessionReviewService {
         m.put("parentMsg", review.getParentMsg());
         m.put("portraitDelta", parseAny(review.getPortraitDelta()));
         m.put("version", review.getVersion());
+        m.put("createTime", review.getCreateTime());
+        m.put("updateTime", review.getUpdateTime());
         return m;
     }
 

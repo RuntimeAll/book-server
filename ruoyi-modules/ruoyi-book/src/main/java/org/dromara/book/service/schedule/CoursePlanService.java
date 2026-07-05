@@ -68,7 +68,8 @@ public class CoursePlanService {
         return p.getId();
     }
 
-    public List<Map<String, Object>> page(String targetType, String keyword) {
+    /** 计划列表（FE PageResult&lt;PlanVO&gt; = {rows,total}）。 */
+    public Map<String, Object> page(String targetType, String keyword) {
         Long uid = LoginHelper.getUserId();
         LambdaQueryWrapper<BizCoursePlan> w = new LambdaQueryWrapper<BizCoursePlan>()
             .eq(BizCoursePlan::getCreateBy, uid)
@@ -80,10 +81,10 @@ public class CoursePlanService {
             Map<String, Object> m = planBrief(p);
             long total = lessonMapper.selectCount(
                 new LambdaQueryWrapper<BizCoursePlanLesson>().eq(BizCoursePlanLesson::getPlanId, p.getId()));
-            m.put("totalLessons", total);
+            m.put("lessonCount", total);
             out.add(m);
         }
-        return out;
+        return ScheduleSessionService.pageResult(out);
     }
 
     private Map<String, Object> planBrief(BizCoursePlan p) {
@@ -96,6 +97,8 @@ public class CoursePlanService {
         m.put("materialNote", p.getMaterialNote());
         m.put("defaultSegTemplate", parse(p.getDefaultSegTemplate()));
         m.put("status", p.getStatus());
+        m.put("createTime", p.getCreateTime());
+        m.put("updateTime", p.getUpdateTime());
         return m;
     }
 
@@ -109,7 +112,7 @@ public class CoursePlanService {
         List<Map<String, Object>> ls = new ArrayList<>();
         for (BizCoursePlanLesson l : lessons) ls.add(lessonVo(l));
         m.put("lessons", ls);
-        m.put("totalLessons", ls.size());
+        m.put("lessonCount", ls.size());
         return m;
     }
 
@@ -131,13 +134,25 @@ public class CoursePlanService {
         return m;
     }
 
-    /** 批量 upsert 课次（id 空=新增）。 */
+    /**
+     * 批量 upsert 课次（id 空=新增），返回 PlanLessonVO[]（对齐 FE upsertLessons 返回类型）。
+     * body 兼容两形：直接数组 PlanLessonBo[]（FE），或 {lessons:[...]}（MCP 旧格式）。
+     */
     @Transactional(rollbackFor = Exception.class)
-    public List<Long> upsertLessons(Long planId, LessonBatchBo bo) {
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> upsertLessons(Long planId, Object body) {
         if (planMapper.selectById(planId) == null) throw new ServiceException("计划不存在");
-        List<Long> ids = new ArrayList<>();
-        if (bo.getLessons() == null) return ids;
-        for (CoursePlanLessonBo lb : bo.getLessons()) {
+        // 归一化到 List<CoursePlanLessonBo>
+        Object listNode = body;
+        if (body instanceof Map<?, ?> mp && mp.get("lessons") != null) {
+            listNode = mp.get("lessons");
+        }
+        List<CoursePlanLessonBo> lessons = JsonUtils.getObjectMapper().convertValue(
+            listNode, new com.fasterxml.jackson.core.type.TypeReference<List<CoursePlanLessonBo>>() {
+            });
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (lessons == null) return out;
+        for (CoursePlanLessonBo lb : lessons) {
             BizCoursePlanLesson l = lb.getId() == null ? new BizCoursePlanLesson() : lessonMapper.selectById(lb.getId());
             if (l == null) l = new BizCoursePlanLesson();
             l.setPlanId(planId);
@@ -159,9 +174,9 @@ public class CoursePlanService {
             } else {
                 lessonMapper.updateById(l);
             }
-            ids.add(l.getId());
+            out.add(lessonVo(l));
         }
-        return ids;
+        return out;
     }
 
     public void deleteLesson(Long lessonId) {

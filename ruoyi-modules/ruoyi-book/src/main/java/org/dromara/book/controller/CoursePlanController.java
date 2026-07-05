@@ -52,8 +52,8 @@ public class CoursePlanController {
 
     @SaCheckLogin
     @GetMapping("/plan/page")
-    public R<List<Map<String, Object>>> page(@RequestParam(required = false) String targetType,
-                                             @RequestParam(required = false) String keyword) {
+    public R<Map<String, Object>> page(@RequestParam(required = false) String targetType,
+                                      @RequestParam(required = false) String keyword) {
         return R.ok(planService.page(targetType, keyword));
     }
 
@@ -63,23 +63,22 @@ public class CoursePlanController {
         return R.ok(planService.detail(id));
     }
 
+    /** 深拷贝含课次 → 新计划 PlanVO（含 lessons）。 */
     @SaCheckLogin
     @PostMapping("/plan/{id}/copy")
     public R<Map<String, Object>> copy(@PathVariable Long id) {
         Long newId = planService.copy(id);
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("id", String.valueOf(newId));
-        return R.ok(r);
+        return R.ok(planService.detail(newId));
     }
 
-    /** 批量 upsert 课次 → {lessonIds}。 */
+    /**
+     * 批量 upsert 课次 → PlanLessonVO[]（对齐 FE：请求体=课次数组 PlanLessonBo[]，非 {lessons:[]}）。
+     * 兼容旧格式 {lessons:[...]}（MCP 侧）：body 是数组走数组，是对象取其 lessons。
+     */
     @SaCheckLogin
     @PostMapping("/plan/{id}/lessons")
-    public R<Map<String, Object>> lessons(@PathVariable Long id, @RequestBody LessonBatchBo bo) {
-        List<Long> ids = planService.upsertLessons(id, bo);
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("lessonIds", ids.stream().map(String::valueOf).toList());
-        return R.ok(r);
+    public R<List<Map<String, Object>>> lessons(@PathVariable Long id, @RequestBody Object body) {
+        return R.ok(planService.upsertLessons(id, body));
     }
 
     @SaCheckLogin

@@ -45,23 +45,23 @@ public class QuestionPoolService {
         Page<Map<String, Object>> page = new Page<>(pn, ps);
         Page<Map<String, Object>> result = questionMapper.selectMapsPage(page, w);
 
-        List<Map<String, Object>> list = new ArrayList<>();
+        // 键名对齐 FE QuestionPoolItem：stem / difficulty（非 stemText / difficult）
+        List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> row : result.getRecords()) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", String.valueOf(row.get("id")));
-            m.put("questionType", row.get("question_type"));
-            m.put("difficult", row.get("difficult"));
-            m.put("stemText", row.get("stem_text"));
+            m.put("questionType", row.get("question_type") == null ? null : String.valueOf(row.get("question_type")));
+            m.put("difficulty", row.get("difficult") == null ? null : String.valueOf(row.get("difficult")));
+            m.put("stem", row.get("stem_text"));
             m.put("starLevel", row.get("star_level"));
             m.put("topicTag", row.get("topic_tag"));
             m.put("sourceRef", row.get("source_ref"));
-            list.add(m);
+            rows.add(m);
         }
+        // FE PageResult<QuestionPoolItem> = {rows,total}
         Map<String, Object> r = new LinkedHashMap<>();
+        r.put("rows", rows);
         r.put("total", result.getTotal());
-        r.put("list", list);
-        r.put("pageNum", pn);
-        r.put("pageSize", ps);
         return r;
     }
 }
