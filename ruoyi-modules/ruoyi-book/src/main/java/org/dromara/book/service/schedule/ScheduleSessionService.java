@@ -8,12 +8,14 @@ import org.dromara.book.domain.bo.SessionBatchBo;
 import org.dromara.book.domain.bo.SessionItemBo;
 import org.dromara.book.domain.bo.SessionUpdateBo;
 import org.dromara.book.domain.entity.BizClass;
+import org.dromara.book.domain.entity.BizCoursePlan;
 import org.dromara.book.domain.entity.BizCoursePlanLesson;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.domain.entity.BizStudent;
 import org.dromara.book.mapper.BizClassMapper;
 import org.dromara.book.mapper.BizCoursePlanLessonMapper;
+import org.dromara.book.mapper.BizCoursePlanMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
@@ -45,6 +47,7 @@ import java.util.Objects;
 public class ScheduleSessionService {
 
     private final BizScheduleSessionMapper sessionMapper;
+    private final BizCoursePlanMapper planMapper;
     private final BizCoursePlanLessonMapper lessonMapper;
     private final BizStudentMapper studentMapper;
     private final BizClassMapper classMapper;
@@ -276,6 +279,81 @@ public class ScheduleSessionService {
         return r;
     }
 
+    // ─────────────────────── 换绑计划（R1a·简版真做） ───────────────────────
+
+    /**
+     * 把对象的未上场次整体切到新计划（POST /teacher/schedule/target/{targetType}/{targetId}/rebind-plan）。
+     *
+     * <p>S1 校验：新计划必须归属该对象（target_type+target_id 匹配）。范围 = 该对象
+     * status='0' 且日期&gt;=今天的场次（外部占位 type='3' 不参与），按 日期+开始时间 升序，
+     * 依 lesson_seq 顺配新计划课次（剔除已被范围外场次占用的课次，防重复绑定）；
+     * 场次多于课次的多余场次 plan_lesson_id 置 NULL；plan_id 一律同步改为新计划。
+     *
+     * @return {rebound: 绑上课次数, unbound: 置空数}
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> rebindPlan(String targetType, Long targetId, Long newPlanId) {
+        if (newPlanId == null) {
+            throw new ServiceException("newPlanId 不能为空", 400);
+        }
+        BizCoursePlan plan = planMapper.selectById(newPlanId);
+        if (plan == null) {
+            throw new ServiceException("新计划不存在");
+        }
+        if (!Objects.equals(plan.getTargetType(), targetType) || !Objects.equals(plan.getTargetId(), targetId)) {
+            throw new ServiceException("新计划不归属该对象，不能换绑（S1）", 400);
+        }
+
+        LocalDate today = LocalDate.now();
+        List<BizScheduleSession> future = sessionMapper.selectList(new LambdaQueryWrapper<BizScheduleSession>()
+                .eq(BizScheduleSession::getTargetType, targetType)
+                .eq(BizScheduleSession::getTargetId, targetId)
+                .eq(BizScheduleSession::getSessionStatus, "0")
+                .ne(BizScheduleSession::getSessionType, "3")
+                .ge(BizScheduleSession::getSessionDate, today))
+            .stream()
+            .sorted(Comparator.comparing(BizScheduleSession::getSessionDate)
+                .thenComparing(x -> x.getStartTime() == null ? "" : x.getStartTime()))
+            .toList();
+
+        // 新计划课次队列（lesson_seq 升序），剔除已被该对象换绑范围外场次占用的课次（如已上的场次）
+        List<Long> futureIds = future.stream().map(BizScheduleSession::getId).toList();
+        List<Long> occupied = sessionMapper.selectList(new LambdaQueryWrapper<BizScheduleSession>()
+                .eq(BizScheduleSession::getTargetType, targetType)
+                .eq(BizScheduleSession::getTargetId, targetId)
+                .eq(BizScheduleSession::getPlanId, newPlanId)
+                .isNotNull(BizScheduleSession::getPlanLessonId))
+            .stream()
+            .filter(x -> !futureIds.contains(x.getId()))
+            .map(BizScheduleSession::getPlanLessonId)
+            .toList();
+        List<Long> lessonQueue = lessonMapper.selectList(new LambdaQueryWrapper<BizCoursePlanLesson>()
+                .eq(BizCoursePlanLesson::getPlanId, newPlanId)
+                .orderByAsc(BizCoursePlanLesson::getLessonSeq))
+            .stream().map(BizCoursePlanLesson::getId)
+            .filter(lid -> !occupied.contains(lid))
+            .toList();
+
+        int rebound = 0;
+        int unbound = 0;
+        int idx = 0;
+        for (BizScheduleSession s : future) {
+            Long lid = idx < lessonQueue.size() ? lessonQueue.get(idx++) : null;
+            s.setPlanId(newPlanId);
+            s.setPlanLessonId(lid);
+            sessionMapper.updateById(s);
+            if (lid != null) {
+                rebound++;
+            } else {
+                unbound++;
+            }
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("rebound", rebound);
+        r.put("unbound", unbound);
+        return r;
+    }
+
     // ─────────────────────── 单场次操作 ───────────────────────
 
     public void markDone(Long id) {
@@ -395,8 +473,10 @@ public class ScheduleSessionService {
     /**
      * 场次 VO（键名对齐 FE 冻结契约 schedule.ts）。SessionVO / CalendarSessionVO / PrepTodoVO 三处共用：
      * sessionDate/startTime/endTime（非 date/start/end）、color（非 targetColor）、lessonTitle。
+     * R1a 补 lessonSeq（第 N 次课，可空）——FE 后续批显示"第N次课"用。
      */
     private Map<String, Object> sessionVo(BizScheduleSession s) {
+        BizCoursePlanLesson lesson = s.getPlanLessonId() == null ? null : lessonMapper.selectById(s.getPlanLessonId());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(s.getId()));
         m.put("targetType", s.getTargetType());
@@ -405,7 +485,8 @@ public class ScheduleSessionService {
         m.put("color", targetColor(s.getTargetType(), s.getTargetId()));
         m.put("planId", s.getPlanId() == null ? null : String.valueOf(s.getPlanId()));
         m.put("planLessonId", s.getPlanLessonId() == null ? null : String.valueOf(s.getPlanLessonId()));
-        m.put("lessonTitle", titleOf(s));
+        m.put("lessonSeq", lesson == null ? null : lesson.getLessonSeq());
+        m.put("lessonTitle", titleOf(s, lesson));
         m.put("sessionDate", String.valueOf(s.getSessionDate()));
         m.put("startTime", s.getStartTime());
         m.put("endTime", s.getEndTime());
@@ -422,11 +503,14 @@ public class ScheduleSessionService {
     }
 
     private String titleOf(BizScheduleSession s) {
+        BizCoursePlanLesson l = s.getPlanLessonId() == null ? null : lessonMapper.selectById(s.getPlanLessonId());
+        return titleOf(s, l);
+    }
+
+    /** 已取到课次实体时用本重载，避免重复查库。 */
+    private String titleOf(BizScheduleSession s, BizCoursePlanLesson lesson) {
         if ("3".equals(s.getSessionType())) return s.getExternalTitle();
-        if (s.getPlanLessonId() != null) {
-            BizCoursePlanLesson l = lessonMapper.selectById(s.getPlanLessonId());
-            if (l != null && l.getTitle() != null) return l.getTitle();
-        }
+        if (lesson != null && lesson.getTitle() != null) return lesson.getTitle();
         return "2".equals(s.getSessionType()) ? "测试" : "正课";
     }
 

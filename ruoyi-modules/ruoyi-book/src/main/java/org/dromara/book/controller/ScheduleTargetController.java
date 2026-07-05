@@ -3,7 +3,9 @@ package org.dromara.book.controller;
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.ClassStudentsBo;
+import org.dromara.book.domain.bo.RebindPlanBo;
 import org.dromara.book.domain.bo.ScheduleTargetBo;
+import org.dromara.book.service.schedule.ScheduleSessionService;
 import org.dromara.book.service.schedule.ScheduleTargetService;
 import org.dromara.common.core.domain.R;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,6 +32,7 @@ import java.util.Map;
 public class ScheduleTargetController {
 
     private final ScheduleTargetService targetService;
+    private final ScheduleSessionService sessionService;
 
     /** 建档（color 空则色板轮转） → {id}。 */
     @SaCheckLogin
@@ -105,5 +108,18 @@ public class ScheduleTargetController {
     public R<Void> classStudents(@PathVariable Long id, @RequestBody ClassStudentsBo bo) {
         targetService.setClassStudents(id, bo);
         return R.ok();
+    }
+
+    /**
+     * 换绑计划（R1a·简版真做）：把该对象未上（status='0' 且日期>=今天）的场次整体切到新计划，
+     * 课次依 lesson_seq 顺配，多余场次置 NULL，plan_id 同步改 → {rebound, unbound}。
+     * S1 校验：新计划必须归属该对象。
+     */
+    @SaCheckLogin
+    @PostMapping("/target/{targetType}/{targetId}/rebind-plan")
+    public R<Map<String, Object>> rebindPlan(@PathVariable String targetType,
+                                             @PathVariable Long targetId,
+                                             @RequestBody RebindPlanBo bo) {
+        return R.ok(sessionService.rebindPlan(targetType, targetId, bo.getNewPlanId()));
     }
 }

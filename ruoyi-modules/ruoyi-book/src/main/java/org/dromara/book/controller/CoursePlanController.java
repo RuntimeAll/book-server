@@ -50,11 +50,13 @@ public class CoursePlanController {
         return R.ok();
     }
 
+    /** 计划列表。S1：targetId 可选，按归属对象过滤。 */
     @SaCheckLogin
     @GetMapping("/plan/page")
     public R<Map<String, Object>> page(@RequestParam(required = false) String targetType,
-                                      @RequestParam(required = false) String keyword) {
-        return R.ok(planService.page(targetType, keyword));
+                                      @RequestParam(required = false) String keyword,
+                                      @RequestParam(required = false) Long targetId) {
+        return R.ok(planService.page(targetType, keyword, targetId));
     }
 
     @SaCheckLogin

@@ -52,6 +52,7 @@ public class CoursePlanService {
         if (p == null) throw new ServiceException("计划不存在");
         if (bo.getName() != null) p.setName(bo.getName());
         if (bo.getTargetType() != null) p.setTargetType(bo.getTargetType());
+        if (bo.getTargetId() != null) p.setTargetId(bo.getTargetId());
         p.setTermTag(bo.getTermTag());
         p.setYear(bo.getYear());
         p.setMaterialNote(bo.getMaterialNote());
@@ -62,6 +63,11 @@ public class CoursePlanService {
         if (bo.getId() == null) {
             if (p.getStatus() == null) p.setStatus("0");
             if (p.getTargetType() == null) p.setTargetType("0");
+            // S1：建计划必传归属对象，且对象必须存在
+            if (p.getTargetId() == null) {
+                throw new ServiceException("建计划必须指定归属对象 targetId（S1）", 400);
+            }
+            requireTarget(p.getTargetType(), p.getTargetId());
             planMapper.insert(p);
         } else {
             planMapper.updateById(p);
@@ -69,12 +75,23 @@ public class CoursePlanService {
         return p.getId();
     }
 
-    /** 计划列表（FE PageResult&lt;PlanVO&gt; = {rows,total}）。 */
-    public Map<String, Object> page(String targetType, String keyword) {
+    /** S1：归属对象存在性校验。 */
+    private void requireTarget(String targetType, Long targetId) {
+        boolean exists = "1".equals(targetType)
+            ? classMapper.selectById(targetId) != null
+            : studentMapper.selectById(targetId) != null;
+        if (!exists) {
+            throw new ServiceException("计划归属对象不存在：targetType=" + targetType + ", targetId=" + targetId, 400);
+        }
+    }
+
+    /** 计划列表（FE PageResult&lt;PlanVO&gt; = {rows,total}）。S1：支持按归属对象 targetId 过滤。 */
+    public Map<String, Object> page(String targetType, String keyword, Long targetId) {
         Long uid = LoginHelper.getUserId();
         LambdaQueryWrapper<BizCoursePlan> w = new LambdaQueryWrapper<BizCoursePlan>()
             .eq(BizCoursePlan::getCreateBy, uid)
             .eq(targetType != null && !targetType.isBlank(), BizCoursePlan::getTargetType, targetType)
+            .eq(targetId != null, BizCoursePlan::getTargetId, targetId)
             .like(keyword != null && !keyword.isBlank(), BizCoursePlan::getName, keyword)
             .orderByDesc(BizCoursePlan::getId);
         List<Map<String, Object>> out = new ArrayList<>();
@@ -93,6 +110,7 @@ public class CoursePlanService {
         m.put("id", String.valueOf(p.getId()));
         m.put("name", p.getName());
         m.put("targetType", p.getTargetType());
+        m.put("targetId", p.getTargetId() == null ? null : String.valueOf(p.getTargetId()));
         m.put("termTag", p.getTermTag());
         m.put("year", p.getYear());
         m.put("materialNote", p.getMaterialNote());
@@ -206,6 +224,7 @@ public class CoursePlanService {
         BizCoursePlan p = new BizCoursePlan();
         p.setName(src.getName() + "（副本）");
         p.setTargetType(src.getTargetType());
+        p.setTargetId(src.getTargetId());
         p.setTermTag(src.getTermTag());
         p.setYear(src.getYear());
         p.setMaterialNote(src.getMaterialNote());

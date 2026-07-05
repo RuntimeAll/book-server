@@ -12,7 +12,8 @@ import java.io.Serial;
 /**
  * 课程计划实体（biz_course_plan，PRD-C-213）。
  *
- * <p>🔴 无 total_lessons 列（= count(lessons) 实时聚合）；无 target 绑定列（绑定活在 session.plan_id）。
+ * <p>🔴 无 total_lessons 列（= count(lessons) 实时聚合）。R1a·S1 起计划有归属列
+ * target_type+target_id（建计划必传）；场次绑定关系仍活在 session.plan_id。
  *
  * @author backend-dev
  */
@@ -32,6 +33,9 @@ public class BizCoursePlan extends BaseEntity {
 
     /** 适配对象类型：'0' 学生 / '1' 班级 */
     private String targetType;
+
+    /** S1 计划归属对象 id（biz_student.id 或 biz_class.id，与 targetType 联合；建计划必传） */
+    private Long targetId;
 
     /** 期段（字典：暑假/上学期/寒假/下学期） */
     private String termTag;
