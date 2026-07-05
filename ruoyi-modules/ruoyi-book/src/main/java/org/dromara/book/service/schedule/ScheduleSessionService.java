@@ -289,11 +289,15 @@ public class ScheduleSessionService {
             lessonQueue.add(freedLesson);
             for (BizScheduleSession s : nonLocked) lessonQueue.add(s.getPlanLessonId());
 
+            // R1b S3 遗留补丁：顺延换绑后 prep_status 按新课次包状态回填（无包/置空 → '0'）
+            Map<Long, String> packStatus = lessonPackStatus(lessonQueue);
+
             for (int i = 0; i < nonLocked.size(); i++) {
                 BizScheduleSession s = nonLocked.get(i);
                 Long newLesson = lessonQueue.get(i);
                 if (!Objects.equals(s.getPlanLessonId(), newLesson)) {
                     s.setPlanLessonId(newLesson);
+                    s.setPrepStatus(newLesson == null ? "0" : packStatus.getOrDefault(newLesson, "0"));
                     sessionMapper.updateById(s);
                     Map<String, Object> d = new LinkedHashMap<>();
                     d.put("sessionId", String.valueOf(s.getId()));
