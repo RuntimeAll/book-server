@@ -8,11 +8,13 @@ import org.dromara.book.domain.bo.LessonBatchBo;
 import org.dromara.book.domain.entity.BizClass;
 import org.dromara.book.domain.entity.BizCoursePlan;
 import org.dromara.book.domain.entity.BizCoursePlanLesson;
+import org.dromara.book.domain.entity.BizPrepPack;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.domain.entity.BizStudent;
 import org.dromara.book.mapper.BizClassMapper;
 import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizCoursePlanMapper;
+import org.dromara.book.mapper.BizPrepPackMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
 import org.dromara.book.util.EduTermUtil;
@@ -44,6 +46,7 @@ public class CoursePlanService {
     private final BizScheduleSessionMapper sessionMapper;
     private final BizStudentMapper studentMapper;
     private final BizClassMapper classMapper;
+    private final BizPrepPackMapper prepPackMapper;
     private final ScheduleRenderUtil renderUtil;
 
     @Transactional(rollbackFor = Exception.class)
@@ -128,14 +131,30 @@ public class CoursePlanService {
         Map<String, Object> m = planBrief(p);
         List<BizCoursePlanLesson> lessons = lessonMapper.selectList(new LambdaQueryWrapper<BizCoursePlanLesson>()
             .eq(BizCoursePlanLesson::getPlanId, id).orderByAsc(BizCoursePlanLesson::getLessonSeq));
+        Map<Long, String> packStatus = packStatusByLessonIds(
+            lessons.stream().map(BizCoursePlanLesson::getId).toList());
         List<Map<String, Object>> ls = new ArrayList<>();
-        for (BizCoursePlanLesson l : lessons) ls.add(lessonVo(l));
+        for (BizCoursePlanLesson l : lessons) ls.add(lessonVo(l, packStatus));
         m.put("lessons", ls);
         m.put("lessonCount", ls.size());
         return m;
     }
 
-    public Map<String, Object> lessonVo(BizCoursePlanLesson l) {
+    /**
+     * R1b S3：备课状态唯一权威 = biz_prep_pack.status。按 lessonIds 一次 in 查包状态映射
+     * （防列表 N+1）；无包课次不入 map，VO 层按 '0' 兜底（无包=大纲态，与 pack '0' 装配中语义对齐）。
+     */
+    private Map<Long, String> packStatusByLessonIds(List<Long> lessonIds) {
+        Map<Long, String> map = new LinkedHashMap<>();
+        if (lessonIds == null || lessonIds.isEmpty()) return map;
+        List<BizPrepPack> packs = prepPackMapper.selectList(new LambdaQueryWrapper<BizPrepPack>()
+            .in(BizPrepPack::getPlanLessonId, lessonIds));
+        for (BizPrepPack p : packs) map.put(p.getPlanLessonId(), p.getStatus());
+        return map;
+    }
+
+    /** 课次 VO。prepState 键名保留兼容，值 = 备课包状态推导（无包='0'）。 */
+    public Map<String, Object> lessonVo(BizCoursePlanLesson l, Map<Long, String> packStatus) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(l.getId()));
         m.put("planId", String.valueOf(l.getPlanId()));
@@ -149,7 +168,8 @@ public class CoursePlanService {
         m.put("parentCopy", l.getParentCopy());
         m.put("kgNodeIds", parse(l.getKgNodeIds()));
         m.put("segTemplate", parse(l.getSegTemplate()));
-        m.put("prepState", l.getPrepState());
+        String st = packStatus == null ? null : packStatus.get(l.getId());
+        m.put("prepState", st == null ? "0" : st);
         return m;
     }
 
@@ -171,6 +191,7 @@ public class CoursePlanService {
             });
         List<Map<String, Object>> out = new ArrayList<>();
         if (lessons == null) return out;
+        List<BizCoursePlanLesson> saved = new ArrayList<>();
         for (CoursePlanLessonBo lb : lessons) {
             BizCoursePlanLesson l = lb.getId() == null ? new BizCoursePlanLesson() : lessonMapper.selectById(lb.getId());
             if (l == null) l = new BizCoursePlanLesson();
@@ -185,16 +206,17 @@ public class CoursePlanService {
             l.setParentCopy(lb.getParentCopy());
             if (lb.getKgNodeIds() != null) l.setKgNodeIds(JsonUtils.toJsonString(lb.getKgNodeIds()));
             if (lb.getSegTemplate() != null) l.setSegTemplate(JsonUtils.toJsonString(lb.getSegTemplate()));
-            if (lb.getPrepState() != null) l.setPrepState(lb.getPrepState());
             if (lb.getId() == null) {
-                if (l.getPrepState() == null) l.setPrepState("0");
                 if (l.getLessonSeq() == null) l.setLessonSeq(0);
                 lessonMapper.insert(l);
             } else {
                 lessonMapper.updateById(l);
             }
-            out.add(lessonVo(l));
+            saved.add(l);
         }
+        Map<Long, String> packStatus = packStatusByLessonIds(
+            saved.stream().map(BizCoursePlanLesson::getId).toList());
+        for (BizCoursePlanLesson l : saved) out.add(lessonVo(l, packStatus));
         return out;
     }
 
@@ -246,7 +268,6 @@ public class CoursePlanService {
             l.setParentCopy(s.getParentCopy());
             l.setKgNodeIds(s.getKgNodeIds());
             l.setSegTemplate(s.getSegTemplate());
-            l.setPrepState("0");
             lessonMapper.insert(l);
         }
         return p.getId();

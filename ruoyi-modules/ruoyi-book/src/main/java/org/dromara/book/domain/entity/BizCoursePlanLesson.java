@@ -58,6 +58,5 @@ public class BizCoursePlanLesson extends BaseEntity {
     /** 本课分段配置 JSON（空则继承 plan） */
     private String segTemplate;
 
-    /** 内容态：'0' 大纲态 / '1' 细备中 / '2' 已备好 */
-    private String prepState;
+    // R1b S3：prep_state 已删列——备课状态唯一权威 = biz_prep_pack.status（VO 输出按 plan_lesson_id join 推导）
 }
