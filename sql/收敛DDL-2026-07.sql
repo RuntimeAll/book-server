@@ -1540,3 +1540,20 @@ ALTER TABLE `biz_class`
 ALTER TABLE `biz_course_plan`
   ADD COLUMN `target_id` bigint DEFAULT NULL COMMENT 'S1 计划归属对象id(biz_student.id 或 biz_class.id,与target_type联合;建计划必传)' AFTER `target_type`,
   ADD KEY `idx_target` (`target_type`,`target_id`);
+
+-- ============================================================
+-- PRD-C-213 修复轮 R1b（备课域数据结构矫正 S2-S5 + BUG-003 防重入）2026-07-05
+-- 台账 = workplace/.prd_ccw/PRD-C/PRD-C-213/bug/PRD-bug.md BUG-003/BUG-013
+-- 拍板：
+--   · S2/S3 pack.status = 备课状态唯一权威：删 biz_course_plan_lesson.prep_state；
+--     课次 VO 的 prepState 键名保留兼容，值改为按 plan_lesson_id join biz_prep_pack 推导（无包='0'）；
+--     biz_schedule_session.prep_status 保留作日历色点缓存（建包/渲染联动 + 绑定/换绑时按包状态回填）。
+--   · S2 一课一包闸：场次已绑课次时从场次入口建/取包一律归并 lesson 口径，不再产生双包（代码层）。
+--   · S5 biz_session_review.parent_msg 删列：家长消息不落库，submit 生成仅返回前端即时显示，
+--     get 按存量 item_results + 备课包段落即时生成（内部词剥离防线原样保留）。
+--   · BUG-003 取消/请假/标已上防重入：仅 session_status='0'(已排) 可操作、不做恢复（BE 闸，代码层，无 DDL）。
+-- ============================================================
+
+ALTER TABLE `biz_course_plan_lesson` DROP COLUMN `prep_state`;
+
+ALTER TABLE `biz_session_review` DROP COLUMN `parent_msg`;
