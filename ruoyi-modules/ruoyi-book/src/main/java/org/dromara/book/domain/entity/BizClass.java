@@ -28,10 +28,16 @@ public class BizClass extends BaseEntity {
     /** 班课名称 */
     private String name;
 
-    /** 年级 */
-    private String grade;
+    /** 年级 1-12（字典 biz_edu_grade；允许 NULL）：当前年级是推导状态（EduTermUtil），不落列 */
+    private Integer gradeNo;
 
-    /** 学科 */
+    /** gradeNo 生效学年起始年（允许 NULL） */
+    private Integer gradeYear;
+
+    /** 教材版本字典码（biz_edu_edition） */
+    private String textbookEdition;
+
+    /** 学科字典码（biz_edu_subject） */
     private String subject;
 
     /** 日历着色 */

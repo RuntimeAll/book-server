@@ -31,14 +31,17 @@ public class BizStudent extends BaseEntity {
     /** 学生姓名 */
     private String name;
 
-    /** 年级 */
-    private String grade;
+    /** 年级 1-12（字典 biz_edu_grade）：= gradeYear 学年就读年级；当前年级/学段是推导状态（EduTermUtil，9/1 进位），不落列 */
+    private Integer gradeNo;
 
-    /** 学科 */
+    /** gradeNo 生效学年起始年（如 2026 = 2026-09-01 起学年；暑期录入「升四」= gradeNo 4 + gradeYear 2026） */
+    private Integer gradeYear;
+
+    /** 教材版本字典码（biz_edu_edition：1浙教/2人教/3北师大/4苏教）；"人教版三年级下册"式全串由推导生成 */
+    private String textbookEdition;
+
+    /** 学科字典码（biz_edu_subject：1数学/2科学/3语文/4英语） */
     private String subject;
-
-    /** 教材/进度环境 */
-    private String textbook;
 
     /** 家长电话 */
     private String parentPhone;

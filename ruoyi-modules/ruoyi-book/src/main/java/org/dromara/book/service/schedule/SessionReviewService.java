@@ -16,6 +16,7 @@ import org.dromara.book.mapper.BizPrepPackMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizSessionReviewMapper;
 import org.dromara.book.mapper.BizStudentMapper;
+import org.dromara.book.util.EduTermUtil;
 import org.dromara.book.util.ScheduleRenderUtil;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
@@ -198,14 +199,17 @@ public class SessionReviewService {
         return parseSegList(pack.getSegs());
     }
 
-    /** 取该场次对象的学科（学生/班级）。 */
+    /** 取该场次对象的学科【标签】（R1a：subject 列存字典码，家长消息要人话，走 EduTermUtil 推导）。 */
     private String subjectOf(BizScheduleSession session) {
+        String code;
         if ("1".equals(session.getTargetType())) {
             BizClass c = classMapper.selectById(session.getTargetId());
-            return c == null ? null : c.getSubject();
+            code = c == null ? null : c.getSubject();
+        } else {
+            BizStudent s = studentMapper.selectById(session.getTargetId());
+            code = s == null ? null : s.getSubject();
         }
-        BizStudent s = studentMapper.selectById(session.getTargetId());
-        return s == null ? null : s.getSubject();
+        return EduTermUtil.subjectLabel(code);
     }
 
     // ─────────────────────── 肖像 delta ───────────────────────

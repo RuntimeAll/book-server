@@ -15,6 +15,7 @@ import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizCoursePlanMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
+import org.dromara.book.util.EduTermUtil;
 import org.dromara.book.util.ScheduleRenderUtil;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
@@ -243,16 +244,16 @@ public class CoursePlanService {
             .eq(BizCoursePlanLesson::getPlanId, planId).orderByAsc(BizCoursePlanLesson::getLessonSeq));
         if (lessons.isEmpty()) throw new ServiceException("计划无课次，无法导出家长课表");
 
-        // 对象名
+        // 对象名（R1a：subject 列存字典码，家长版长图要人话 → EduTermUtil 推导标签）
         String targetName = p.getName();
         String subject = null;
         if (targetId != null) {
             if ("1".equals(p.getTargetType())) {
                 BizClass c = classMapper.selectById(targetId);
-                if (c != null) { targetName = c.getName(); subject = c.getSubject(); }
+                if (c != null) { targetName = c.getName(); subject = EduTermUtil.subjectLabel(c.getSubject()); }
             } else {
                 BizStudent s = studentMapper.selectById(targetId);
-                if (s != null) { targetName = s.getName(); subject = s.getSubject(); }
+                if (s != null) { targetName = s.getName(); subject = EduTermUtil.subjectLabel(s.getSubject()); }
             }
         }
 

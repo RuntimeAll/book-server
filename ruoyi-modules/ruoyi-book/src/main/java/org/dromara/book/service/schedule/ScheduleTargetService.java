@@ -16,6 +16,7 @@ import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizCoursePlanMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
+import org.dromara.book.util.EduTermUtil;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.satoken.utils.LoginHelper;
@@ -71,8 +72,10 @@ public class ScheduleTargetService {
         if (isClass(bo.getTargetType())) {
             BizClass c = new BizClass();
             c.setName(bo.getName());
-            c.setGrade(bo.getGrade());
-            c.setSubject(bo.getSubject());
+            c.setGradeNo(bo.getGradeNo());
+            c.setGradeYear(bo.getGradeYear());
+            c.setTextbookEdition(EduTermUtil.normalizeEdition(bo.getTextbookEdition()));
+            c.setSubject(EduTermUtil.normalizeSubject(bo.getSubject()));
             c.setColor(color);
             c.setProfileJson(profile);
             c.setArchived("0");
@@ -81,9 +84,10 @@ public class ScheduleTargetService {
         }
         BizStudent s = new BizStudent();
         s.setName(bo.getName());
-        s.setGrade(bo.getGrade());
-        s.setSubject(bo.getSubject());
-        s.setTextbook(bo.getTextbook());
+        s.setGradeNo(bo.getGradeNo());
+        s.setGradeYear(bo.getGradeYear());
+        s.setTextbookEdition(EduTermUtil.normalizeEdition(bo.getTextbookEdition()));
+        s.setSubject(EduTermUtil.normalizeSubject(bo.getSubject()));
         s.setParentPhone(bo.getParentPhone());
         s.setColor(color);
         s.setProfileJson(profile);
@@ -107,8 +111,10 @@ public class ScheduleTargetService {
                 throw new ServiceException("班课不存在");
             }
             if (bo.getName() != null) c.setName(bo.getName());
-            c.setGrade(bo.getGrade());
-            c.setSubject(bo.getSubject());
+            c.setGradeNo(bo.getGradeNo());
+            c.setGradeYear(bo.getGradeYear());
+            c.setTextbookEdition(EduTermUtil.normalizeEdition(bo.getTextbookEdition()));
+            c.setSubject(EduTermUtil.normalizeSubject(bo.getSubject()));
             if (bo.getColor() != null && !bo.getColor().isBlank()) c.setColor(bo.getColor());
             classMapper.updateById(c);
             return;
@@ -118,9 +124,10 @@ public class ScheduleTargetService {
             throw new ServiceException("学生不存在");
         }
         if (bo.getName() != null) s.setName(bo.getName());
-        s.setGrade(bo.getGrade());
-        s.setSubject(bo.getSubject());
-        s.setTextbook(bo.getTextbook());
+        s.setGradeNo(bo.getGradeNo());
+        s.setGradeYear(bo.getGradeYear());
+        s.setTextbookEdition(EduTermUtil.normalizeEdition(bo.getTextbookEdition()));
+        s.setSubject(EduTermUtil.normalizeSubject(bo.getSubject()));
         s.setParentPhone(bo.getParentPhone());
         if (bo.getColor() != null && !bo.getColor().isBlank()) s.setColor(bo.getColor());
         studentMapper.updateById(s);
@@ -205,9 +212,7 @@ public class ScheduleTargetService {
                 m.put("id", String.valueOf(s.getId()));
                 m.put("targetType", "0");
                 m.put("name", s.getName());
-                m.put("grade", s.getGrade());
-                m.put("subject", s.getSubject());
-                m.put("textbook", s.getTextbook());
+                putEduDims(m, s.getGradeNo(), s.getGradeYear(), s.getTextbookEdition(), s.getSubject(), today);
                 m.put("parentPhone", s.getParentPhone());
                 m.put("color", s.getColor());
                 m.put("archived", s.getArchived());
@@ -226,8 +231,7 @@ public class ScheduleTargetService {
                 m.put("id", String.valueOf(c.getId()));
                 m.put("targetType", "1");
                 m.put("name", c.getName());
-                m.put("grade", c.getGrade());
-                m.put("subject", c.getSubject());
+                putEduDims(m, c.getGradeNo(), c.getGradeYear(), c.getTextbookEdition(), c.getSubject(), today);
                 m.put("color", c.getColor());
                 m.put("archived", c.getArchived());
                 long stuCount = classStudentMapper.selectCount(
@@ -243,15 +247,14 @@ public class ScheduleTargetService {
     /** 详情（含 profileJson）。 */
     public Map<String, Object> detail(Long id, String targetType) {
         Map<String, Object> m = new LinkedHashMap<>();
+        LocalDate today = LocalDate.now();
         if (isClass(targetType)) {
             BizClass c = classMapper.selectById(id);
             if (c == null) throw new ServiceException("班课不存在");
             m.put("id", String.valueOf(c.getId()));
             m.put("targetType", "1");
             m.put("name", c.getName());
-            m.put("grade", c.getGrade());
-            m.put("subject", c.getSubject());
-            m.put("textbook", null);
+            putEduDims(m, c.getGradeNo(), c.getGradeYear(), c.getTextbookEdition(), c.getSubject(), today);
             m.put("parentPhone", null);
             m.put("color", c.getColor());
             m.put("archived", c.getArchived());
@@ -269,9 +272,7 @@ public class ScheduleTargetService {
             m.put("id", String.valueOf(s.getId()));
             m.put("targetType", "0");
             m.put("name", s.getName());
-            m.put("grade", s.getGrade());
-            m.put("subject", s.getSubject());
-            m.put("textbook", s.getTextbook());
+            putEduDims(m, s.getGradeNo(), s.getGradeYear(), s.getTextbookEdition(), s.getSubject(), today);
             m.put("parentPhone", s.getParentPhone());
             m.put("color", s.getColor());
             m.put("archived", s.getArchived());
@@ -280,6 +281,22 @@ public class ScheduleTargetService {
             m.put("updateTime", s.getUpdateTime());
         }
         return m;
+    }
+
+    /**
+     * 档案学业维输出（R1a 建模拍板）：存储字段 gradeNo/gradeYear/textbookEdition/subject(码) 原样吐；
+     * 🔴 原 grade/textbook 键名保留作 FE 兼容，值改为推导串（"三年级·暑假"/"人教版四年级上册"），
+     * 另给 subjectLabel 供显示（FE 显示层后续批对接）。
+     */
+    private void putEduDims(Map<String, Object> m, Integer gradeNo, Integer gradeYear,
+                            String textbookEdition, String subject, LocalDate today) {
+        m.put("gradeNo", gradeNo);
+        m.put("gradeYear", gradeYear);
+        m.put("textbookEdition", textbookEdition);
+        m.put("subject", subject);
+        m.put("subjectLabel", EduTermUtil.subjectLabel(subject));
+        m.put("grade", EduTermUtil.gradeLabel(gradeNo, gradeYear, today));
+        m.put("textbook", EduTermUtil.textbookLabel(textbookEdition, gradeNo, gradeYear, today));
     }
 
     private void fillAggregates(Map<String, Object> m, String targetType, Long targetId, LocalDate today) {
