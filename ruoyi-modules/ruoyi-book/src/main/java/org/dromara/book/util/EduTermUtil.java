@@ -10,18 +10,19 @@ import java.time.MonthDay;
  * {@code grade_no(1-12) + grade_year(学年锚) + textbook_edition(字典码)}，
  * 展示串（"三年级·暑假"、"人教版四年级上册"）全部由本类按当前日期推导。
  *
- * <p><b>grade_year 语义</b> = grade_no 生效学年的起始年（学年 = 9/1 ~ 次年 8/31）。
- * 暑期录入「升四」即 gradeNo=4、gradeYear=2026（2026-09-01 起学年读四年级）；
- * 当前年级 = gradeNo + (当前学年起始年 - gradeYear)，天然实现 9/1 进位
- * （2026-07 推导得 3 = 三年级·暑假，9/1 起自动变四年级）。
+ * <p><b>grade_year 语义</b>（R5·FAIL-2 定版：学年切换点 = 7/1，暑假归入新学年）
+ * = grade_no 生效学年的起始年（学年 = 7/1 ~ 次年 6/30）。
+ * 暑期录入「升四」即 gradeNo=4、gradeYear=2026（2026-07-01 起即读四年级，暑假=新学年预习期）；
+ * 当前年级 = gradeNo + (当前学年起始年 - gradeYear)，7/1 进位
+ * （2026-07 推导得 4 = 四年级·暑假，与 textbookLabel「暑假=新年级上册」同口径）。
  *
  * <p><b>期段边界</b>（类常量缺省，yml 覆盖口 = {@code edu.term.*}，见
  * {@link org.dromara.book.config.EduTermConfig}）：
  * 7/1-8/31 暑假、9/1-1/15 上学期、1/16-2/15 寒假、2/16-6/30 下学期。
  * 期段码与 biz_course_plan.term_tag 共用同一套字典 biz_term_tag（值=中文文本）。
  *
- * <p><b>册次推导</b>（textbookLabel）：上学期=当前年级上册；寒假/下学期=当前年级下册；
- * 暑假=升入年级（当前+1）上册（预习新学年口径）。
+ * <p><b>册次推导</b>（textbookLabel）：暑假/上学期=当前年级上册（暑假期间「当前年级」已按
+ * 7/1 口径进位到新年级，即预习新学年上册）；寒假/下学期=当前年级下册。
  *
  * @author backend-dev
  */
@@ -75,13 +76,13 @@ public final class EduTermUtil {
         return TERM_SPRING;
     }
 
-    /** 当前学年起始年（9/1 口径：9/1 前属上一学年）。 */
+    /** 当前学年起始年（🔴 7/1 口径：7/1 前属上一学年，暑假归入新学年——与 textbookLabel「暑假=新年级」一致）。 */
     public static int schoolYearStart(LocalDate date) {
-        return MonthDay.from(date).isBefore(autumnStart) ? date.getYear() - 1 : date.getYear();
+        return MonthDay.from(date).isBefore(summerStart) ? date.getYear() - 1 : date.getYear();
     }
 
     /**
-     * 当前年级（9/1 进位）：gradeNo + (当前学年起始年 - gradeYear)，夹在 1..12。
+     * 当前年级（7/1 进位）：gradeNo + (当前学年起始年 - gradeYear)，夹在 1..12。
      * gradeNo 空返回 null；gradeYear 空退化为 gradeNo 原值（无锚不进位）。
      */
     public static Integer currentGradeNo(Integer gradeNo, Integer gradeYear, LocalDate date) {
@@ -113,7 +114,8 @@ public final class EduTermUtil {
 
     /**
      * 教材显示串："人教版四年级上册"（版本 + 年级 + 册次全推导）。
-     * 册次规则：上学期→当前年级上册；寒假/下学期→当前年级下册；暑假→升入年级(当前+1)上册。
+     * 册次规则（7/1 学年口径，currentGradeNo 已在暑假进位到新年级，此处不再 +1）：
+     * 暑假/上学期→当前年级上册；寒假/下学期→当前年级下册。
      * gradeNo 空返回 null；edition 空则省略版本前缀。
      */
     public static String textbookLabel(String edition, Integer gradeNo, Integer gradeYear, LocalDate date) {
@@ -122,18 +124,9 @@ public final class EduTermUtil {
             return null;
         }
         String term = currentTerm(date);
-        int g = cur;
-        String volume;
-        if (TERM_SUMMER.equals(term)) {
-            g = clampGrade(cur + 1);
-            volume = "上册";
-        } else if (TERM_AUTUMN.equals(term)) {
-            volume = "上册";
-        } else {
-            volume = "下册";
-        }
+        String volume = (TERM_SUMMER.equals(term) || TERM_AUTUMN.equals(term)) ? "上册" : "下册";
         String ed = editionLabel(edition);
-        return (ed == null ? "" : ed + "版") + gradeNoLabel(g) + volume;
+        return (ed == null ? "" : ed + "版") + gradeNoLabel(cur) + volume;
     }
 
     /** 版本字典码 → 标签（1浙教/2人教/3北师大/4苏教）；已是中文标签则剥"版"后原样返；空返 null。 */
