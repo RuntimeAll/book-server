@@ -186,9 +186,9 @@ public class ScheduleRenderUtil {
      */
     public String buildPrepSegHtml(String segName, String segStyle, String segTopic,
                                    String segNote, String segRules, List<Map<String, Object>> questions) {
-        boolean special = (segStyle != null && segStyle.contains("★"))
-            || (segRules != null && !segRules.isBlank())
-            || (segName != null && (segName.contains("专项") || segName.contains("奥数") || segName.contains("最值")));
+        // 🔴 D12：仅当 style/rules 真含层级标记（★ 或「第[一二三]层」）才走口诀+三层版式；
+        // 普通段（课内过关 rules="基础6+进阶3" 等）= 平铺题列，不出口诀框/层标题。
+        boolean special = hasLayerMark(segStyle) || hasLayerMark(segRules);
         boolean think = segName != null && segName.contains("思维");
         boolean inner = segName != null && (segName.contains("课内") || segName.contains("同步"));
         String title = (segTopic != null && !segTopic.isBlank()) ? segTopic
@@ -203,6 +203,7 @@ public class ScheduleRenderUtil {
         sb.append(".hd h1{font-family:\"SimHei\",\"黑体\",sans-serif;font-size:19px;letter-spacing:.06em}");
         sb.append(".kj{border:1.5px solid #111;border-radius:6px;padding:7px 12px;margin:8px 0 4px;font-size:12.5px;line-height:1.7}");
         sb.append(".kj b{font-family:\"SimHei\",\"黑体\",sans-serif;font-weight:400}");
+        sb.append(".sub{font-size:12px;color:#444;margin:6px 0 8px}");
         sb.append(".lv{font-family:\"SimHei\",\"黑体\",sans-serif;font-size:14.5px;margin:14px 0 4px;break-after:avoid}");
         sb.append(".q{margin:0 0 6px;break-inside:avoid}");
         sb.append(".q .t b{font-family:\"SimHei\",\"黑体\",sans-serif;font-weight:400}");
@@ -221,6 +222,11 @@ public class ScheduleRenderUtil {
             }
             appendStarLayers(sb, questions);
         } else {
+            // 普通段（课内/思维题）：可保留 rules/note 作副标题文案，但不出口诀框、不出层标题。
+            String subtitle = segNote != null && !segNote.isBlank() ? segNote : segRules;
+            if (subtitle != null && !subtitle.isBlank()) {
+                sb.append("<div class=\"sub\">").append(esc(subtitle)).append("</div>");
+            }
             int n = 1;
             for (Map<String, Object> q : questions) {
                 sb.append(qHtml(n++, stem(q), inner));
@@ -352,12 +358,13 @@ public class ScheduleRenderUtil {
         } else {
             // 思维题固定文案
             sb.append("<div class=\"seg\"><span class=\"k w\">思维题</span><span class=\"x\">思维热身</span></div>");
-            // 专项 = parent_copy
+            // 专项 = parent_copy（家长产物：过内部词防线）
             String zx = l.getParentCopy() != null && !l.getParentCopy().isBlank()
                 ? l.getParentCopy() : (l.getTitle() != null ? l.getTitle() : "专项练习");
+            zx = stripInternalWords(zx);
             sb.append("<div class=\"seg\"><span class=\"k m\">专项</span><span class=\"x\">").append(esc(zx)).append("</span></div>");
-            // 课内 = segTemplate[2].topic
-            String inner = innerTopic(l.getSegTemplate());
+            // 课内 = segTemplate[2].topic（家长产物：过内部词防线）
+            String inner = stripInternalWords(innerTopic(l.getSegTemplate()));
             if (inner != null && !inner.isBlank()) {
                 sb.append("<div class=\"seg\"><span class=\"k s\">课内</span><span class=\"x\">").append(esc(inner)).append("</span></div>");
             }
@@ -393,5 +400,31 @@ public class ScheduleRenderUtil {
     private String esc(String s) {
         if (s == null) return "";
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** style/rules 是否真含层级标记（★ 或「第[一二三]层」）—— D12 专项卷判据。 */
+    private boolean hasLayerMark(String s) {
+        if (s == null || s.isBlank()) {
+            return false;
+        }
+        return s.contains("★") || Pattern.compile("第[一二三]层").matcher(s).find();
+    }
+
+    /** 家长产物内部词防线（family = ★/第N层/N层/素材/挑题/薄弱），确定性剥离。宁可钝不可泄。 */
+    private static final Pattern INTERNAL_WORD = Pattern.compile(
+        "★+|第[一二三四]层|[0-9一二三四]+层|素材[源池]?|挑题|薄弱[项点环]?");
+
+    /** 剥离内部词并压掉多余空白/空括号；供家长消息与家长版长图输出前统一过闸。 */
+    public static String stripInternalWords(String s) {
+        if (s == null || s.isBlank()) {
+            return s;
+        }
+        String out = INTERNAL_WORD.matcher(s).replaceAll("");
+        // 清理剥离后遗留的空括号 / 连续标点 / 多余空白
+        out = out.replaceAll("[（(]\\s*[)）]", "")
+            .replaceAll("[ \\t]{2,}", " ")
+            .replaceAll("[·、,，]{2,}", "·")
+            .trim();
+        return out;
     }
 }

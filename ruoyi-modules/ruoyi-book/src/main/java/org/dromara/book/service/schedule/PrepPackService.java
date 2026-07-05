@@ -52,7 +52,7 @@ public class PrepPackService {
         BizPrepPack pack = existing == null ? new BizPrepPack() : existing;
         pack.setPlanLessonId(bo.getPlanLessonId());
         pack.setSessionId(bo.getSessionId());
-        if (bo.getSegs() != null) pack.setSegs(JsonUtils.toJsonString(bo.getSegs()));
+        if (bo.getSegs() != null) pack.setSegs(normalizeSegs(bo.getSegs()));
         if (existing == null) {
             pack.setStatus("0");
             packMapper.insert(pack);
@@ -96,7 +96,7 @@ public class PrepPackService {
     public void updateSegs(Long packId, Object segs) {
         BizPrepPack pack = packMapper.selectById(packId);
         if (pack == null) throw new ServiceException("备课包不存在");
-        pack.setSegs(segs == null ? null : JsonUtils.toJsonString(segs));
+        pack.setSegs(segs == null ? null : normalizeSegs(segs));
         packMapper.updateById(pack);
         markDoubleState(pack, "1");
     }
@@ -232,6 +232,26 @@ public class PrepPackService {
         List<Map<String, Object>> segs = JsonUtils.parseObject(json, new TypeReference<>() {
         });
         return segs == null ? new ArrayList<>() : segs;
+    }
+
+    /**
+     * segs 存储键名统一 snake_case（question_ids）。收到 camelCase questionIds 也转，
+     * 修 biz_prep_pack.segs camelCase/snake_case 混存。返回规整后 JSON 串。
+     */
+    @SuppressWarnings("unchecked")
+    private String normalizeSegs(Object segs) {
+        List<Map<String, Object>> list = JsonUtils.getObjectMapper().convertValue(
+            segs, new TypeReference<List<Map<String, Object>>>() {
+            });
+        if (list == null) return JsonUtils.toJsonString(segs);
+        for (Map<String, Object> seg : list) {
+            if (seg == null) continue;
+            if (seg.containsKey("questionIds")) {
+                Object v = seg.remove("questionIds");
+                seg.putIfAbsent("question_ids", v);
+            }
+        }
+        return JsonUtils.toJsonString(list);
     }
 
     @SuppressWarnings("unchecked")
