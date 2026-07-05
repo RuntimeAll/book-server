@@ -78,6 +78,15 @@ public class PrepPackService {
             pack = packMapper.selectById(packId);
         } else {
             pack = findByBinding(lessonId, sessionId);
+            // 🔴 回退：sessionId 入参但无 session 级直挂包时，取该场次绑定课次的 lesson 级包
+            // （G13 走 lessonId 装包，pack 挂 plan_lesson_id；FE 从场次表进备课包页只带 sessionId）。
+            if (pack == null && sessionId != null && lessonId == null) {
+                BizScheduleSession s = sessionMapper.selectById(sessionId);
+                if (s != null && s.getPlanLessonId() != null) {
+                    pack = packMapper.selectOne(new LambdaQueryWrapper<BizPrepPack>()
+                        .eq(BizPrepPack::getPlanLessonId, s.getPlanLessonId()));
+                }
+            }
         }
         if (pack == null) return null;
         return packVo(pack);
