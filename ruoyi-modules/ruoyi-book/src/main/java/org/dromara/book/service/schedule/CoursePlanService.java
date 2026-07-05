@@ -312,7 +312,8 @@ public class CoursePlanService {
         String html = renderUtil.buildParentHtml(targetName, subject, p, lessons, lessonToSession);
         int rowsPerCol = (lessons.size() + 1) / 2;
         int height = 140 + rowsPerCol * 70;
-        String file = renderUtil.screenshot(html, "parent_" + planId, 900, height);
+        // BUG-010 去浏览器：HTML → 进程内 PDF → pdfbox 光栅化 PNG（192dpi，布局 900px 不变、位图 2 倍保清晰）
+        String file = renderUtil.renderToPng(html, "parent_" + planId, 900, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);

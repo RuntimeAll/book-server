@@ -85,6 +85,28 @@
             <version>1.3.43</version>
         </dependency>
 
+        <!-- openhtmltopdf：PRD-C-213 BUG-010 备课材料渲染去浏览器化——纯 Java 进程内 HTML→PDF，
+             家长版 PNG 走 HTML→PDF→pdfbox 光栅化（pdfbox 2.0.x 随本依赖传递引入）。
+             ⚠️ 中文字体不打包进 jar：运行期探测系统字体（simhei.ttf / Noto CJK），yml schedule.pdf.font-* 可覆盖。-->
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>1.0.10</version>
+        </dependency>
+        <!-- jsoup：把拼装 HTML（题干为 DB 富文本，非严格 XHTML）规整成 openhtmltopdf 要求的 W3C DOM -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.17.2</version>
+        </dependency>
+
+        <!-- 单测（渲染样张自验 ScheduleRenderUtilTest，@Tag(dev)，默认 skipTests=true 需 -DskipTests=false 跑）-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
 </project>

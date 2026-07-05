@@ -1,33 +1,49 @@
 package org.dromara.book.util;
 
+import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
+import lombok.Data;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.dromara.book.domain.entity.BizCoursePlan;
 import org.dromara.book.domain.entity.BizCoursePlanLesson;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
+import org.jsoup.Jsoup;
+import org.jsoup.helper.W3CDom;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 教学安排渲染工具（PRD-C-213）：HTML 模板拼装 + Edge headless 出 PDF/PNG。
+ * 教学安排渲染工具（PRD-C-213）：HTML 模板拼装 + <b>纯 Java 进程内</b>出 PDF/PNG。
  *
- * <p>PDF（备课包）对照 09a/b/c；PNG（家长版）对照 06。浏览器路径 yml 可配
- * {@code schedule.pdf.browser-path}，默认探测两处 Edge 安装位置；产物落
- * {@code schedule.artifact-dir}（默认 ./prep-artifacts）。
+ * <p>BUG-010 重构（2026-07-05 拍板）：彻底去浏览器——openhtmltopdf(pdfbox) 进程内渲染，
+ * 不再拉本机 Edge（Windows 黑窗 / 每段冷启 / prod 装浏览器三债一次还清）。
+ * 备课材料三段拼一份 HTML、段间强制起新页，一次出<b>一份 PDF</b>；家长版 PNG =
+ * HTML→PDF→pdfbox 光栅化。页数统计 = pdfbox {@code getNumberOfPages()}。
+ *
+ * <p>中文字体不打包进 jar（体积）：yml {@code schedule.pdf.font-main / font-heading}
+ * 覆盖口 + 缺省探测链（Windows 探 C:\Windows\Fonts 纯 TTF；Linux 探 /usr/share/fonts
+ * 常见 Noto/文泉驿/黑体路径）；全 miss 抛 ServiceException 清晰报错。
+ * ⚠️ .ttc 集合字体 openhtmltopdf useFont 不支持，探测链一律跳过（simsun.ttc 等）；
+ * CSS font-family 全部落到已注册字体族（'cjk' 正文 / 'cjkhei' 标题）——版式近似口径。
  *
  * <p>🔴 PDF 只有题目，任何答案/解析字段不得进 HTML；家长版内部字段一律不出现。
  *
@@ -37,16 +53,41 @@ import java.util.regex.Pattern;
 @Component
 public class ScheduleRenderUtil {
 
-    private static final String[] EDGE_PROBE = {
-        "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-        "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+    /** CSS 里唯一认的两个逻辑字体族：正文 / 标题（黑体系）。 */
+    private static final String FAMILY_MAIN = "cjk";
+    private static final String FAMILY_HEAD = "cjkhei";
+
+    /** Windows 探测链——只收纯 TTF（simhei 最稳）；simsun.ttc 为集合字体不支持，不入链。 */
+    private static final String[] WIN_FONT_PROBE = {
+        "C:\\Windows\\Fonts\\simhei.ttf",
+        "C:\\Windows\\Fonts\\simkai.ttf",
+        "C:\\Windows\\Fonts\\simfang.ttf"
     };
 
-    @Value("${schedule.pdf.browser-path:}")
-    private String browserPath;
+    /** Linux 探测链——常见 Noto CJK(otf) / 文泉驿 / 手工拷贝黑体路径（.ttc 不收）。 */
+    private static final String[] LINUX_FONT_PROBE = {
+        "/usr/share/fonts/simhei.ttf",
+        "/usr/share/fonts/chinese/simhei.ttf",
+        "/usr/share/fonts/truetype/simhei.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/opentype/noto/NotoSansSC-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.otf",
+        "/usr/share/fonts/wenquanyi/wqy-microhei/wqy-microhei.ttf",
+        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttf"
+    };
+
+    @Value("${schedule.pdf.font-main:}")
+    private String fontMainPath;
+
+    @Value("${schedule.pdf.font-heading:}")
+    private String fontHeadingPath;
 
     @Value("${schedule.artifact-dir:./prep-artifacts}")
     private String artifactDir;
+
+    /** 解析后的字体缓存 [main, heading]（进程内探测一次）。 */
+    private volatile File[] resolvedFonts;
 
     @Getter
     public static class PdfResult {
@@ -54,6 +95,28 @@ public class ScheduleRenderUtil {
         private final int pages;
         public PdfResult(String file, int pages) { this.file = file; this.pages = pages; }
     }
+
+    /** 段渲染数据（BUG-004：groups 可选段内分组；无 groups 走 questions 平铺/星级）。 */
+    @Data
+    public static class SegData {
+        private String name;
+        private String style;
+        private String topic;
+        private String note;
+        private String rules;
+        /** 题目 [{id, stem, star, qtype}]，stem=biz_question.stem_text 原样。groups 非空时忽略。 */
+        private List<Map<String, Object>> questions = new ArrayList<>();
+        /** 可选段内分组（灰阶小标题），对照原版「基础过关（易错向）」式。 */
+        private List<SegGroup> groups;
+    }
+
+    @Data
+    public static class SegGroup {
+        private String title;
+        private List<Map<String, Object>> questions = new ArrayList<>();
+    }
+
+    // ─────────────────────────── 产物目录 ───────────────────────────
 
     private Path artifactRoot() {
         try {
@@ -70,34 +133,100 @@ public class ScheduleRenderUtil {
         return artifactRoot();
     }
 
-    private String resolveBrowser() {
-        if (browserPath != null && !browserPath.isBlank() && new File(browserPath).exists()) {
-            return browserPath;
+    // ─────────────────────────── 字体探测 ───────────────────────────
+
+    /** 解析正文/标题字体（yml 覆盖口优先，缺省走平台探测链；全 miss 抛清晰报错）。 */
+    private File[] fonts() {
+        File[] cached = resolvedFonts;
+        if (cached != null) return cached;
+        synchronized (this) {
+            if (resolvedFonts != null) return resolvedFonts;
+            File main = fromOverride(fontMainPath, "schedule.pdf.font-main");
+            if (main == null) main = probeFont();
+            if (main == null) {
+                throw new ServiceException("未找到可用中文字体：Windows 需 C:\\Windows\\Fonts\\simhei.ttf 等纯 TTF；"
+                    + "Linux 需安装 Noto CJK(otf)/文泉驿或拷贝 simhei.ttf 到 /usr/share/fonts；"
+                    + "也可在 yml 配置 schedule.pdf.font-main 指向字体文件（.ttc 集合字体不支持）");
+            }
+            File heading = fromOverride(fontHeadingPath, "schedule.pdf.font-heading");
+            if (heading == null) heading = main;
+            log.info("[schedule-render] 字体注册：main={} heading={}", main, heading);
+            resolvedFonts = new File[]{main, heading};
+            return resolvedFonts;
         }
-        for (String p : EDGE_PROBE) {
-            if (new File(p).exists()) return p;
-        }
-        throw new ServiceException("未找到 Edge 浏览器，请在 yml 配置 schedule.pdf.browser-path");
     }
 
-    /** HTML → PDF（--print-to-pdf）。返回相对文件名 + 页数。 */
-    public PdfResult printToPdf(String html, String name) {
+    private File fromOverride(String path, String key) {
+        if (path == null || path.isBlank()) return null;
+        File f = new File(path.trim());
+        if (!f.exists() || !f.isFile()) {
+            throw new ServiceException("yml " + key + " 指向的字体文件不存在：" + path);
+        }
+        if (isTtc(f)) {
+            throw new ServiceException("yml " + key + " 指向 .ttc 集合字体，openhtmltopdf 不支持，请改用纯 TTF/OTF：" + path);
+        }
+        return f;
+    }
+
+    private File probeFont() {
+        boolean windows = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        String[] probe = windows ? WIN_FONT_PROBE : LINUX_FONT_PROBE;
+        for (String p : probe) {
+            File f = new File(p);
+            if (!f.exists() || !f.isFile()) continue;
+            if (isTtc(f)) {
+                log.warn("[schedule-render] 跳过 .ttc 集合字体（不支持）：{}", p);
+                continue;
+            }
+            return f;
+        }
+        return null;
+    }
+
+    private boolean isTtc(File f) {
+        return f.getName().toLowerCase(Locale.ROOT).endsWith(".ttc");
+    }
+
+    // ─────────────────────────── 核心渲染（纯 Java） ───────────────────────────
+
+    /** HTML（宽松）→ jsoup 规整 W3C DOM → openhtmltopdf → PDF bytes。 */
+    private byte[] htmlToPdfBytes(String html) {
+        try {
+            File[] f = fonts();
+            org.w3c.dom.Document w3c = new W3CDom().fromJsoup(Jsoup.parse(html));
+            ByteArrayOutputStream os = new ByteArrayOutputStream(1 << 20);
+            PdfRendererBuilder builder = new PdfRendererBuilder();
+            builder.useFastMode();
+            builder.useFont(f[0], FAMILY_MAIN);
+            builder.useFont(f[1], FAMILY_HEAD);
+            builder.withW3cDocument(w3c, null);
+            builder.toStream(os);
+            builder.run();
+            return os.toByteArray();
+        } catch (ServiceException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ServiceException("PDF 渲染异常：" + e.getMessage());
+        }
+    }
+
+    /** HTML → 一份 PDF 落产物目录。返回相对文件名 + 真页数（pdfbox getNumberOfPages）。 */
+    public PdfResult renderPdf(String html, String name) {
         Path root = artifactRoot();
         String base = safe(name);
-        Path htmlFile = root.resolve(base + ".html");
         Path pdfFile = root.resolve(base + ".pdf");
         try {
-            Files.writeString(htmlFile, html, StandardCharsets.UTF_8);
-            runEdge(new String[]{
-                resolveBrowser(), "--headless=new", "--disable-gpu", "--no-sandbox",
-                "--virtual-time-budget=6000", "--run-all-compositor-stages-before-draw",
-                "--print-to-pdf=" + pdfFile.toAbsolutePath(),
-                htmlFile.toUri().toString()
-            });
-            if (!Files.exists(pdfFile) || Files.size(pdfFile) == 0) {
+            // 留一份 HTML 便于人工对拍样张（非契约产物）
+            Files.writeString(root.resolve(base + ".html"), html, StandardCharsets.UTF_8);
+            byte[] bytes = htmlToPdfBytes(html);
+            if (bytes.length == 0) {
                 throw new ServiceException("PDF 生成失败（产物为空）：" + base);
             }
-            int pages = countPdfPages(pdfFile);
+            Files.write(pdfFile, bytes);
+            int pages;
+            try (PDDocument doc = PDDocument.load(bytes)) {
+                pages = doc.getNumberOfPages();
+            }
             return new PdfResult(pdfFile.getFileName().toString(), pages);
         } catch (ServiceException e) {
             throw e;
@@ -106,22 +235,25 @@ public class ScheduleRenderUtil {
         }
     }
 
-    /** HTML → PNG（--screenshot）。返回相对文件名。 */
-    public String screenshot(String html, String name, int width, int height) {
+    /**
+     * HTML → PNG（家长版长图，BUG-010 去 Edge）：注入 @page 尺寸（width×height px、零边距）
+     * → 进程内出 PDF → pdfbox 光栅化第 1 页。192dpi = CSS px 布局不变、位图 2 倍保清晰。
+     */
+    public String renderToPng(String html, String name, int width, int height) {
         Path root = artifactRoot();
         String base = safe(name);
-        Path htmlFile = root.resolve(base + ".html");
         Path pngFile = root.resolve(base + ".png");
         try {
-            Files.writeString(htmlFile, html, StandardCharsets.UTF_8);
-            runEdge(new String[]{
-                resolveBrowser(), "--headless=new", "--disable-gpu", "--no-sandbox",
-                "--hide-scrollbars", "--force-device-scale-factor=1",
-                "--virtual-time-budget=6000",
-                "--screenshot=" + pngFile.toAbsolutePath(),
-                "--window-size=" + width + "," + height,
-                htmlFile.toUri().toString()
-            });
+            org.jsoup.nodes.Document jdoc = Jsoup.parse(html);
+            jdoc.head().append("<style>@page{size:" + width + "px " + height + "px;margin:0}</style>");
+            byte[] pdf = htmlToPdfBytes(jdoc.outerHtml());
+            try (PDDocument doc = PDDocument.load(pdf)) {
+                PDFRenderer renderer = new PDFRenderer(doc);
+                BufferedImage img = renderer.renderImageWithDPI(0, 192f);
+                if (!ImageIO.write(img, "png", pngFile.toFile())) {
+                    throw new ServiceException("PNG 编码失败：" + base);
+                }
+            }
             if (!Files.exists(pngFile) || Files.size(pngFile) == 0) {
                 throw new ServiceException("PNG 生成失败（产物为空）：" + base);
             }
@@ -133,110 +265,97 @@ public class ScheduleRenderUtil {
         }
     }
 
-    private void runEdge(String[] cmd) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process proc = pb.start();
-        // 读掉输出防阻塞
-        try (var in = proc.getInputStream()) {
-            in.readAllBytes();
-        }
-        boolean done = proc.waitFor(60, TimeUnit.SECONDS);
-        if (!done) {
-            proc.destroyForcibly();
-            throw new ServiceException("浏览器渲染超时");
-        }
-    }
-
-    private int countPdfPages(Path pdf) {
-        try {
-            String raw = new String(Files.readAllBytes(pdf), StandardCharsets.ISO_8859_1);
-            int a = count(raw, "/Type\\s*/Page[^s]");
-            int b = count(raw, "/MediaBox");
-            return Math.max(1, Math.max(a, b));
-        } catch (Exception e) {
-            return 1;
-        }
-    }
-
-    private int count(String s, String regex) {
-        Matcher m = Pattern.compile(regex).matcher(s);
-        int n = 0;
-        while (m.find()) n++;
-        return n;
-    }
-
     private String safe(String name) {
         return name.replaceAll("[^a-zA-Z0-9_\\-]", "_");
     }
 
-    // ─────────────────────────── HTML 模板 ───────────────────────────
+    // ─────────────────────────── 备课材料整包 HTML ───────────────────────────
 
     /**
-     * 备课包一段一卷 HTML（对照 09a/b/c）。
-     * 专项段（style 含 ★ 或有 rules）= 核心口诀 kj 框 + 三层星级；否则朴素题列。
+     * 备课材料全段拼一份 HTML（对照 09a/b/c；BUG-010 单文件拍板）：段间强制起新页。
+     * 专项段（style/rules 真含层级标记）= 核心口诀 kj 框 + 三层星级；
+     * 普通段带 groups = 灰阶小标题分组（BUG-004）；否则平铺题列。
+     * 留白分档（BUG-004）：按题型 选择/判断 20mm、填空 22mm、计算/解答 30mm；
+     * 思维段整段 70mm；题型缺失退回段级现值（课内 20mm / 其余 30mm）。
      * 🔴 仅题目无答案解析。
-     *
-     * @param segName   段名（思维题/奥数专项/课内同步…）
-     * @param segStyle  段风格文案
-     * @param segTopic  段主题（卷头标题）
-     * @param segNote   核心口诀/说明
-     * @param segRules  分层规则
-     * @param questions 题目 [{id, stem, star}]，stem=biz_question.stem_text 原样
      */
-    public String buildPrepSegHtml(String segName, String segStyle, String segTopic,
-                                   String segNote, String segRules, List<Map<String, Object>> questions) {
-        // 🔴 D12：仅当 style/rules 真含层级标记（★ 或「第[一二三]层」）才走口诀+三层版式；
-        // 普通段（课内过关 rules="基础6+进阶3" 等）= 平铺题列，不出口诀框/层标题。
-        boolean special = hasLayerMark(segStyle) || hasLayerMark(segRules);
-        boolean think = segName != null && segName.contains("思维");
-        boolean inner = segName != null && (segName.contains("课内") || segName.contains("同步"));
-        String title = (segTopic != null && !segTopic.isBlank()) ? segTopic
-            : (segName != null ? segName : "练习");
-
+    public String buildPrepPackHtml(List<SegData> segs) {
         StringBuilder sb = new StringBuilder();
-        sb.append("<!DOCTYPE html><meta charset=\"utf-8\"><title>").append(esc(title)).append("</title><style>");
+        sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><title>备课材料</title><style>");
         sb.append("@page{size:A4;margin:15mm 15mm 13mm}");
         sb.append("*{box-sizing:border-box;margin:0;padding:0}");
-        sb.append("body{font-family:\"SimSun\",\"宋体\",serif;color:#111;font-size:13.5px;line-height:1.75}");
+        sb.append("body{font-family:'").append(FAMILY_MAIN).append("';color:#111;font-size:13.5px;line-height:1.75}");
+        sb.append(".seg{page-break-before:always}");
+        sb.append(".seg.first{page-break-before:auto}");
         sb.append(".hd{text-align:center;border-bottom:2px solid #111;padding-bottom:7px;margin-bottom:6px}");
-        sb.append(".hd h1{font-family:\"SimHei\",\"黑体\",sans-serif;font-size:19px;letter-spacing:.06em}");
+        sb.append(".hd h1{font-family:'").append(FAMILY_HEAD).append("';font-size:19px;letter-spacing:.06em;font-weight:normal}");
         sb.append(".kj{border:1.5px solid #111;border-radius:6px;padding:7px 12px;margin:8px 0 4px;font-size:12.5px;line-height:1.7}");
-        sb.append(".kj b{font-family:\"SimHei\",\"黑体\",sans-serif;font-weight:400}");
+        sb.append(".kj b{font-family:'").append(FAMILY_HEAD).append("';font-weight:normal}");
         sb.append(".sub{font-size:12px;color:#444;margin:6px 0 8px}");
-        sb.append(".lv{font-family:\"SimHei\",\"黑体\",sans-serif;font-size:14.5px;margin:14px 0 4px;break-after:avoid}");
-        sb.append(".q{margin:0 0 6px;break-inside:avoid}");
-        sb.append(".q .t b{font-family:\"SimHei\",\"黑体\",sans-serif;font-weight:400}");
+        sb.append(".lv{font-family:'").append(FAMILY_HEAD).append("';font-size:14.5px;margin:14px 0 4px;page-break-after:avoid}");
+        sb.append(".grp{font-family:'").append(FAMILY_HEAD).append("';font-size:12.5px;color:#555;")
+            .append("background:#f0f0f0;border-left:3px solid #9a9a9a;padding:2px 8px;margin:12px 0 6px;page-break-after:avoid}");
+        sb.append(".q{margin:0 0 6px;page-break-inside:avoid}");
+        sb.append(".q .t b{font-family:'").append(FAMILY_HEAD).append("';font-weight:normal}");
         sb.append(".q img{max-width:100%}");
-        sb.append(".sp{height:").append(think ? "70mm" : (inner ? "20mm" : "30mm")).append("}");
-        sb.append(".sp.s{height:22mm}");
         sb.append(".foot{margin-top:8mm;text-align:center;font-size:11px;color:#666}");
-        sb.append("</style>");
+        sb.append("</style></head><body>");
+        for (int i = 0; i < segs.size(); i++) {
+            appendSeg(sb, segs.get(i), i == 0);
+        }
+        sb.append("<div class=\"foot\">— 完 —</div></body></html>");
+        return sb.toString();
+    }
+
+    private void appendSeg(StringBuilder sb, SegData seg, boolean first) {
+        String name = seg.getName();
+        boolean think = name != null && name.contains("思维");
+        boolean inner = name != null && (name.contains("课内") || name.contains("同步"));
+        boolean grouped = seg.getGroups() != null && !seg.getGroups().isEmpty();
+        // 🔴 D12：仅当 style/rules 真含层级标记（★ 或「第[一二三]层」）才走口诀+三层版式；
+        // 带 groups 的段优先分组版式（BUG-004 自定义两层结构）。
+        boolean special = !grouped && (hasLayerMark(seg.getStyle()) || hasLayerMark(seg.getRules()));
+        String title = seg.getTopic() != null && !seg.getTopic().isBlank() ? seg.getTopic()
+            : (name != null ? name : "练习");
+
+        sb.append("<div class=\"seg").append(first ? " first" : "").append("\">");
         sb.append("<div class=\"hd\"><h1>").append(esc(title)).append("</h1></div>");
 
         if (special) {
-            String kj = segNote != null && !segNote.isBlank() ? segNote
-                : (segRules != null ? segRules : "");
+            String kj = seg.getNote() != null && !seg.getNote().isBlank() ? seg.getNote()
+                : (seg.getRules() != null ? seg.getRules() : "");
             if (!kj.isBlank()) {
                 sb.append("<div class=\"kj\"><b>核心口诀</b>　").append(esc(kj)).append("</div>");
             }
-            appendStarLayers(sb, questions);
+            appendStarLayers(sb, seg.getQuestions(), think, inner);
         } else {
-            // 普通段（课内/思维题）：可保留 rules/note 作副标题文案，但不出口诀框、不出层标题。
-            String subtitle = segNote != null && !segNote.isBlank() ? segNote : segRules;
+            // 普通段：note/rules 作副标题文案，不出口诀框、不出层标题。
+            String subtitle = seg.getNote() != null && !seg.getNote().isBlank() ? seg.getNote() : seg.getRules();
             if (subtitle != null && !subtitle.isBlank()) {
                 sb.append("<div class=\"sub\">").append(esc(subtitle)).append("</div>");
             }
             int n = 1;
-            for (Map<String, Object> q : questions) {
-                sb.append(qHtml(n++, stem(q), inner));
+            if (grouped) {
+                // BUG-004：段内分组灰阶小标题（对照原版「基础过关（易错向）」式），题号跨组连续
+                for (SegGroup g : seg.getGroups()) {
+                    if (g.getTitle() != null && !g.getTitle().isBlank()) {
+                        sb.append("<div class=\"grp\">").append(esc(g.getTitle())).append("</div>");
+                    }
+                    for (Map<String, Object> q : g.getQuestions()) {
+                        sb.append(qHtml(n++, q, think, inner));
+                    }
+                }
+            } else {
+                for (Map<String, Object> q : seg.getQuestions()) {
+                    sb.append(qHtml(n++, q, think, inner));
+                }
             }
         }
-        sb.append("<div class=\"foot\">— 完 —</div>");
-        return sb.toString();
+        sb.append("</div>");
     }
 
-    private void appendStarLayers(StringBuilder sb, List<Map<String, Object>> questions) {
+    private void appendStarLayers(StringBuilder sb, List<Map<String, Object>> questions,
+                                  boolean think, boolean inner) {
         String[] heads = {
             "第一层 ★ 基础练习",
             "第二层 ★★ 挑战进阶",
@@ -250,7 +369,7 @@ public class ScheduleRenderUtil {
             if (group.isEmpty()) continue;
             sb.append("<div class=\"lv\">").append(heads[layer - 1]).append("</div>");
             for (Map<String, Object> q : group) {
-                sb.append(qHtml(n++, stem(q), false));
+                sb.append(qHtml(n++, q, think, inner));
             }
         }
     }
@@ -270,14 +389,34 @@ public class ScheduleRenderUtil {
         return s == null ? "" : String.valueOf(s);
     }
 
-    private String qHtml(int n, String stemHtml, boolean small) {
-        return "<div class=\"q\"><div class=\"t\"><b>" + n + ".</b>　" + stemHtml + "</div>"
-            + "<div class=\"sp" + (small ? " s" : "") + "\"></div></div>";
+    private String qHtml(int n, Map<String, Object> q, boolean think, boolean inner) {
+        return "<div class=\"q\"><div class=\"t\"><b>" + n + ".</b>　" + stem(q) + "</div>"
+            + "<div style=\"height:" + spacerHeight(q, think, inner) + "\"></div></div>";
     }
+
+    /**
+     * 答题留白分档（BUG-004）：思维段整段 70mm（现状口径）；否则按题型
+     * 选择(1)/判断(3) 20mm、填空(2/4) 22mm、计算/解答(5) 30mm；
+     * 题型缺失退回段级现值（课内 20mm / 其余 30mm）。
+     */
+    private String spacerHeight(Map<String, Object> q, boolean think, boolean inner) {
+        if (think) return "70mm";
+        Object t = q.get("qtype");
+        String v = t == null ? "" : String.valueOf(t).trim();
+        return switch (v) {
+            case "1", "3" -> "20mm";
+            case "2", "4" -> "22mm";
+            case "5" -> "30mm";
+            default -> inner ? "20mm" : "30mm";
+        };
+    }
+
+    // ─────────────────────────── 家长版长图 HTML ───────────────────────────
 
     /**
      * 家长版两列长图 HTML（对照 06）。🔴 内部字段（素材源/思维动作/层数/星级/prep态/题数/肖像/吃透课编号）不出现。
      * 行文案：思维题→"思维热身"固定；专项→parent_copy；课内→segTemplate[2].topic。测试课=琥珀底。
+     * ⚠️ openhtmltopdf 不支持 flex/grid/CSS 变量——版式用 table 实现（BUG-010 去浏览器化重排，视觉近似原版）。
      */
     public String buildParentHtml(String targetName, String subject, BizCoursePlan plan,
                                   List<BizCoursePlanLesson> lessons,
@@ -286,58 +425,61 @@ public class ScheduleRenderUtil {
         int leftCount = (total + 1) / 2;
 
         StringBuilder sb = new StringBuilder();
-        sb.append("<!DOCTYPE html><meta charset=\"utf-8\"><title>").append(esc(targetName)).append(" · 课程安排</title><style>");
-        sb.append(":root{--teal:#0f766e;--deep:#0b5d56;--soft:#e6f3f1;--ink:#22372f;--sub:#5d6f6a;--faint:#90a29d;--bd:#d4e0dc;--amber:#9a5b12;--amber-soft:#fdf3e3}");
+        sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><title>")
+            .append(esc(targetName)).append(" · 课程安排</title><style>");
         sb.append("*{box-sizing:border-box;margin:0;padding:0}");
-        sb.append("body{font-family:\"Microsoft YaHei\",\"PingFang SC\",sans-serif;color:var(--ink);background:#fff;font-size:13px;line-height:1.55;width:900px}");
+        sb.append("body{font-family:'").append(FAMILY_HEAD).append("','").append(FAMILY_MAIN)
+            .append("';color:#22372f;background:#fff;font-size:13px;line-height:1.55;width:900px}");
         sb.append(".page{padding:22px 22px 16px}");
-        sb.append(".hd{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:2.5px solid var(--teal);margin-bottom:12px}");
-        sb.append(".hd h1{font-size:19px;font-weight:800}");
-        sb.append(".hd .m{font-size:12px;color:var(--sub);text-align:right;line-height:1.6}");
-        sb.append(".hd .m b{color:var(--deep)}");
-        sb.append(".sub{font-size:11.5px;color:var(--faint);margin-bottom:10px}");
-        sb.append(".cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}");
-        sb.append(".ls{border:1px solid var(--bd);border-radius:10px;overflow:hidden}");
-        sb.append(".row{display:flex;border-top:1px solid var(--bd)}");
-        sb.append(".row:first-child{border-top:none}");
-        sb.append(".row:nth-child(even){background:#fafdfc}");
-        sb.append(".dt{flex:none;width:64px;padding:8px 6px 8px 10px;border-right:1px solid var(--bd);display:flex;flex-direction:column;justify-content:center}");
+        sb.append("table{border-collapse:collapse}");
+        sb.append(".hdt{width:100%;border-bottom:2.5px solid #0f766e;margin-bottom:12px}");
+        sb.append(".hdt h1{font-size:19px;font-weight:bold;padding-bottom:10px}");
+        sb.append(".hdt td.m{font-size:12px;color:#5d6f6a;text-align:right;vertical-align:bottom;padding-bottom:10px;line-height:1.6}");
+        sb.append(".hdt td.m b{color:#0b5d56}");
+        sb.append(".sub{font-size:11.5px;color:#90a29d;margin-bottom:10px}");
+        sb.append(".cols{width:100%;table-layout:fixed}");
+        sb.append(".cols td.colc{width:50%;vertical-align:top;padding:0 6px}");
+        sb.append(".ls{width:100%;border:1px solid #d4e0dc;border-radius:10px}");
+        sb.append(".ls td{border-top:1px solid #d4e0dc}");
+        sb.append(".ls tr.r0 td{border-top:none}");
+        sb.append(".ls tr.alt td{background:#fafdfc}");
+        sb.append(".ls tr.test td{background:#fdf3e3}");
+        sb.append("td.dt{width:64px;padding:8px 6px 8px 10px;border-right:1px solid #d4e0dc;vertical-align:middle}");
+        sb.append(".dt .sq{display:block;font-size:10px;color:#90a29d;line-height:1.45}");
         sb.append(".dt b{font-size:13.5px}");
-        sb.append(".dt span{font-size:10px;color:var(--faint);line-height:1.45}");
-        sb.append(".ct{flex:1;padding:7px 10px 7px 9px;display:flex;flex-direction:column;gap:2px}");
-        sb.append(".seg{display:flex;gap:6px;align-items:baseline}");
-        sb.append(".k{flex:none;font-size:10px;font-weight:700;border-radius:4px;padding:0 5px;line-height:16px}");
-        sb.append(".k.w{color:var(--deep);background:var(--soft)}");
-        sb.append(".k.m{color:#fff;background:var(--teal)}");
-        sb.append(".k.s{color:var(--sub);background:#edf1ef}");
-        sb.append(".seg .x{font-size:12px;line-height:1.45}");
-        sb.append(".row.test{background:var(--amber-soft)}");
-        sb.append(".row.test .tt{font-size:12.5px;font-weight:800;color:var(--amber)}");
-        sb.append(".row.test .ts{font-size:11px;color:var(--amber);opacity:.85}");
-        sb.append(".ft{margin-top:10px;font-size:11px;color:var(--faint);text-align:center}");
-        sb.append("</style>");
+        sb.append("td.ct{padding:7px 10px 7px 9px;vertical-align:middle}");
+        sb.append(".seg{margin:1px 0}");
+        sb.append(".k{font-size:10px;font-weight:bold;border-radius:4px;padding:0 5px;line-height:16px;display:inline-block}");
+        sb.append(".k.w{color:#0b5d56;background:#e6f3f1}");
+        sb.append(".k.m{color:#fff;background:#0f766e}");
+        sb.append(".k.s{color:#5d6f6a;background:#edf1ef}");
+        sb.append(".x{font-size:12px;line-height:1.45}");
+        sb.append(".tt{font-size:12.5px;font-weight:bold;color:#9a5b12}");
+        sb.append(".ts{font-size:11px;color:#9a5b12}");
+        sb.append(".ft{margin-top:10px;font-size:11px;color:#90a29d;text-align:center}");
+        sb.append("</style></head><body>");
 
         sb.append("<div class=\"page\">");
-        sb.append("<div class=\"hd\"><h1>").append(esc(targetName)).append(" · 课程安排</h1>");
+        sb.append("<table class=\"hdt\"><tr><td><h1>").append(esc(targetName)).append(" · 课程安排</h1></td>");
         String meta = (plan.getYear() != null ? plan.getYear() + " " : "")
             + (plan.getTermTag() != null ? plan.getTermTag() : "")
             + " · 共 " + total + " 次";
-        sb.append("<div class=\"m\"><b>").append(esc(meta.trim())).append("</b></div></div>");
+        sb.append("<td class=\"m\"><b>").append(esc(meta.trim())).append("</b></td></tr></table>");
         sb.append("<div class=\"sub\">每次课三段：思维题 → 奥数专项 → 课内同步</div>");
-        sb.append("<div class=\"cols\">");
-        sb.append("<div class=\"ls\">");
+        sb.append("<table class=\"cols\"><tr><td class=\"colc\"><table class=\"ls\">");
         for (int i = 0; i < total; i++) {
-            if (i == leftCount) sb.append("</div><div class=\"ls\">");
-            sb.append(rowHtml(lessons.get(i), lessonToSession));
+            if (i == leftCount) sb.append("</table></td><td class=\"colc\"><table class=\"ls\">");
+            int inCol = i < leftCount ? i : i - leftCount;
+            sb.append(rowHtml(lessons.get(i), lessonToSession, inCol));
         }
-        sb.append("</div></div>");
+        sb.append("</table></td></tr></table>");
         String ftSubject = subject != null ? subject : "课程";
         sb.append("<div class=\"ft\">").append(esc(ftSubject)).append(" · 课程安排</div>");
-        sb.append("</div>");
+        sb.append("</div></body></html>");
         return sb.toString();
     }
 
-    private String rowHtml(BizCoursePlanLesson l, Map<Long, BizScheduleSession> lessonToSession) {
+    private String rowHtml(BizCoursePlanLesson l, Map<Long, BizScheduleSession> lessonToSession, int inColIndex) {
         boolean test = "1".equals(l.getLessonType());
         BizScheduleSession s = lessonToSession.get(l.getId());
         String dateStr = "—";
@@ -348,28 +490,33 @@ public class ScheduleRenderUtil {
             weekTime = weekday(d) + (s.getStartTime() != null ? " " + trimSec(s.getStartTime()) : "");
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("<div class=\"row").append(test ? " test" : "").append("\">");
-        sb.append("<div class=\"dt\"><span>第 ").append(l.getLessonSeq()).append(" 次</span><b>")
-            .append(dateStr).append("</b><span>").append(esc(weekTime)).append("</span></div>");
-        sb.append("<div class=\"ct\">");
+        sb.append("<tr class=\"row");
+        if (inColIndex == 0) sb.append(" r0");
+        if (inColIndex % 2 == 1) sb.append(" alt");
+        if (test) sb.append(" test");
+        sb.append("\">");
+        sb.append("<td class=\"dt\"><span class=\"sq\">第 ").append(l.getLessonSeq()).append(" 次</span><b>")
+            .append(dateStr).append("</b><span class=\"sq\">").append(esc(weekTime)).append("</span></td>");
+        sb.append("<td class=\"ct\">");
         if (test) {
-            sb.append("<div class=\"tt\">🧪 ").append(esc(l.getTitle() == null ? "测试" : l.getTitle())).append("</div>");
+            // ⚠️ 原版 🧪 emoji 去除：系统中文字体无 emoji 字形（openhtmltopdf 缺字形出豆腐块）
+            sb.append("<div class=\"tt\">").append(esc(l.getTitle() == null ? "测试" : l.getTitle())).append("</div>");
             sb.append("<div class=\"ts\">阶段综合检测</div>");
         } else {
             // 思维题固定文案
-            sb.append("<div class=\"seg\"><span class=\"k w\">思维题</span><span class=\"x\">思维热身</span></div>");
+            sb.append("<div class=\"seg\"><span class=\"k w\">思维题</span> <span class=\"x\">思维热身</span></div>");
             // 专项 = parent_copy（家长产物：过内部词防线）
             String zx = l.getParentCopy() != null && !l.getParentCopy().isBlank()
                 ? l.getParentCopy() : (l.getTitle() != null ? l.getTitle() : "专项练习");
             zx = stripInternalWords(zx);
-            sb.append("<div class=\"seg\"><span class=\"k m\">专项</span><span class=\"x\">").append(esc(zx)).append("</span></div>");
+            sb.append("<div class=\"seg\"><span class=\"k m\">专项</span> <span class=\"x\">").append(esc(zx)).append("</span></div>");
             // 课内 = segTemplate[2].topic（家长产物：过内部词防线）
             String inner = stripInternalWords(innerTopic(l.getSegTemplate()));
             if (inner != null && !inner.isBlank()) {
-                sb.append("<div class=\"seg\"><span class=\"k s\">课内</span><span class=\"x\">").append(esc(inner)).append("</span></div>");
+                sb.append("<div class=\"seg\"><span class=\"k s\">课内</span> <span class=\"x\">").append(esc(inner)).append("</span></div>");
             }
         }
-        sb.append("</div></div>");
+        sb.append("</td></tr>");
         return sb.toString();
     }
 
