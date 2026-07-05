@@ -10,12 +10,14 @@ import org.dromara.book.domain.bo.SessionUpdateBo;
 import org.dromara.book.domain.entity.BizClass;
 import org.dromara.book.domain.entity.BizCoursePlan;
 import org.dromara.book.domain.entity.BizCoursePlanLesson;
+import org.dromara.book.domain.entity.BizPrepPack;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.domain.entity.BizStudent;
 import org.dromara.book.mapper.BizClassMapper;
 import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizCoursePlanMapper;
+import org.dromara.book.mapper.BizPrepPackMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
@@ -52,6 +54,23 @@ public class ScheduleSessionService {
     private final BizStudentMapper studentMapper;
     private final BizClassMapper classMapper;
     private final BizQuestionMapper questionMapper;
+    private final BizPrepPackMapper prepPackMapper;
+
+    /**
+     * R1b S3 反向回填：场次新绑定/换绑到已有备课包的课次时，session.prep_status（日历色点缓存）
+     * 按该课次包状态回填。一次 in 查询出 lessonId → pack.status 映射（无包课次不入 map，取值按 '0' 兜底）。
+     */
+    private Map<Long, String> lessonPackStatus(List<Long> lessonIds) {
+        Map<Long, String> map = new LinkedHashMap<>();
+        List<Long> ids = lessonIds == null ? List.of()
+            : lessonIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return map;
+        for (BizPrepPack p : prepPackMapper.selectList(new LambdaQueryWrapper<BizPrepPack>()
+            .in(BizPrepPack::getPlanLessonId, ids))) {
+            map.put(p.getPlanLessonId(), p.getStatus());
+        }
+        return map;
+    }
 
     // ─────────────────────── 冲突检测 ───────────────────────
 
@@ -184,6 +203,15 @@ public class ScheduleSessionService {
             }
         }
 
+        // R1b S3：候选课次（autoBind 队列 + 显式指定）一次性取包状态，供新场次 prep_status 回填
+        List<Long> candidateLessons = new ArrayList<>(autoLessonQueue);
+        if (bo.getItems() != null) {
+            for (SessionItemBo it : bo.getItems()) {
+                if (it != null && it.getPlanLessonId() != null) candidateLessons.add(it.getPlanLessonId());
+            }
+        }
+        Map<Long, String> packStatus = lessonPackStatus(candidateLessons);
+
         List<Map<String, Object>> created = new ArrayList<>();
         if (bo.getItems() != null) {
             for (SessionItemBo it : bo.getItems()) {
@@ -206,6 +234,10 @@ public class ScheduleSessionService {
                     lessonId = autoLessonQueue.get(autoIdx++);
                 }
                 s.setPlanLessonId(lessonId);
+                // R1b S3 反向回填：绑到已有包的课次（先装包后排课）→ prep_status 按包状态回填
+                if (lessonId != null && packStatus.containsKey(lessonId)) {
+                    s.setPrepStatus(packStatus.get(lessonId));
+                }
                 sessionMapper.insert(s);
                 created.add(sessionVo(s));
             }
@@ -217,11 +249,17 @@ public class ScheduleSessionService {
 
     // ─────────────────────── 顺延（leave/cancel） ───────────────────────
 
-    /** 请假/取消 + 触发顺延（契约§五-2）。newStatus='2' 请假 / '3' 取消。 */
+    /**
+     * 请假/取消 + 触发顺延（契约§五-2）。newStatus='2' 请假 / '3' 取消。
+     * R1b BUG-003 防重入闸：仅「已排」('0') 场次可操作——已取消/已上场次重复触发会把顺延链再跑一遍腐蚀数据。
+     */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> leaveOrCancel(Long sessionId, String newStatus) {
         BizScheduleSession event = sessionMapper.selectById(sessionId);
         if (event == null) throw new ServiceException("场次不存在");
+        if (!"0".equals(event.getSessionStatus())) {
+            throw new ServiceException("仅「已排」场次可请假/取消");
+        }
         event.setSessionStatus(newStatus);
         sessionMapper.updateById(event);
 
@@ -334,6 +372,9 @@ public class ScheduleSessionService {
             .filter(lid -> !occupied.contains(lid))
             .toList();
 
+        // R1b S3：换绑后 prep_status 按新课次包状态回填（无包/置空 → '0'）
+        Map<Long, String> packStatus = lessonPackStatus(lessonQueue);
+
         int rebound = 0;
         int unbound = 0;
         int idx = 0;
@@ -341,6 +382,7 @@ public class ScheduleSessionService {
             Long lid = idx < lessonQueue.size() ? lessonQueue.get(idx++) : null;
             s.setPlanId(newPlanId);
             s.setPlanLessonId(lid);
+            s.setPrepStatus(lid == null ? "0" : packStatus.getOrDefault(lid, "0"));
             sessionMapper.updateById(s);
             if (lid != null) {
                 rebound++;
@@ -356,8 +398,12 @@ public class ScheduleSessionService {
 
     // ─────────────────────── 单场次操作 ───────────────────────
 
+    /** 标已上。R1b BUG-003 防重入闸：仅「已排」('0') 场次可标。 */
     public void markDone(Long id) {
         BizScheduleSession s = require(id);
+        if (!"0".equals(s.getSessionStatus())) {
+            throw new ServiceException("该场次状态不可标记已上");
+        }
         s.setSessionStatus("1");
         sessionMapper.updateById(s);
     }
@@ -368,14 +414,26 @@ public class ScheduleSessionService {
         sessionMapper.updateById(s);
     }
 
-    /** 通用改：改期(改时间不触发顺延)/note/rebind(改绑只改本场)。 */
+    /** 通用改：改期(改时间不触发顺延)/note/rebind(改绑只改本场，plan_id 随课次同步 = R1b S4)。 */
     public void update(Long id, SessionUpdateBo bo) {
         BizScheduleSession s = require(id);
         if (bo.getDate() != null) s.setSessionDate(LocalDate.parse(bo.getDate()));
         if (bo.getStart() != null) s.setStartTime(bo.getStart());
         if (bo.getEnd() != null) s.setEndTime(bo.getEnd());
         if (bo.getNote() != null) s.setNote(bo.getNote());
-        if (bo.getPlanLessonId() != null) s.setPlanLessonId(bo.getPlanLessonId());
+        if (bo.getPlanLessonId() != null) {
+            // R1b S4：改绑课次时由 lesson 反查 plan_id 同步，杜绝 plan_lesson_id 与 plan_id 漂移
+            BizCoursePlanLesson lesson = lessonMapper.selectById(bo.getPlanLessonId());
+            if (lesson == null) {
+                throw new ServiceException("课次不存在：planLessonId=" + bo.getPlanLessonId());
+            }
+            s.setPlanLessonId(bo.getPlanLessonId());
+            s.setPlanId(lesson.getPlanId());
+            // R1b S3 反向回填：改绑到已有包的课次 → prep_status 按包状态回填（无包='0'）
+            BizPrepPack pack = prepPackMapper.selectOne(new LambdaQueryWrapper<BizPrepPack>()
+                .eq(BizPrepPack::getPlanLessonId, bo.getPlanLessonId()));
+            s.setPrepStatus(pack == null ? "0" : pack.getStatus());
+        }
         sessionMapper.updateById(s);
     }
 
@@ -411,7 +469,8 @@ public class ScheduleSessionService {
             .eq(BizScheduleSession::getCreateBy, uid)
             .eq(targetId != null, BizScheduleSession::getTargetId, targetId)
             .eq(status != null && !status.isBlank(), BizScheduleSession::getSessionStatus, status)
-            .orderByDesc(BizScheduleSession::getSessionDate);
+            // R1b S4：改升序，与 FE 本地升序对齐
+            .orderByAsc(BizScheduleSession::getSessionDate);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (BizScheduleSession s : sessionMapper.selectList(w)) rows.add(sessionVo(s));
         return pageResult(rows);
