@@ -115,5 +115,15 @@ public class QuestionDetailVo extends QuestionItemVo {
      */
     private List<QuestionModelVo> models;
 
+    // ── PRD-C-213 私有题池增列（备课包段内题显示★星级与来源）──
+    /** 星级：'1' ★ / '2' ★★ / '3' ★★★（biz_question.star_level，专项卷分层；无则 null）。 */
+    private String starLevel;
+
+    /** 素材源（biz_question.source_ref，如"学而思四年级P25"；无则 null）。 */
+    private String sourceRef;
+
+    /** 专项名（biz_question.topic_tag，自由文本字典化后置；无则 null）。 */
+    private String topicTag;
+
     // examYear / examPaperName / labelStatus 已在基类 QuestionItemVo 声明（PRD-C-204 selectById 一并回填）。
 }

@@ -64,6 +64,10 @@
         <result property="explain" column="explain_resolved"/>
         <result property="explainImg" column="explain_img_url"/>
         <result property="fileBin" column="file_bin_url"/>
+        <!-- PRD-C-213 私有题池增列 -->
+        <result property="starLevel" column="star_level"/>
+        <result property="sourceRef" column="source_ref"/>
+        <result property="topicTag" column="topic_tag"/>
     </resultMap>
 
     <!--
@@ -180,7 +184,8 @@
             (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.stem_text_content_id)    AS stem_text_content,
             (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.answer_text_content_id)  AS answer_text_content,
             (SELECT bt.content FROM biz_text_content bt WHERE bt.id = q.analyze_text_content_id) AS analyze_text_content,
-            q.label_status AS label_status
+            q.label_status AS label_status,
+            q.star_level, q.source_ref, q.topic_tag
         FROM biz_question q
         LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_text_content tc_a ON tc_a.question_id = q.id AND tc_a.content_type = 'A'
@@ -221,7 +226,8 @@
             q.create_by,
             UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
             UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
-            q.update_by
+            q.update_by,
+            q.star_level, q.source_ref, q.topic_tag
         FROM biz_question q
         LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
         LEFT JOIN biz_text_content tc_a ON tc_a.question_id = q.id AND tc_a.content_type = 'A'

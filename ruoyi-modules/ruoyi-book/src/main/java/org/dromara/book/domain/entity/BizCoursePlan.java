@@ -1,0 +1,50 @@
+package org.dromara.book.domain.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import org.dromara.common.mybatis.core.domain.BaseEntity;
+
+import java.io.Serial;
+
+/**
+ * 课程计划实体（biz_course_plan，PRD-C-213）。
+ *
+ * <p>🔴 无 total_lessons 列（= count(lessons) 实时聚合）；无 target 绑定列（绑定活在 session.plan_id）。
+ *
+ * @author backend-dev
+ */
+@Data
+@EqualsAndHashCode(callSuper = true)
+@TableName("biz_course_plan")
+public class BizCoursePlan extends BaseEntity {
+
+    @Serial
+    private static final long serialVersionUID = 1L;
+
+    @TableId(value = "id", type = IdType.AUTO)
+    private Long id;
+
+    /** 计划名称 */
+    private String name;
+
+    /** 适配对象类型：'0' 学生 / '1' 班级 */
+    private String targetType;
+
+    /** 期段（字典：暑假/上学期/寒假/下学期） */
+    private String termTag;
+
+    /** 年份 */
+    private Integer year;
+
+    /** 素材池说明 */
+    private String materialNote;
+
+    /** 默认分段模板 JSON */
+    private String defaultSegTemplate;
+
+    /** 状态：'0' 草稿 / '1' 启用 / '2' 归档 */
+    private String status;
+}
