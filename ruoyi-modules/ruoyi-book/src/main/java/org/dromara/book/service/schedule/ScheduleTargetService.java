@@ -149,8 +149,15 @@ public class ScheduleTargetService {
         }
     }
 
-    /** 归档/取消归档。 */
-    public void setArchived(Long id, String targetType, String archived) {
+    /**
+     * 归档/取消归档。
+     * <p>BUG-015：归档（archived='1'）时联动取消该对象未来未上场次（{@link #cancelFutureSessions}）——
+     * 直接批量置「取消」，不走 leaveOrCancel（对象已终止服务，不顺延、不触发防重入闸）。
+     * 取消归档（archived='0'）不恢复场次（要复课走重新排课）。班课同口径。
+     * @return 归档时联动取消的场次数；取消归档恒 0。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public int setArchived(Long id, String targetType, String archived) {
         if (isClass(targetType)) {
             BizClass c = classMapper.selectById(id);
             if (c == null) throw new ServiceException("班课不存在");
@@ -162,20 +169,47 @@ public class ScheduleTargetService {
             s.setArchived(archived);
             studentMapper.updateById(s);
         }
+        return "1".equals(archived) ? cancelFutureSessions(targetType, id) : 0;
     }
 
-    /** 归档/取消归档（先查两表判类型，供无 targetType 的归档端点用）。 */
-    public void archiveAuto(Long id, String archived) {
+    /**
+     * 归档/取消归档（先查两表判类型，供无 targetType 的归档端点用）。
+     * BUG-015：归档联动取消未来未上场次，返回取消数。
+     * @return 归档时联动取消的场次数；取消归档恒 0。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public int archiveAuto(Long id, String archived) {
+        String targetType;
         BizStudent s = studentMapper.selectById(id);
         if (s != null) {
             s.setArchived(archived);
             studentMapper.updateById(s);
-            return;
+            targetType = "0";
+        } else {
+            BizClass c = classMapper.selectById(id);
+            if (c == null) throw new ServiceException("对象不存在");
+            c.setArchived(archived);
+            classMapper.updateById(c);
+            targetType = "1";
         }
-        BizClass c = classMapper.selectById(id);
-        if (c == null) throw new ServiceException("对象不存在");
-        c.setArchived(archived);
-        classMapper.updateById(c);
+        return "1".equals(archived) ? cancelFutureSessions(targetType, id) : 0;
+    }
+
+    /**
+     * BUG-015 归档联动：把该对象（targetType+targetId 匹配）session_status='0' 且 session_date&gt;=今天
+     * 的场次批量置「取消」('3')。外部占位（session_type='3'）无题型过滤 → 一并取消（对象归档占位无意义）。
+     * 🔴 直接批量 update，不走 leaveOrCancel（归档语义不顺延、不跑防重入闸）。
+     * @return 取消的场次数
+     */
+    private int cancelFutureSessions(String targetType, Long targetId) {
+        LambdaQueryWrapper<BizScheduleSession> w = new LambdaQueryWrapper<BizScheduleSession>()
+            .eq(BizScheduleSession::getTargetType, targetType)
+            .eq(BizScheduleSession::getTargetId, targetId)
+            .eq(BizScheduleSession::getSessionStatus, "0")
+            .ge(BizScheduleSession::getSessionDate, LocalDate.now());
+        BizScheduleSession patch = new BizScheduleSession();
+        patch.setSessionStatus("3");
+        return sessionMapper.update(patch, w);
     }
 
     /** 设班课成员（整体覆盖）。 */

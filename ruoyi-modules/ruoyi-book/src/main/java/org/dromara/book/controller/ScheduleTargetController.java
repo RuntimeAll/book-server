@@ -69,12 +69,17 @@ public class ScheduleTargetController {
         return R.ok(targetService.detail(id, targetType));
     }
 
-    /** 归档（归档≠删，不进排课选择器）。 */
+    /**
+     * 归档（归档≠删，不进排课选择器）。
+     * BUG-015：联动取消该对象未来未上场次 → 返回 {cancelled}。
+     */
     @SaCheckLogin
     @PostMapping("/target/{id}/archive")
-    public R<Void> archive(@PathVariable Long id) {
-        targetService.archiveAuto(id, "1");
-        return R.ok();
+    public R<Map<String, Object>> archive(@PathVariable Long id) {
+        int cancelled = targetService.archiveAuto(id, "1");
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("cancelled", cancelled);
+        return R.ok(r);
     }
 
     /** 取消归档。 */
