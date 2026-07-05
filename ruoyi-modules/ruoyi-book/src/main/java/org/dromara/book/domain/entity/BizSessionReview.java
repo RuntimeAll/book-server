@@ -34,8 +34,7 @@ public class BizSessionReview extends BaseEntity {
     /** 老师备注 */
     private String teacherNote;
 
-    /** 生成的家长反馈消息 */
-    private String parentMsg;
+    // R1b S5：parent_msg 已删列——家长消息不落库，读取时按存量 item_results + 备课包段落即时生成
 
     /** 写回 profile 的 error_signals JSON（by=system,status=pending） */
     private String portraitDelta;

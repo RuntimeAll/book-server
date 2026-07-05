@@ -36,6 +36,10 @@ import java.util.Map;
  * 聚合成 error_signals（by=system,status=pending,session_id 溯源）append 进 profile_json；session 标已上；
  * 重复提交=覆盖并把上一版整体快照进 prev_json。
  *
+ * <p>R1b S5 拍板：parent_msg 不落库（列已删）——submit 生成后仅返回给前端即时显示，
+ * get 按存量上下文（备课包段落 + lesson 模板 + 学科）复用同一生成函数即时生成。
+ * 🔴 内部词剥离防线（stripInternalWords）原样保留。
+ *
  * @author backend-dev
  */
 @Service
@@ -78,7 +82,6 @@ public class SessionReviewService {
             Map<String, Object> snap = new LinkedHashMap<>();
             snap.put("itemResults", parseAny(existing.getItemResults()));
             snap.put("teacherNote", existing.getTeacherNote());
-            snap.put("parentMsg", existing.getParentMsg());
             snap.put("portraitDelta", parseAny(existing.getPortraitDelta()));
             snap.put("version", existing.getVersion());
             review.setPrevJson(JsonUtils.toJsonString(snap));
@@ -89,7 +92,7 @@ public class SessionReviewService {
         review.setSessionId(sessionId);
         review.setItemResults(JsonUtils.toJsonString(items));
         review.setTeacherNote(bo.getTeacherNote());
-        review.setParentMsg(parentMsg);
+        // R1b S5：parentMsg 不落库，仅随返回值给前端即时显示
         review.setPortraitDelta(JsonUtils.toJsonString(delta));
         if (existing == null) reviewMapper.insert(review);
         else reviewMapper.updateById(review);
@@ -108,12 +111,20 @@ public class SessionReviewService {
         BizSessionReview review = reviewMapper.selectOne(new LambdaQueryWrapper<BizSessionReview>()
             .eq(BizSessionReview::getSessionId, sessionId));
         if (review == null) return null;
+        // R1b S5：parent_msg 不落库——按存量上下文即时生成（与 submit 复用同一生成函数，含内部词防线）
+        String parentMsg = null;
+        BizScheduleSession session = sessionMapper.selectById(sessionId);
+        if (session != null) {
+            BizCoursePlanLesson lesson = session.getPlanLessonId() == null ? null
+                : lessonMapper.selectById(session.getPlanLessonId());
+            parentMsg = buildParentMsg(lesson, resolvePackSegs(session), subjectOf(session));
+        }
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(review.getId()));
         m.put("sessionId", String.valueOf(review.getSessionId()));
         m.put("itemResults", parseAny(review.getItemResults()));
         m.put("teacherNote", review.getTeacherNote());
-        m.put("parentMsg", review.getParentMsg());
+        m.put("parentMsg", parentMsg);
         m.put("portraitDelta", parseAny(review.getPortraitDelta()));
         m.put("version", review.getVersion());
         m.put("createTime", review.getCreateTime());
