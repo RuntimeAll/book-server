@@ -282,28 +282,33 @@ public class ScheduleRenderUtil {
     public String buildPrepPackHtml(List<SegData> segs) {
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><title>备课材料</title><style>");
-        sb.append("@page{size:A4;margin:15mm 15mm 13mm}");
+        // 🔴 字号面向小学四年级放大（2026-07-06 维护者反馈）：正文 17px、标题 24px、行高 1.9。
+        sb.append("@page{size:A4;margin:16mm 15mm 16mm}");
+        // 页脚：底部居中页码（2026-07-07 维护者要求；按层分页 = 每段 page-break-before 起新页）
+        sb.append("@page{@bottom-center{content:\"— 第 \" counter(page) \" 页 —\";font-family:'")
+            .append(FAMILY_MAIN).append("';font-size:10px;color:#999}}");
         sb.append("*{box-sizing:border-box;margin:0;padding:0}");
-        sb.append("body{font-family:'").append(FAMILY_MAIN).append("';color:#111;font-size:13.5px;line-height:1.75}");
+        sb.append("body{font-family:'").append(FAMILY_MAIN).append("';color:#111;font-size:17px;line-height:1.9}");
         sb.append(".seg{page-break-before:always}");
         sb.append(".seg.first{page-break-before:auto}");
-        sb.append(".hd{text-align:center;border-bottom:2px solid #111;padding-bottom:7px;margin-bottom:6px}");
-        sb.append(".hd h1{font-family:'").append(FAMILY_HEAD).append("';font-size:19px;letter-spacing:.06em;font-weight:normal}");
-        sb.append(".kj{border:1.5px solid #111;border-radius:6px;padding:7px 12px;margin:8px 0 4px;font-size:12.5px;line-height:1.7}");
+        sb.append(".hd{text-align:center;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:8px}");
+        sb.append(".hd h1{font-family:'").append(FAMILY_HEAD).append("';font-size:24px;letter-spacing:.06em;font-weight:normal}");
+        sb.append(".kj{border:1.5px solid #111;border-radius:6px;padding:8px 13px;margin:8px 0 4px;font-size:15px;line-height:1.75}");
         sb.append(".kj b{font-family:'").append(FAMILY_HEAD).append("';font-weight:normal}");
-        sb.append(".sub{font-size:12px;color:#444;margin:6px 0 8px}");
-        sb.append(".lv{font-family:'").append(FAMILY_HEAD).append("';font-size:14.5px;margin:14px 0 4px;page-break-after:avoid}");
-        sb.append(".grp{font-family:'").append(FAMILY_HEAD).append("';font-size:12.5px;color:#555;")
-            .append("background:#f0f0f0;border-left:3px solid #9a9a9a;padding:2px 8px;margin:12px 0 6px;page-break-after:avoid}");
-        sb.append(".q{margin:0 0 6px;page-break-inside:avoid}");
+        sb.append(".sub{font-size:15px;color:#444;margin:6px 0 8px}");
+        sb.append(".lv{font-family:'").append(FAMILY_HEAD).append("';font-size:18px;margin:16px 0 5px;page-break-after:avoid}");
+        sb.append(".grp{font-family:'").append(FAMILY_HEAD).append("';font-size:15px;color:#555;")
+            .append("background:#f0f0f0;border-left:3px solid #9a9a9a;padding:3px 9px;margin:13px 0 7px;page-break-after:avoid}");
+        sb.append(".q{margin:0 0 9px;page-break-inside:avoid}");
         sb.append(".q .t b{font-family:'").append(FAMILY_HEAD).append("';font-weight:normal}");
+        sb.append(".star{color:#e8912a;font-size:14px;letter-spacing:1px}");
         sb.append(".q img{max-width:100%}");
-        sb.append(".foot{margin-top:8mm;text-align:center;font-size:11px;color:#666}");
+        sb.append(".foot{margin-top:8mm;text-align:center;font-size:12px;color:#666}");
         sb.append("</style></head><body>");
         for (int i = 0; i < segs.size(); i++) {
             appendSeg(sb, segs.get(i), i == 0);
         }
-        sb.append("<div class=\"foot\">— 完 —</div></body></html>");
+        sb.append("</body></html>");
         return sb.toString();
     }
 
@@ -390,8 +395,20 @@ public class ScheduleRenderUtil {
     }
 
     private String qHtml(int n, Map<String, Object> q, boolean think, boolean inner) {
-        return "<div class=\"q\"><div class=\"t\"><b>" + n + ".</b>　" + stem(q) + "</div>"
+        return "<div class=\"q\"><div class=\"t\"><b>" + n + ".</b>" + starMark(q) + "　" + stem(q) + "</div>"
             + "<div style=\"height:" + spacerHeight(q, think, inner) + "\"></div></div>";
+    }
+
+    /** 题号后难度星：q.star 非空且&gt;0 时输出 ★×lv（专项段每题标难度；star=biz_question.star_level，NULL 不显示）。 */
+    private String starMark(Map<String, Object> q) {
+        Object s = q.get("star");
+        if (s == null) return "";
+        int lv;
+        try { lv = Integer.parseInt(String.valueOf(s).trim()); } catch (Exception e) { return ""; }
+        if (lv <= 0) return "";
+        StringBuilder b = new StringBuilder("　<span class=\"star\">");
+        for (int i = 0; i < lv; i++) b.append("★");
+        return b.append("</span>").toString();
     }
 
     /**
