@@ -1,9 +1,9 @@
 # 开发环境配置
 server:
-  # 服务器的HTTP端口（A 线用户端 8080 / B 线 admin 7888 / C 线 AI 编排 8090；多线共用同一 repo，端口靠目录隔离。
-  #   master = A 线 = 8080；master-ai 分支固化 8090 — 跨分支合并时本字段以目标分支线为准）
-  #   🔴 2026-07-05 R1c 实测：上次 master 合并把本字段污染回 8080（已知坑），此处订正回 master-ai 口径 8090。
-  port: 8090
+  # 服务器的HTTP端口。🔴 2026-07-07 ai-bkb 迁移定版：新区端口 = 909x 段（与旧区 book-ai 809x 并行共存不打架）。
+  #   ai-bkb/codeplace-C = BE :9090（唯一事实源 = ai-bkb/workspaces.json，改端口先改 registry 再同步此处）。
+  #   历史口径：旧区 master=A线:8080 / master-ai=C线:8090；合并污染坑（R1c 2026-07-05）仍需警惕——跨分支合并后必查本字段。
+  port: 9090
   servlet:
     # 应用的访问路径
     context-path: /
