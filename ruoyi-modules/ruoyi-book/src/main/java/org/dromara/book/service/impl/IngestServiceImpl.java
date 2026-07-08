@@ -398,6 +398,10 @@ public class IngestServiceImpl implements IIngestService {
             q.setDim2Qtype(bo.getQuestionType());
             q.setDim4Difficulty(bo.getDifficult());
             q.setStemText(bo.getStemText());
+            // PRD-A-024 批2·前端补尾：录题裁图 commit 回填首图 URL → 详情/列表页渲染题图（缺省不动）。
+            if (StringUtils.isNotBlank(bo.getStemImg())) {
+                q.setStemImgUrl(bo.getStemImg());
+            }
             q.setStemHash(stemHash);
             q.setExamYear(bo.getExamYear());
             q.setRegionCode(bo.getRegionCode());

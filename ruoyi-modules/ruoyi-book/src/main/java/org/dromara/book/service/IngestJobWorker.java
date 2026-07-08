@@ -447,6 +447,11 @@ public class IngestJobWorker {
         List<IngestQuestionBo.ImageRef> figRefs = buildFigureImageRefs(item.getFiguresJson());
         if (!figRefs.isEmpty()) {
             bo.setImages(figRefs);
+            // PRD-A-024 批2·前端补尾：首张真裁图 URL 回填 stem_img_url → 详情/列表页可见题图。
+            String firstUrl = figRefs.get(0).getOssUrl();
+            if (StringUtils.isNotBlank(firstUrl)) {
+                bo.setStemImg(firstUrl);
+            }
         } else if (item.getHasFigure() != null && item.getHasFigure() == 1
             && StringUtils.isNotBlank(job.getSourceOssUrl()) && "image".equals(job.getSourceType())) {
             IngestQuestionBo.ImageRef img = new IngestQuestionBo.ImageRef();
@@ -455,6 +460,7 @@ public class IngestJobWorker {
             img.setSeq(0);
             img.setIsDecorative(0);
             bo.setImages(List.of(img));
+            bo.setStemImg(job.getSourceOssUrl());   // 无裁图时退回整批源图
         }
         java.util.Map<String, Object> r = ingestService.ingestQuestion(bo, job.getTeacherId());
         Object qid = r.get("questionId");

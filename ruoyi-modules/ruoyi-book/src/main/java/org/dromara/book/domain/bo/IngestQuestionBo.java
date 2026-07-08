@@ -59,6 +59,13 @@ public class IngestQuestionBo implements Serializable {
     /** 题图 → biz_question_image */
     private List<ImageRef> images;
 
+    /**
+     * 题干配图 URL → biz_question.stem_img_url（PRD-A-024 批2·前端补尾）。
+     * 详情/列表页读本列渲染题图；录题裁图 commit 用首张真图回填，让入库带图题在题库页可见（非仅存 biz_question_image）。
+     * 缺省 null=不动本列（不破其他 ingest 调用方）。
+     */
+    private String stemImg;
+
     /** 教辅编排 → biz_book_question */
     private BookRef book;
 
