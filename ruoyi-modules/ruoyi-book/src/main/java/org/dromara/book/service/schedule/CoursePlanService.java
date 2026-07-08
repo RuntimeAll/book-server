@@ -209,8 +209,15 @@ public class CoursePlanService {
             if (lb.getKgNodeIds() != null) l.setKgNodeIds(JsonUtils.toJsonString(lb.getKgNodeIds()));
             if (lb.getSegTemplate() != null) l.setSegTemplate(JsonUtils.toJsonString(lb.getSegTemplate()));
             if (lb.getPaperSlots() != null) {
+                String oldSlotsJson = l.getPaperSlots();
                 List<Map<String, Object>> slots = paperSlotService.parseSlots(JsonUtils.toJsonString(lb.getPaperSlots()));
                 paperSlotService.validateSlots(slots);
+                // M-1（PRD-B-101 §10 反性）：整体覆写时若任一原绑定消失（卷位被删 / paper_id 被清或换）
+                // → 该课次全部卷位 manual_ready 清 false（与 unbindSlot 单点解绑口径一致，杜绝"删掉绑卷卷位仍显手动绿"）。
+                // 纯新增 / 改名 / 改配方不触发。
+                if (paperSlotService.anyBindingLost(oldSlotsJson, slots)) {
+                    for (Map<String, Object> s : slots) s.put("manual_ready", false);
+                }
                 l.setPaperSlots(JsonUtils.toJsonString(slots));
             }
             if (lb.getId() == null) {

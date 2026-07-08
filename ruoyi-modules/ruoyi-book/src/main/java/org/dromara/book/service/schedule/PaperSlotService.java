@@ -88,6 +88,48 @@ public class PaperSlotService {
     }
 
     /**
+     * 判定整体覆写是否使任一「原绑定」消失（slot 被删 / 其 paper_id 被清或换）——供 upsertLessons
+     * 覆写时联动清 manual_ready（G5 反性，与 {@link #unbindSlot} 口径一致：绑定失效则手动覆盖失效）。
+     * 纯新增 / 改名 / 改配方（原绑定逐一保留）→ 返回 false，不触发清态。
+     *
+     * @param oldSlotsJson DB 旧卷位 JSON（覆写前）
+     * @param newSlots     覆写后的新卷位列表
+     */
+    public boolean anyBindingLost(String oldSlotsJson, List<Map<String, Object>> newSlots) {
+        List<Map<String, Object>> oldSlots = parseSlots(oldSlotsJson);
+        if (oldSlots.isEmpty()) return false;
+        // 新卷位按 slot_seq 建 paper_id 索引
+        Map<String, String> newBySeq = new LinkedHashMap<>();
+        if (newSlots != null) {
+            for (Map<String, Object> s : newSlots) {
+                String seq = slotSeqKey(s);
+                if (seq != null) newBySeq.put(seq, boundPaperId(s));
+            }
+        }
+        for (Map<String, Object> old : oldSlots) {
+            String oldPid = boundPaperId(old);
+            if (oldPid == null) continue; // 原本未绑，谈不上丢失
+            String seq = slotSeqKey(old);
+            // slot 被删（seq 不在新集）或 paper_id 被清/换 → 原绑定消失
+            if (seq == null || !newBySeq.containsKey(seq)) return true;
+            if (!oldPid.equals(newBySeq.get(seq))) return true;
+        }
+        return false;
+    }
+
+    private String slotSeqKey(Map<String, Object> s) {
+        Object v = s.get("slot_seq");
+        return v == null ? null : String.valueOf(v).trim();
+    }
+
+    /** 卷位绑定的 paper_id（非空非空白才算绑定，否则 null）。 */
+    private String boundPaperId(Map<String, Object> s) {
+        Object v = s.get("paper_id");
+        if (v == null || String.valueOf(v).isBlank()) return null;
+        return String.valueOf(v).trim();
+    }
+
+    /**
      * 写入校验（upsert 卷位时）：name 必填非空；paper_id 若非空必须真实存在的卷。
      * slot 删除（更新时消失）不删卷=天然满足（卷是独立行，本方法不 cascade）。
      */

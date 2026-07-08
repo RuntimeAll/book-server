@@ -3,7 +3,6 @@ package org.dromara.book.controller;
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.PrepPackBo;
-import org.dromara.book.domain.bo.PrepPackRenderBo;
 import org.dromara.book.domain.bo.PrepPackSegsBo;
 import org.dromara.book.service.schedule.PrepPackService;
 import org.dromara.common.core.domain.R;
@@ -56,14 +55,5 @@ public class PrepPackController {
     public R<Void> updateSegs(@PathVariable Long id, @RequestBody PrepPackSegsBo bo) {
         prepPackService.updateSegs(id, bo.getSegs());
         return R.ok();
-    }
-
-    /** 逐段渲染 PDF → {artifacts}。段无题 → 400 整单不出半卷。 */
-    @SaCheckLogin
-    @PostMapping("/prep-pack/{id}/render")
-    public R<Map<String, Object>> render(@PathVariable Long id, @RequestBody(required = false) PrepPackRenderBo bo) {
-        if (bo == null) bo = new PrepPackRenderBo();
-        boolean markReady = !Boolean.FALSE.equals(bo.getMarkReady());
-        return R.ok(prepPackService.render(id, bo.getSegIndex(), markReady));
     }
 }

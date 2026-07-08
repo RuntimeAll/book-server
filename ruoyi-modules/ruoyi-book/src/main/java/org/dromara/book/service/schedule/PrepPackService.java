@@ -1,18 +1,14 @@
 package org.dromara.book.service.schedule;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.book.domain.bo.PrepPackBo;
 import org.dromara.book.domain.entity.BizPrepPack;
-import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.mapper.BizPrepPackMapper;
-import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
-import org.dromara.book.util.ScheduleRenderUtil;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
 import org.springframework.stereotype.Service;
@@ -44,8 +40,6 @@ public class PrepPackService {
 
     private final BizPrepPackMapper packMapper;
     private final BizScheduleSessionMapper sessionMapper;
-    private final BizQuestionMapper questionMapper;
-    private final ScheduleRenderUtil renderUtil;
 
     /** 建包（1:1，已存在则返已有）。装配中 → session 缓存态 '1'。 */
     @Transactional(rollbackFor = Exception.class)
@@ -135,94 +129,6 @@ public class PrepPackService {
     }
 
     /**
-     * 渲染 PDF（BUG-010 单文件）：目标段拼一份 HTML、段间强制起新页，一次出一份 PDF。
-     * 段无题 → 400 报缺整单不出半卷；全段成功且 markReady → pack '2' + session 缓存 '2'。
-     * artifacts = 单条 [{seg, file, pages}]（全段 seg="备课材料"；单段 seg=段名）。
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> render(Long packId, Integer segIndex, boolean markReady) {
-        BizPrepPack pack = packMapper.selectById(packId);
-        if (pack == null) throw new ServiceException("备课包不存在");
-        List<Map<String, Object>> segs = parseSegs(pack.getSegs());
-        if (segs.isEmpty()) throw new ServiceException("备课包无分段");
-
-        // 目标段
-        List<Integer> targets = new ArrayList<>();
-        if (segIndex != null) {
-            if (segIndex < 0 || segIndex >= segs.size()) throw new ServiceException("段序号越界");
-            targets.add(segIndex);
-        } else {
-            for (int i = 0; i < segs.size(); i++) targets.add(i);
-        }
-
-        // 🔴 先全量校验：任一段无题（groups 段看各组 question_ids 并集）→ 整单 400，不出半卷
-        for (int idx : targets) {
-            Map<String, Object> seg = segs.get(idx);
-            if (segQidsAll(seg).isEmpty()) {
-                throw new ServiceException("第" + (idx + 1) + "段(" + segName(seg) + ")无题");
-            }
-        }
-
-        // 组装段数据（BUG-004：groups 段内分组 + 题型留白分档所需 qtype 一并装载）
-        List<ScheduleRenderUtil.SegData> datas = new ArrayList<>();
-        for (int idx : targets) {
-            Map<String, Object> seg = segs.get(idx);
-            ScheduleRenderUtil.SegData d = new ScheduleRenderUtil.SegData();
-            d.setName(segName(seg));
-            d.setStyle(str(seg.get("style")));
-            d.setTopic(str(seg.get("topic")));
-            d.setNote(str(seg.get("note")));
-            d.setRules(str(seg.get("rules")));
-            List<Map<String, Object>> groups = segGroups(seg);
-            int loadedCount = 0;
-            if (groups != null) {
-                List<ScheduleRenderUtil.SegGroup> gs = new ArrayList<>();
-                for (Map<String, Object> g : groups) {
-                    ScheduleRenderUtil.SegGroup sg = new ScheduleRenderUtil.SegGroup();
-                    sg.setTitle(str(g.get("title")));
-                    sg.setQuestions(loadQuestions(qids(g)));
-                    loadedCount += sg.getQuestions().size();
-                    gs.add(sg);
-                }
-                d.setGroups(gs);
-            } else {
-                d.setQuestions(loadQuestions(qids(seg)));
-                loadedCount = d.getQuestions().size();
-            }
-            if (loadedCount == 0) {
-                throw new ServiceException("第" + (idx + 1) + "段(" + segName(seg) + ")题目未找到");
-            }
-            datas.add(d);
-        }
-
-        // 渲染：全段拼一份 HTML → 一份 PDF（纯 Java 进程内，无浏览器）
-        String html = renderUtil.buildPrepPackHtml(datas);
-        String base = segIndex == null ? "prep_" + packId : "prep_" + packId + "_seg" + segIndex;
-        ScheduleRenderUtil.PdfResult res = renderUtil.renderPdf(html, base);
-        List<Map<String, Object>> artifacts = new ArrayList<>();
-        Map<String, Object> a = new LinkedHashMap<>();
-        a.put("seg", segIndex == null ? "备课材料" : segName(segs.get(segIndex)));
-        a.put("file", res.getFile());
-        a.put("pages", res.getPages());
-        artifacts.add(a);
-
-        pack.setArtifacts(JsonUtils.toJsonString(artifacts));
-        boolean fullSuccess = segIndex == null;
-        if (fullSuccess && markReady) {
-            pack.setStatus("2");
-            packMapper.updateById(pack);
-            syncSessionPrepStatus(pack, "2");
-        } else {
-            pack.setStatus("1");
-            packMapper.updateById(pack);
-        }
-
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("artifacts", artifacts);
-        return r;
-    }
-
-    /**
      * R1b S3 收敛：备课状态唯一权威 = pack.status，本方法只回写 session.prep_status（日历色点缓存）。
      * pack 绑课次 → 该课次所有场次；散课 → 仅直挂场次。不再写 lesson（prep_state 已删列）。
      */
@@ -243,37 +149,6 @@ public class PrepPackService {
         }
     }
 
-    /**
-     * 按 question_ids 顺序取 {id, stem, star, qtype}。stem=biz_question.stem_text 原样；
-     * qtype=question_type（BUG-004 留白分档：1选择/3判断 20mm、2/4填空 22mm、5解答 30mm）。
-     */
-    private List<Map<String, Object>> loadQuestions(List<String> qids) {
-        List<Long> ids = new ArrayList<>();
-        for (String q : qids) {
-            try { ids.add(Long.parseLong(q.trim())); } catch (Exception ignore) { }
-        }
-        if (ids.isEmpty()) return new ArrayList<>();
-        List<Map<String, Object>> rows = questionMapper.selectMaps(new QueryWrapper<BizQuestion>()
-            .select("id", "stem_text", "star_level", "question_type").in("id", ids));
-        Map<Long, Map<String, Object>> byId = new LinkedHashMap<>();
-        for (Map<String, Object> row : rows) {
-            Long id = Long.valueOf(String.valueOf(row.get("id")));
-            byId.put(id, row);
-        }
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Long id : ids) {
-            Map<String, Object> row = byId.get(id);
-            if (row == null) continue;
-            Map<String, Object> q = new LinkedHashMap<>();
-            q.put("id", String.valueOf(id));
-            q.put("stem", row.get("stem_text"));
-            q.put("star", row.get("star_level"));
-            q.put("qtype", row.get("question_type") == null ? null : String.valueOf(row.get("question_type")));
-            out.add(q);
-        }
-        return out;
-    }
-
     private Map<String, Object> packVo(BizPrepPack pack) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(pack.getId()));
@@ -285,13 +160,6 @@ public class PrepPackService {
         m.put("createTime", pack.getCreateTime());
         m.put("updateTime", pack.getUpdateTime());
         return m;
-    }
-
-    private List<Map<String, Object>> parseSegs(String json) {
-        if (json == null || json.isBlank()) return new ArrayList<>();
-        List<Map<String, Object>> segs = JsonUtils.parseObject(json, new TypeReference<>() {
-        });
-        return segs == null ? new ArrayList<>() : segs;
     }
 
     /**
@@ -332,34 +200,5 @@ public class PrepPackService {
             if (o instanceof Map<?, ?> m) out.add((Map<String, Object>) m);
         }
         return out.isEmpty() ? null : out;
-    }
-
-    /** 段的全部题 id：groups 段 = 各组 question_ids 顺序并集；否则段级 question_ids。 */
-    private List<String> segQidsAll(Map<String, Object> seg) {
-        List<Map<String, Object>> groups = segGroups(seg);
-        if (groups == null) return qids(seg);
-        List<String> out = new ArrayList<>();
-        for (Map<String, Object> g : groups) out.addAll(qids(g));
-        return out;
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<String> qids(Map<String, Object> seg) {
-        Object v = seg.get("question_ids");
-        if (v == null) v = seg.get("questionIds");
-        List<String> out = new ArrayList<>();
-        if (v instanceof List<?> list) {
-            for (Object o : list) if (o != null) out.add(String.valueOf(o));
-        }
-        return out;
-    }
-
-    private String segName(Map<String, Object> seg) {
-        Object n = seg.get("name");
-        return n == null ? "未命名段" : String.valueOf(n);
-    }
-
-    private String str(Object o) {
-        return o == null ? null : String.valueOf(o);
     }
 }
