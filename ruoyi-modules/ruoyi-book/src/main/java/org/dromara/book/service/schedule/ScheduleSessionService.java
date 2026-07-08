@@ -55,6 +55,7 @@ public class ScheduleSessionService {
     private final BizClassMapper classMapper;
     private final BizQuestionMapper questionMapper;
     private final BizPrepPackMapper prepPackMapper;
+    private final PaperSlotService paperSlotService;
 
     /**
      * R1b S3 反向回填：场次新绑定/换绑到已有备课包的课次时，session.prep_status（日历色点缓存）
@@ -518,16 +519,21 @@ public class ScheduleSessionService {
         Long uid = LoginHelper.getUserId();
         LocalDate today = LocalDate.now();
         LocalDate endDay = today.plusDays(days - 1L);
+        // PRD-B-101：备课态改 lesson.paper_slots 实时推导，不再有 DB 列可筛 →
+        // 拉候选后按 sessionVo 推导态在内存过滤 prepStatus∈{'0','1'}（课次量级小，无 N+1 顾虑）。
         LambdaQueryWrapper<BizScheduleSession> w = new LambdaQueryWrapper<BizScheduleSession>()
             .eq(BizScheduleSession::getCreateBy, uid)
             .ge(BizScheduleSession::getSessionDate, today)
             .le(BizScheduleSession::getSessionDate, endDay)
             .eq(BizScheduleSession::getSessionStatus, "0")
             .ne(BizScheduleSession::getSessionType, "3")
-            .in(BizScheduleSession::getPrepStatus, List.of("0", "1"))
             .orderByAsc(BizScheduleSession::getSessionDate);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (BizScheduleSession s : sessionMapper.selectList(w)) out.add(sessionVo(s));
+        for (BizScheduleSession s : sessionMapper.selectList(w)) {
+            Map<String, Object> vo = sessionVo(s);
+            Object ps = vo.get("prepStatus");
+            if ("0".equals(ps) || "1".equals(ps)) out.add(vo);
+        }
         return out;
     }
 
@@ -555,8 +561,10 @@ public class ScheduleSessionService {
         m.put("endTime", s.getEndTime());
         m.put("sessionType", s.getSessionType());
         m.put("sessionStatus", s.getSessionStatus());
-        // 外部占位无备课点
-        m.put("prepStatus", "3".equals(s.getSessionType()) ? null : s.getPrepStatus());
+        // 外部占位无备课点；PRD-B-101：备课态唯一权威 = 该场次课次 lesson.paper_slots 实时推导
+        // （不再读缓存列 session.prep_status；无课次/无卷位 → '0'）。
+        m.put("prepStatus", "3".equals(s.getSessionType()) ? null
+            : paperSlotService.deriveStatus(lesson == null ? null : lesson.getPaperSlots()));
         m.put("lessonLocked", s.getLessonLocked());
         m.put("externalTitle", s.getExternalTitle());
         m.put("note", s.getNote());

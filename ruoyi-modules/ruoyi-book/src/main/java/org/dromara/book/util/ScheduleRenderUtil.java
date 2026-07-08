@@ -527,8 +527,8 @@ public class ScheduleRenderUtil {
                 ? l.getParentCopy() : (l.getTitle() != null ? l.getTitle() : "专项练习");
             zx = stripInternalWords(zx);
             sb.append("<div class=\"seg\"><span class=\"k m\">专项</span> <span class=\"x\">").append(esc(zx)).append("</span></div>");
-            // 课内 = segTemplate[2].topic（家长产物：过内部词防线）
-            String inner = stripInternalWords(innerTopic(l.getSegTemplate()));
+            // 课内 = 卷位 name 拼（PRD-B-101，有 paper_slots 用之）；无则回退旧 segTemplate[2].topic
+            String inner = stripInternalWords(innerTopic(l));
             if (inner != null && !inner.isBlank()) {
                 sb.append("<div class=\"seg\"><span class=\"k s\">课内</span> <span class=\"x\">").append(esc(inner)).append("</span></div>");
             }
@@ -537,8 +537,39 @@ public class ScheduleRenderUtil {
         return sb.toString();
     }
 
+    /**
+     * 家长版长图「课内」文案（PRD-B-101 隐藏消费点适配）：
+     * 有 paper_slots 时用各卷位 name 拼（🔴 只取 name，rules/note 不进文案；内部词由上游 stripInternalWords 过滤）；
+     * 无 paper_slots 回退旧 segTemplate[2].topic 逻辑。
+     */
     @SuppressWarnings("unchecked")
-    private String innerTopic(String segTemplateJson) {
+    private String innerTopic(BizCoursePlanLesson l) {
+        // 优先 paper_slots
+        String slotsJson = l.getPaperSlots();
+        if (slotsJson != null && !slotsJson.isBlank()) {
+            try {
+                List<Object> arr = JsonUtils.parseArray(slotsJson, Object.class);
+                if (arr != null && !arr.isEmpty()) {
+                    StringBuilder sb = new StringBuilder();
+                    for (Object o : arr) {
+                        if (o instanceof Map<?, ?> slot) {
+                            Object name = ((Map<String, Object>) slot).get("name");
+                            if (name != null && !String.valueOf(name).isBlank()) {
+                                if (sb.length() > 0) sb.append("、");
+                                sb.append(String.valueOf(name).trim());
+                            }
+                        }
+                    }
+                    if (sb.length() > 0) return sb.toString();
+                }
+            } catch (Exception ignore) {
+            }
+        }
+        return innerTopicFromSeg(l.getSegTemplate());
+    }
+
+    @SuppressWarnings("unchecked")
+    private String innerTopicFromSeg(String segTemplateJson) {
         if (segTemplateJson == null || segTemplateJson.isBlank()) return null;
         try {
             List<Object> arr = JsonUtils.parseArray(segTemplateJson, Object.class);
