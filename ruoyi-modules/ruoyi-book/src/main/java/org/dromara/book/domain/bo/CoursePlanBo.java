@@ -15,5 +15,7 @@ public class CoursePlanBo {
     private String materialNote;
     /** 默认分段模板（数组 JSON） */
     private Object defaultSegTemplate;
+    /** 计划级默认卷位模板（数组 JSON，PRD-B-101） */
+    private Object defaultPaperSlots;
     private String status;
 }

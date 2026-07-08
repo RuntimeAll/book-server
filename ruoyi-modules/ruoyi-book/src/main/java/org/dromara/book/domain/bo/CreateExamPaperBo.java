@@ -35,4 +35,13 @@ public class CreateExamPaperBo implements Serializable {
 
     /** 试卷分类 ID — 可选，默认 null（卷库目录树根级别） */
     private String paperCategoryId;
+
+    /**
+     * 备课语境·课次 id（PRD-B-101 G2）。与 slotSeq 必须同现（只传一个 → 400）。
+     * 二者同现时：卷 paper_kind='2' 且创建后写入该课次 paper_slots 对应 slot。不传 → 普通卷。
+     */
+    private Long lessonId;
+
+    /** 备课语境·卷位序号（PRD-B-101 G2）。与 lessonId 必须同现。 */
+    private Integer slotSeq;
 }
