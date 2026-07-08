@@ -274,10 +274,25 @@ public class CoursePlanService {
             l.setParentCopy(s.getParentCopy());
             l.setKgNodeIds(s.getKgNodeIds());
             l.setSegTemplate(s.getSegTemplate());
-            l.setPaperSlots(s.getPaperSlots());
+            // PRD-B-101 拍板：副本卷位配方（slot_seq/name/style/rules/note）照抄，
+            // 但 paper_id 置 null + manual_ready 置 false——备课卷是特定学生/日期的产物，
+            // 副本课次从"未备"起步（plan 级 default_paper_slots 模板照抄不动，本就不含绑定）。
+            l.setPaperSlots(stripSlotBindings(s.getPaperSlots()));
             lessonMapper.insert(l);
         }
         return p.getId();
+    }
+
+    /** 卷位深拷贝清绑定：paper_id→null、manual_ready→false，配方字段原样保留。空/无卷位原样返回。 */
+    private String stripSlotBindings(String paperSlotsJson) {
+        if (paperSlotsJson == null || paperSlotsJson.isBlank()) return paperSlotsJson;
+        List<Map<String, Object>> slots = paperSlotService.parseSlots(paperSlotsJson);
+        if (slots.isEmpty()) return paperSlotsJson;
+        for (Map<String, Object> s : slots) {
+            s.put("paper_id", null);
+            s.put("manual_ready", false);
+        }
+        return JsonUtils.toJsonString(slots);
     }
 
     /**
