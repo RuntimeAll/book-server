@@ -50,6 +50,7 @@ public class IngestJobWorker {
     private final BizIngestJobItemMapper itemMapper;
     private final SplitClient splitClient;
     private final IIngestService ingestService;
+    private final KgAnchorService kgAnchorService;
 
     /** 支持的图片后缀（小写，不含点） */
     private static final List<String> IMAGE_EXTS = List.of("jpg", "jpeg", "png", "webp", "gif");
@@ -248,6 +249,16 @@ public class IngestJobWorker {
             solveAndLabelItems(jobId);
         }
 
+        // ===== 4.5 KG 锚定（PRD-A-024 批2 scope⑤·D10 三段式）：打标产出主考点名 → biz_subject 子树真节点 =====
+        // 需 dna_json 已回填（SOLVING 后），故排在 solve/label 之后。整体 try 兜底，绝不拖垮作业。
+        if (!questions.isEmpty()) {
+            try {
+                anchorKgForJob(jobId, job);
+            } catch (Exception e) {
+                log.warn("[ingest-worker] KG 锚定整体异常 jobId={} err={}", jobId, e.getMessage());
+            }
+        }
+
         // ===== 5. DONE（N=0 也是 DONE，前端展空态）=====
         BizIngestJob done = new BizIngestJob();
         done.setId(jobId);
@@ -425,6 +436,12 @@ public class IngestJobWorker {
         bo.setAnalyzeText(item.getAnalyzeText());
         bo.setImportSource("ingest-batch");
         bo.setImportBatchId(String.valueOf(job.getId()));
+        // KG 锚定（PRD-A-024 批2 scope⑤）：把 item.kp_anchor_json 主锚写 biz_question_knowledge（isPrimary=1/source='AI'）。
+        // 治「孤儿题挂不上章节树」。无锚（stem_only/打标缺 dna/子树空）则不写，不阻断入库。
+        List<IngestQuestionBo.KnowledgeRef> krefs = buildKnowledgeRefs(item.getKpAnchorJson());
+        if (!krefs.isEmpty()) {
+            bo.setKnowledgeIds(krefs);
+        }
         // 配图（PRD-A-024 批1）：优先用裁出真图（figures_json，仅 assigned!=false 的作真题图）；
         // 无裁图时退回旧行为（整批源图挂 has_figure，仅 image 源）。
         List<IngestQuestionBo.ImageRef> figRefs = buildFigureImageRefs(item.getFiguresJson());
@@ -455,6 +472,118 @@ public class IngestJobWorker {
         }));
         bumpCommittedCount(job.getId());
         return true;
+    }
+
+    // ==================== KG 锚定（PRD-A-024 批2 scope⑤·D10）====================
+
+    /**
+     * 对本作业所有 item 做 KG 锚定，结果写 item.kp_anchor_json（审核页展示 + commit 读回写 biz_question_knowledge）。
+     *
+     * <p>读 item.dna_json.main_kp{id,name} → {@link KgAnchorService#resolve} 三段式 → 序列化落库。
+     * 子树按 job.subjectId 载一次、逐题复用。单题失败不拖垮整批。
+     */
+    private void anchorKgForJob(Long jobId, BizIngestJob job) {
+        if (job == null || StringUtils.isBlank(job.getSubjectId())) {
+            return;
+        }
+        List<org.dromara.book.domain.entity.BizSubject> subtree = kgAnchorService.loadSubtree(job.getSubjectId());
+        if (subtree.isEmpty()) {
+            log.warn("[ingest-worker] KG 锚定跳过：subjectId={} 子树为空 jobId={}", job.getSubjectId(), jobId);
+            return;
+        }
+        List<BizIngestJobItem> items = selectItemsBySeq(jobId);
+        Date now = new Date();
+        int anchored = 0, fallback = 0;
+        for (BizIngestJobItem item : items) {
+            try {
+                String[] kp = parseMainKp(item.getDnaJson());   // [id, name]
+                if (kp == null || StringUtils.isBlank(kp[1])) {
+                    continue;   // 无主考点名（stem_only / 打标缺 dna）→ 不锚
+                }
+                KgAnchorService.Anchor a = kgAnchorService.resolve(
+                    job.getSubjectId(), subtree, kp[0], kp[1], item.getStemText(), job.getTeacherId());
+                if (a == null || StringUtils.isBlank(a.kpId)) {
+                    continue;
+                }
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("kpId", a.kpId);
+                m.put("kpName", a.kpName);
+                m.put("matchedName", a.matchedName);
+                m.put("stage", a.stage);
+                m.put("confidence", a.confidence);
+                m.put("fallback", a.fallback);
+                final String anchorJson = JsonUtils.toJsonString(m);
+                TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+                    BizIngestJobItem iu = new BizIngestJobItem();
+                    iu.setId(item.getId());
+                    iu.setKpAnchorJson(anchorJson);
+                    iu.setUpdateTime(now);
+                    itemMapper.updateById(iu);
+                    return null;
+                }));
+                anchored++;
+                if (a.fallback) {
+                    fallback++;
+                }
+            } catch (Exception e) {
+                log.warn("[ingest-worker] 单题 KG 锚定失败 itemId={} err={}",
+                    item == null ? null : item.getId(), e.getMessage());
+            }
+        }
+        log.info("[ingest-worker] KG 锚定完成 jobId={} 锚定题数={} 其中兜底={}", jobId, anchored, fallback);
+    }
+
+    /** 从 dna_json 取 main_kp 的 [id, name]（容错，缺则 null）。 */
+    private static String[] parseMainKp(String dnaJson) {
+        if (StringUtils.isBlank(dnaJson)) {
+            return null;
+        }
+        try {
+            Map<String, Object> dna = JsonUtils.parseMap(dnaJson);
+            if (dna == null) {
+                return null;
+            }
+            Object mk = dna.get("main_kp");
+            if (!(mk instanceof Map)) {
+                return null;
+            }
+            Map<?, ?> mkMap = (Map<?, ?>) mk;
+            Object id = mkMap.get("id");
+            Object name = mkMap.get("name");
+            return new String[]{id == null ? null : String.valueOf(id), name == null ? null : String.valueOf(name)};
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** item.kp_anchor_json → KnowledgeRef（主锚 isPrimary=1 / source='AI' / confidence）；无则空列。 */
+    private List<IngestQuestionBo.KnowledgeRef> buildKnowledgeRefs(String kpAnchorJson) {
+        List<IngestQuestionBo.KnowledgeRef> refs = new ArrayList<>();
+        if (StringUtils.isBlank(kpAnchorJson)) {
+            return refs;
+        }
+        try {
+            Map<String, Object> m = JsonUtils.parseMap(kpAnchorJson);
+            if (m == null) {
+                return refs;
+            }
+            Object kpId = m.get("kpId");
+            if (kpId == null || StringUtils.isBlank(String.valueOf(kpId))) {
+                return refs;
+            }
+            IngestQuestionBo.KnowledgeRef kr = new IngestQuestionBo.KnowledgeRef();
+            kr.setKpId(String.valueOf(kpId));
+            kr.setIsPrimary(1);
+            kr.setSource("AI");
+            Object conf = m.get("confidence");
+            if (conf instanceof Number) {
+                kr.setConfidence(java.math.BigDecimal.valueOf(((Number) conf).doubleValue()));
+            }
+            refs.add(kr);
+        } catch (Exception e) {
+            log.warn("[ingest-worker] kp_anchor_json 解析失败（跳过锚定挂载）err={}", e.getMessage());
+        }
+        return refs;
     }
 
     // ==================== 裁图入库（PRD-A-024 批1）====================

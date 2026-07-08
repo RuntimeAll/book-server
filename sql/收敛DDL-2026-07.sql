@@ -300,6 +300,7 @@ CREATE TABLE `biz_ingest_job_item` (
   `item_status` varchar(16) NOT NULL DEFAULT 'pending' COMMENT 'pending待审/committed已入库/dropped已弃',
   `committed_question_id` bigint DEFAULT NULL COMMENT '入库后回填 biz_question.id',
   `figures_json` json DEFAULT NULL COMMENT '裁出题图 [{seq,ossUrl,bbox,conf,assigned}]（PRD-A-024 批1，NULL=无图/未裁）',
+  `kp_anchor_json` json DEFAULT NULL COMMENT 'KG锚定 {kpId,kpName,matchedName,stage,confidence,fallback}（PRD-A-024 批2，NULL=未锚）',
   `create_time` datetime DEFAULT NULL COMMENT '创建时间',
   `update_time` datetime DEFAULT NULL COMMENT '更新时间',
   PRIMARY KEY (`id`),

@@ -258,6 +258,32 @@ public class SplitClient {
         return r;
     }
 
+    /**
+     * 调 toolkit /kg_pick（PRD-A-024 批2 · KG 锚定三段式第2段·多候选 LLM 单选）。
+     *
+     * @param stem       题干（节选即可）
+     * @param kpName     打标产出的主考点名
+     * @param candidates 候选叶子 [{id, path}]
+     * @param teacherId  登录老师 user_id（归因透传，落 conv_trace）
+     * @return chosen_id：候选之一；null=LLM 无法判定（调用方兜底）。异常/HTTP 失败抛，调用方兜底。
+     */
+    public String kgPick(String stem, String kpName, List<Map<String, Object>> candidates, Long teacherId) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("stem", stem == null ? "" : stem);
+        body.put("kp_name", kpName == null ? "" : kpName);
+        body.put("candidates", candidates == null ? List.of() : candidates);
+        if (teacherId != null) {
+            body.put("teacher_id", teacherId);
+        }
+        JsonNode root = postJson("/kg_pick", body);
+        JsonNode chosen = root.path("chosen_id");
+        if (chosen.isNull() || chosen.isMissingNode()) {
+            return null;
+        }
+        String id = chosen.asText(null);
+        return (id == null || id.isBlank()) ? null : id;
+    }
+
     /** 把 dna 节点写进 SolveResult（dnaJson 整段 + difficulty）。 */
     private void applyDna(JsonNode dnaNode, SolveResult r) {
         if (dnaNode != null && !dnaNode.isNull() && dnaNode.isObject()) {

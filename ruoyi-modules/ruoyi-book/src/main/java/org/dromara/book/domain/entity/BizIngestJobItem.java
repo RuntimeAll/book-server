@@ -101,6 +101,15 @@ public class BizIngestJobItem implements Serializable {
     @TableField("figures_json")
     private String figuresJson;
 
+    /**
+     * KG 锚定结果（PRD-A-024 批2 scope⑤ / D10 三段式）：JSON 对象
+     * {"kpId":"200003","kpName":"主考点名","matchedName":"匹配到的叶子名","stage":"exact|norm|contains|llm|fallback","confidence":0.95,"fallback":false}。
+     * NULL=未锚（无 dna 主考点名或 stem_only 模式）；fallback=true 表示挂了学科综合节点（未命中具体考点）。
+     * commit 时据此写 biz_question_knowledge(isPrimary=1,source='AI')；审核页据此展示锚点。
+     */
+    @TableField("kp_anchor_json")
+    private String kpAnchorJson;
+
     @TableField("create_time")
     private Date createTime;
 
