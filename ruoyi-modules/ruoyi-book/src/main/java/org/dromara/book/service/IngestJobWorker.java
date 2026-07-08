@@ -12,9 +12,6 @@ import org.dromara.book.util.SplitClient;
 import org.dromara.common.core.utils.StringUtils;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
-import org.dromara.common.oss.core.OssClient;
-import org.dromara.common.oss.entity.UploadResult;
-import org.dromara.common.oss.factory.OssFactory;
 import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -490,12 +487,10 @@ public class IngestJobWorker {
                 if (f.getConf() < CROP_MIN_CONF) {
                     continue;   // D5 conf 闸
                 }
-                String ossUrl = uploadCropToOss(f.getImageBase64());
-                if (ossUrl == null) {
+                Fig fig = uploadCrop(f.getImageBase64());
+                if (fig == null) {
                     continue;
                 }
-                Fig fig = new Fig();
-                fig.ossUrl = ossUrl;
                 fig.bbox = f.getBbox();
                 fig.conf = f.getConf();
                 fig.page = p;
@@ -551,6 +546,7 @@ public class IngestJobWorker {
         List<Map<String, Object>> list = byItem.computeIfAbsent(itemId, k -> new ArrayList<>());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("seq", list.size() + 1);
+        m.put("assetId", fig.assetId);
         m.put("ossUrl", fig.ossUrl);
         m.put("bbox", fig.bbox);
         m.put("conf", fig.conf);
@@ -558,23 +554,34 @@ public class IngestJobWorker {
         list.add(m);
     }
 
-    /** base64 PNG → OSS（走 RuoYi OssFactory，与 SysOssServiceImpl.upload 同范式）。失败返 null（不抛）。 */
-    private String uploadCropToOss(String imageBase64) {
+    /**
+     * base64 PNG → OSS + 注册 image_asset（走 {@link IIngestService#uploadImageBytes}，与整书录入同范式）。
+     * 🔴 biz_question_image.asset_id NOT NULL 且 ingestQuestion 跳过 assetId==null 的 ImageRef，
+     *    故必须经 image_asset 拿 assetId，不能只裸传 ossUrl。失败返 null（不抛，不拖垮作业）。
+     */
+    private Fig uploadCrop(String imageBase64) {
         if (StringUtils.isBlank(imageBase64)) {
             return null;
         }
         try {
             byte[] bytes = Base64.getDecoder().decode(imageBase64);
-            OssClient storage = OssFactory.instance();
-            UploadResult ur = storage.uploadSuffix(bytes, ".png", "image/png");
-            return ur.getUrl();
+            Map<String, Object> r = ingestService.uploadImageBytes(bytes, ".png", "image/png", "figure", "ingest-crop");
+            Object assetId = r.get("assetId");
+            Object ossUrl = r.get("ossUrl");
+            if (assetId == null || ossUrl == null) {
+                return null;
+            }
+            Fig fig = new Fig();
+            fig.assetId = Long.valueOf(String.valueOf(assetId));
+            fig.ossUrl = String.valueOf(ossUrl);
+            return fig;
         } catch (Exception e) {
-            log.warn("[ingest-worker] 裁图上传 OSS 失败 err={}", e.getMessage());
+            log.warn("[ingest-worker] 裁图上传 OSS/注册 image_asset 失败 err={}", e.getMessage());
             return null;
         }
     }
 
-    /** figures_json → ImageRef 列（role=figure）；只取 assigned!=false 的（整卷未确信归属的不作真题图）。 */
+    /** figures_json → ImageRef 列（role=figure）；只取 assigned!=false 且带 assetId 的（整卷未确信归属的不作真题图）。 */
     private List<IngestQuestionBo.ImageRef> buildFigureImageRefs(String figuresJson) {
         List<IngestQuestionBo.ImageRef> refs = new ArrayList<>();
         if (StringUtils.isBlank(figuresJson)) {
@@ -590,12 +597,16 @@ public class IngestJobWorker {
                 if (assigned instanceof Boolean && !((Boolean) assigned)) {
                     continue;   // 未确信归属，不作真题图（图仍在 figures_json 待人工挂）
                 }
-                Object url = f.get("ossUrl");
-                if (url == null || String.valueOf(url).isBlank()) {
-                    continue;
+                Object assetId = f.get("assetId");
+                if (assetId == null) {
+                    continue;   // 无 assetId 无法落 biz_question_image（asset_id NOT NULL）
                 }
                 IngestQuestionBo.ImageRef ref = new IngestQuestionBo.ImageRef();
-                ref.setOssUrl(String.valueOf(url));
+                ref.setAssetId(Long.valueOf(String.valueOf(assetId)));
+                Object url = f.get("ossUrl");
+                if (url != null) {
+                    ref.setOssUrl(String.valueOf(url));
+                }
                 ref.setRole("figure");
                 Object seq = f.get("seq");
                 ref.setSeq(seq instanceof Number ? ((Number) seq).intValue() : refs.size() + 1);
@@ -617,6 +628,7 @@ public class IngestJobWorker {
 
     /** 裁图临时载体（页内位置用于整卷 y 序归属）。 */
     private static class Fig {
+        Long assetId;
         String ossUrl;
         List<Integer> bbox;
         double conf;
