@@ -63,11 +63,12 @@ public class SplitClient {
      * @param answerMode  from_source / ai_solve / stem_only
      * @param gradeHint   学段提示，可空
      * @param minChars    完整度过滤最小字符数，可空（null 则不传）
+     * @param teacherId   登录老师 user_id（PRD-A-024 批0·归因透传，非 null 时下发；toolkit 落 conv_trace.teacher_id）
      * @return 解析后的拆题结果
      * @throws Exception 网络/超时/HTTP 非 2xx/解析失败 —— 调用方（worker）捕获置 FAILED
      */
     public SplitResponse split(String markdown, List<String> imageBase64,
-                               String answerMode, String gradeHint, Integer minChars) throws Exception {
+                               String answerMode, String gradeHint, Integer minChars, Long teacherId) throws Exception {
         Map<String, Object> body = new HashMap<>();
         if (markdown != null && !markdown.isBlank()) {
             body.put("markdown", markdown);
@@ -82,6 +83,9 @@ public class SplitClient {
         }
         if (minChars != null) {
             body.put("min_chars", minChars);
+        }
+        if (teacherId != null) {
+            body.put("teacher_id", teacherId);
         }
         String reqJson = mapper.writeValueAsString(body);
 
@@ -120,10 +124,11 @@ public class SplitClient {
     /**
      * 调 toolkit /solve（单题解题 + 自动打标 + sympy 验算）。
      *
+     * @param teacherId 登录老师 user_id（PRD-A-024 批0·归因透传，非 null 时下发）
      * @return SolveResult（answer/analysis/dnaJson/dnaDifficulty/verifyVerdict）
      * @throws Exception 网络/超时/HTTP 非 2xx
      */
-    public SolveResult solve(String stem, List<String> options, String qtype, String gradeHint) throws Exception {
+    public SolveResult solve(String stem, List<String> options, String qtype, String gradeHint, Long teacherId) throws Exception {
         Map<String, Object> body = new HashMap<>();
         body.put("stem", stem);
         if (options != null && !options.isEmpty()) {
@@ -134,6 +139,9 @@ public class SplitClient {
         }
         if (gradeHint != null && !gradeHint.isBlank()) {
             body.put("grade_hint", gradeHint);
+        }
+        if (teacherId != null) {
+            body.put("teacher_id", teacherId);
         }
         JsonNode root = postJson("/solve", body);
         SolveResult r = new SolveResult();
@@ -152,10 +160,11 @@ public class SplitClient {
     /**
      * 调 toolkit /label（单题打标，有原卷答案/解析时不重解只产 DNA）。
      *
+     * @param teacherId 登录老师 user_id（PRD-A-024 批0·归因透传，非 null 时下发）
      * @return SolveResult（仅 dnaJson/dnaDifficulty 有值）
      * @throws Exception 网络/超时/HTTP 非 2xx
      */
-    public SolveResult label(String stem, List<String> options, String qtype, String answer, String analysis) throws Exception {
+    public SolveResult label(String stem, List<String> options, String qtype, String answer, String analysis, Long teacherId) throws Exception {
         Map<String, Object> body = new HashMap<>();
         body.put("stem", stem);
         if (options != null && !options.isEmpty()) {
@@ -169,6 +178,9 @@ public class SplitClient {
         }
         if (analysis != null && !analysis.isBlank()) {
             body.put("analysis", analysis);
+        }
+        if (teacherId != null) {
+            body.put("teacher_id", teacherId);
         }
         JsonNode root = postJson("/label", body);
         SolveResult r = new SolveResult();

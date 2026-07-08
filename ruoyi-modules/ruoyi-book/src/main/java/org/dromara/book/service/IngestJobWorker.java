@@ -148,7 +148,7 @@ public class IngestJobWorker {
         String splitMode = "from_source".equalsIgnoreCase(job.getAnswerMode()) ? "from_source" : "stem_only";
         SplitClient.SplitResponse resp;
         try {
-            resp = splitClient.split(markdown, imageBase64Fallback, splitMode, null, null);
+            resp = splitClient.split(markdown, imageBase64Fallback, splitMode, null, null, job.getTeacherId());
         } catch (Exception e) {
             log.error("[ingest-worker] 调 /split 失败 jobId={} err={}", jobId, e.getMessage(), e);
             markFailed(jobId, "AI 拆题失败：" + safeMsg(e));
@@ -247,12 +247,14 @@ public class IngestJobWorker {
         }
         BizIngestJob job = selectJob(jobId);
         String gradeHint = job == null ? null : job.getGradeHint();
+        // 🔴 PRD-A-024 批0·归因透传：登录老师 user_id 传给 /solve·/label → toolkit 落 conv_trace.teacher_id。
+        Long teacherId = job == null ? null : job.getTeacherId();
         java.util.concurrent.ExecutorService pool =
             java.util.concurrent.Executors.newFixedThreadPool(Math.min(SOLVE_CONCURRENCY, items.size()));
         try {
             List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
             for (BizIngestJobItem item : items) {
-                futures.add(pool.submit(() -> solveOneItem(item, gradeHint)));
+                futures.add(pool.submit(() -> solveOneItem(item, gradeHint, teacherId)));
             }
             for (java.util.concurrent.Future<?> f : futures) {
                 try {
@@ -267,7 +269,7 @@ public class IngestJobWorker {
     }
 
     /** 单题 solve/label：有答案→/label（只打标），无答案→/solve（解题+打标+验算）。回填 item。 */
-    private void solveOneItem(BizIngestJobItem item, String gradeHint) {
+    private void solveOneItem(BizIngestJobItem item, String gradeHint, Long teacherId) {
         try {
             List<String> options = parseOptions(item.getOptionsJson());
             String qtype = qtypeText(item.getQuestionType());
@@ -275,10 +277,10 @@ public class IngestJobWorker {
             boolean hasAnswer = StringUtils.isNotBlank(item.getAnswerText());
             if (hasAnswer) {
                 // 原卷自带答案：不重解，只打标
-                r = splitClient.label(item.getStemText(), options, qtype, item.getAnswerText(), item.getAnalyzeText());
+                r = splitClient.label(item.getStemText(), options, qtype, item.getAnswerText(), item.getAnalyzeText(), teacherId);
             } else {
                 // 无答案：AI 解题 + 自动打标 + 验算
-                r = splitClient.solve(item.getStemText(), options, qtype, gradeHint);
+                r = splitClient.solve(item.getStemText(), options, qtype, gradeHint, teacherId);
             }
             if (r == null) {
                 return;
