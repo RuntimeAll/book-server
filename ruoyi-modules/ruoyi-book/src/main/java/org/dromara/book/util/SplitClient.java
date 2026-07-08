@@ -190,6 +190,74 @@ public class SplitClient {
         return r;
     }
 
+    /**
+     * 调 toolkit /convert_pdf（PRD-A-024 批1 · PDF 统一分流，本地检文字层，不用 TextIn）。
+     *
+     * @param pdfBase64 PDF 字节 base64
+     * @return PdfConvertResult：lane=fast 带 markdown（同 docx）/ lane=slow 带 images 页图（同图片）
+     * @throws Exception 网络/超时/HTTP 非 2xx
+     */
+    public PdfConvertResult convertPdf(String pdfBase64) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("pdf_base64", pdfBase64);
+        JsonNode root = postJson("/convert_pdf", body);
+        PdfConvertResult r = new PdfConvertResult();
+        r.setOk(root.path("ok").asBoolean(false));
+        r.setLane(textOrNull(root, "lane"));
+        r.setMarkdown(textOrNull(root, "markdown"));
+        r.setPageCount(root.path("page_count").asInt(0));
+        r.setTextChars(root.path("text_chars").asInt(0));
+        r.setError(textOrNull(root, "error"));
+        List<String> images = new ArrayList<>();
+        JsonNode imgNode = root.path("images");
+        if (imgNode.isArray()) {
+            for (JsonNode im : imgNode) {
+                if (!im.isNull()) {
+                    images.add(im.asText());
+                }
+            }
+        }
+        r.setImages(images);
+        return r;
+    }
+
+    /**
+     * 调 toolkit /crop_figures（PRD-A-024 批1 · DocLayout-YOLO 裁图，坐标源=检测 bbox）。
+     *
+     * @param imageBase64 一张题图/页图 base64
+     * @return CropResult：figures 每项含 seq/bbox/conf/imageBase64(png)；ok=false 时 figures 空
+     * @throws Exception 网络/超时/HTTP 非 2xx（toolkit 内核异常已收口为 ok=false，不抛）
+     */
+    public CropResult cropFigures(String imageBase64) throws Exception {
+        Map<String, Object> body = new HashMap<>();
+        body.put("image_base64", imageBase64);
+        JsonNode root = postJson("/crop_figures", body);
+        CropResult r = new CropResult();
+        r.setOk(root.path("ok").asBoolean(false));
+        r.setError(textOrNull(root, "error"));
+        List<CropFigure> figs = new ArrayList<>();
+        JsonNode figNode = root.path("figures");
+        if (figNode.isArray()) {
+            for (JsonNode f : figNode) {
+                CropFigure cf = new CropFigure();
+                cf.setSeq(f.path("seq").asInt(0));
+                cf.setConf(f.path("conf").asDouble(0.0));
+                cf.setImageBase64(textOrNull(f, "image_base64"));
+                List<Integer> bbox = new ArrayList<>();
+                JsonNode bNode = f.path("bbox");
+                if (bNode.isArray()) {
+                    for (JsonNode v : bNode) {
+                        bbox.add(v.asInt());
+                    }
+                }
+                cf.setBbox(bbox);
+                figs.add(cf);
+            }
+        }
+        r.setFigures(figs);
+        return r;
+    }
+
     /** 把 dna 节点写进 SolveResult（dnaJson 整段 + difficulty）。 */
     private void applyDna(JsonNode dnaNode, SolveResult r) {
         if (dnaNode != null && !dnaNode.isNull() && dnaNode.isObject()) {
@@ -332,5 +400,50 @@ public class SplitClient {
         private String verifyVerdict;
         /** 错误（ok=false 时带因） */
         private String error;
+    }
+
+    /** /convert_pdf 结果（PRD-A-024 批1 · PDF 分流）。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class PdfConvertResult implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+        private boolean ok;
+        /** fast=文字层 / slow=纯扫描页图 */
+        private String lane;
+        /** 文字层全文（lane=fast 时有） */
+        private String markdown;
+        /** 页图 base64（lane=slow 时有，170dpi PNG） */
+        private List<String> images = new ArrayList<>();
+        private int pageCount;
+        private int textChars;
+        private String error;
+    }
+
+    /** /crop_figures 结果（PRD-A-024 批1 · 裁图）。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CropResult implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+        private boolean ok;
+        private List<CropFigure> figures = new ArrayList<>();
+        private String error;
+    }
+
+    /** 裁出的单张图形（bbox 坐标源=DocLayout-YOLO 检测框）。 */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CropFigure implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+        /** 页内从上到下编号（1 起） */
+        private int seq;
+        /** [x1,y1,x2,y2] */
+        private List<Integer> bbox = new ArrayList<>();
+        /** 检测置信度 */
+        private double conf;
+        /** 裁出小图 base64（PNG 无损） */
+        private String imageBase64;
     }
 }

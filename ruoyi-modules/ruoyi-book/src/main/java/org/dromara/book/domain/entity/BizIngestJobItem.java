@@ -94,6 +94,13 @@ public class BizIngestJobItem implements Serializable {
     @TableField("committed_question_id")
     private Long committedQuestionId;
 
+    /**
+     * 裁出题图（PRD-A-024 批1）：JSON 数组 [{"seq":1,"ossUrl":"...","bbox":[x1,y1,x2,y2],"conf":0.9,"assigned":true}]。
+     * NULL=无图/未裁；assigned=false 表示整卷启发式未确信归属（图不丢，待审核页人工挂题）。
+     */
+    @TableField("figures_json")
+    private String figuresJson;
+
     @TableField("create_time")
     private Date createTime;
 

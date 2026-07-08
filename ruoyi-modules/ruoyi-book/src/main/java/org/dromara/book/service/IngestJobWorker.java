@@ -12,6 +12,9 @@ import org.dromara.book.util.SplitClient;
 import org.dromara.common.core.utils.StringUtils;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
+import org.dromara.common.oss.core.OssClient;
+import org.dromara.common.oss.entity.UploadResult;
+import org.dromara.common.oss.factory.OssFactory;
 import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -19,7 +22,9 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 批量录题作业异步 Worker（PRD-A-002 路B）。
@@ -95,7 +100,9 @@ public class IngestJobWorker {
         boolean isImage = IMAGE_EXTS.contains(ext);
 
         String markdown = null;
-        List<String> imageBase64Fallback = null;   // 仅 TextIn 不可用时给 /split 兜底（opus 多模态读图）
+        List<String> imageBase64Fallback = null;   // 无文字层时给 /split 的 opus 多模态读图页
+        // 🔴 PRD-A-024 批1·裁图源页：图片=源图；PDF slow=各页图。文字层(fast)无页图 → 不裁。
+        List<String> cropPageImages = new ArrayList<>();
 
         if (rawBytes == null || rawBytes.length == 0) {
             markFailed(jobId, "上传文件为空，无法拆题");
@@ -113,14 +120,41 @@ public class IngestJobWorker {
                 imageBase64Fallback.add(b64);
                 updateMeta(jobId, "image", "slow");
             }
+            // 图片作业永远保留源图供裁图（无论走 fast/slow），裁图从原图检 bbox。
+            cropPageImages.add(b64);
         } else if ("pdf".equals(ext)) {
-            // 🔴 PDF 现已支持（TextIn /ocr 整页转富文本）—— 旧实现直接 FAILED 是 B2 漏的真实路径
-            markdown = tryOcr(jobId, b64);
-            if (StringUtils.isBlank(markdown)) {
-                markFailed(jobId, "PDF 整页 OCR 失败（TextIn 不可用或为纯扫描无文字层），请改用清晰图片上传");
+            // 🔴 PRD-A-024 批1·PDF 统一分流（D9，不用 TextIn）：本地检文字层 →
+            //   有字层 lane=fast 抽全文（同 docx 文本路）；纯扫描 lane=slow 按页转图（同图片多模态路）。
+            SplitClient.PdfConvertResult pdf;
+            try {
+                pdf = splitClient.convertPdf(b64);
+            } catch (Exception e) {
+                log.error("[ingest-worker] 调 /convert_pdf 失败 jobId={} err={}", jobId, e.getMessage(), e);
+                markFailed(jobId, "PDF 分流失败：" + safeMsg(e));
                 return;
             }
-            updateMeta(jobId, "pdf", "fast");
+            if (pdf == null || !pdf.isOk()) {
+                markFailed(jobId, "PDF 分流失败：" + (pdf == null ? "空响应" : truncate(pdf.getError(), 800)));
+                return;
+            }
+            if ("fast".equalsIgnoreCase(pdf.getLane())) {
+                markdown = pdf.getMarkdown();
+                if (StringUtils.isBlank(markdown)) {
+                    markFailed(jobId, "PDF 文字层为空，无法拆题");
+                    return;
+                }
+                updateMeta(jobId, "pdf", "fast");
+            } else {
+                // slow：纯扫描页图走 opus 多模态（多页=多张页图）
+                List<String> pages = pdf.getImages();
+                if (pages == null || pages.isEmpty()) {
+                    markFailed(jobId, "PDF 纯扫描转图为空，无法拆题");
+                    return;
+                }
+                imageBase64Fallback = new ArrayList<>(pages);
+                cropPageImages.addAll(pages);
+                updateMeta(jobId, "pdf", "slow");
+            }
         } else if ("docx".equals(ext)) {
             // DOCX 文字层抽取（POI XWPF 已在类路径，零新依赖）→ 快档；POI 抽不出再退 TextIn
             try {
@@ -199,6 +233,16 @@ public class IngestJobWorker {
         updateJob(cnt);
         log.info("[ingest-worker] 拆题完成 jobId={} 题数={} dropped={}",
             jobId, questions.size(), resp.getDropped() == null ? 0 : resp.getDropped().size());
+
+        // ===== 3.5 裁图（PRD-A-024 批1）：图片/PDF慢档源页 → /crop_figures → OSS → figures_json =====
+        if (!cropPageImages.isEmpty() && !questions.isEmpty()) {
+            try {
+                cropAndAttachFigures(jobId, cropPageImages, questions.size());
+            } catch (Exception e) {
+                // 裁图失败不拖垮作业（题干态照常入库，只是无真裁图），仅记日志
+                log.warn("[ingest-worker] 裁图整体异常 jobId={} err={}", jobId, e.getMessage());
+            }
+        }
 
         // ===== 4. 解题 + 打标（置 SOLVING）：单题粒度并发调 /solve 或 /label（B2 核心）=====
         // stem_only 模式跳过（只录题干）；from_source/ai_solve 逐题 solve/label。
@@ -384,8 +428,12 @@ public class IngestJobWorker {
         bo.setAnalyzeText(item.getAnalyzeText());
         bo.setImportSource("ingest-batch");
         bo.setImportBatchId(String.valueOf(job.getId()));
-        // 配图：has_figure 时挂源文件 OSS 图（整批源图，role=figure）。源文件非图（PDF/DOCX 当前不走到此）时跳过。
-        if (item.getHasFigure() != null && item.getHasFigure() == 1
+        // 配图（PRD-A-024 批1）：优先用裁出真图（figures_json，仅 assigned!=false 的作真题图）；
+        // 无裁图时退回旧行为（整批源图挂 has_figure，仅 image 源）。
+        List<IngestQuestionBo.ImageRef> figRefs = buildFigureImageRefs(item.getFiguresJson());
+        if (!figRefs.isEmpty()) {
+            bo.setImages(figRefs);
+        } else if (item.getHasFigure() != null && item.getHasFigure() == 1
             && StringUtils.isNotBlank(job.getSourceOssUrl()) && "image".equals(job.getSourceType())) {
             IngestQuestionBo.ImageRef img = new IngestQuestionBo.ImageRef();
             img.setOssUrl(job.getSourceOssUrl());
@@ -410,6 +458,170 @@ public class IngestJobWorker {
         }));
         bumpCommittedCount(job.getId());
         return true;
+    }
+
+    // ==================== 裁图入库（PRD-A-024 批1）====================
+
+    /** 整卷启发式 conf 闸（D5/H1）：低于此的候选框视作误检丢弃。 */
+    private static final double CROP_MIN_CONF = 0.5;
+
+    /**
+     * 裁图并按 D5/H1 保守闸归属，写 figures_json（+ has_figure=1）。整体调用方已 try 兜底，绝不影响主流程。
+     *
+     * <p>单题图（questionCount==1）：全部检出图挂第一题（H1 单题 conf 0.92+）。
+     * 整卷（多题）：conf≥0.5 过滤后，若「图数≤题数」→ 按 y序×题序 zip 挂题（assigned=true）；
+     * 否则 assigned=false（图不丢，落 item 层待人工挂，commit 不作真题图）。
+     */
+    private void cropAndAttachFigures(Long jobId, List<String> pageImages, int questionCount) {
+        // 1. 逐页检图 + conf 闸 + 上传 OSS（OSS 走 BE，toolkit 不碰凭据，D6）
+        List<Fig> valid = new ArrayList<>();
+        for (int p = 0; p < pageImages.size(); p++) {
+            SplitClient.CropResult cr;
+            try {
+                cr = splitClient.cropFigures(pageImages.get(p));
+            } catch (Exception e) {
+                log.warn("[ingest-worker] /crop_figures 调用失败 jobId={} page={} err={}", jobId, p, e.getMessage());
+                continue;
+            }
+            if (cr == null || !cr.isOk() || cr.getFigures() == null) {
+                continue;
+            }
+            for (SplitClient.CropFigure f : cr.getFigures()) {
+                if (f.getConf() < CROP_MIN_CONF) {
+                    continue;   // D5 conf 闸
+                }
+                String ossUrl = uploadCropToOss(f.getImageBase64());
+                if (ossUrl == null) {
+                    continue;
+                }
+                Fig fig = new Fig();
+                fig.ossUrl = ossUrl;
+                fig.bbox = f.getBbox();
+                fig.conf = f.getConf();
+                fig.page = p;
+                fig.y1 = (f.getBbox() != null && f.getBbox().size() >= 2) ? f.getBbox().get(1) : 0;
+                valid.add(fig);
+            }
+        }
+        if (valid.isEmpty()) {
+            return;
+        }
+        // 2. 排序 (页, y1)：整卷 y 序单调由此保证
+        valid.sort((a, b) -> a.page != b.page ? Integer.compare(a.page, b.page) : Integer.compare(a.y1, b.y1));
+
+        // 3. 取本作业 items（按 seq）
+        List<BizIngestJobItem> items = selectItemsBySeq(jobId);
+        if (items.isEmpty()) {
+            return;
+        }
+
+        // 4. 归属
+        Map<Long, List<Map<String, Object>>> byItem = new LinkedHashMap<>();
+        if (questionCount == 1 || items.size() == 1) {
+            for (Fig fig : valid) {
+                addFigTo(byItem, items.get(0).getId(), fig, true);
+            }
+        } else {
+            boolean gatePass = valid.size() <= questionCount;   // conf 已过滤；y 序单调已由排序保证
+            for (int i = 0; i < valid.size(); i++) {
+                int idx = Math.min(i, items.size() - 1);   // 超题数的图兜底挂最后一题，不丢
+                addFigTo(byItem, items.get(idx).getId(), valid.get(i), gatePass);
+            }
+        }
+
+        // 5. 落 figures_json + has_figure=1（ignore 包裹）
+        Date now = new Date();
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            for (Map.Entry<Long, List<Map<String, Object>>> e : byItem.entrySet()) {
+                BizIngestJobItem iu = new BizIngestJobItem();
+                iu.setId(e.getKey());
+                iu.setFiguresJson(JsonUtils.toJsonString(e.getValue()));
+                iu.setHasFigure(1);
+                iu.setUpdateTime(now);
+                itemMapper.updateById(iu);
+            }
+            return null;
+        }));
+        log.info("[ingest-worker] 裁图完成 jobId={} 有效图数={} 归属题数={} 题数={}",
+            jobId, valid.size(), byItem.size(), questionCount);
+    }
+
+    /** 把一张裁图追加到某 item 的图列（seq 从 1 起，assigned 标是否确信归属）。 */
+    private static void addFigTo(Map<Long, List<Map<String, Object>>> byItem, Long itemId, Fig fig, boolean assigned) {
+        List<Map<String, Object>> list = byItem.computeIfAbsent(itemId, k -> new ArrayList<>());
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("seq", list.size() + 1);
+        m.put("ossUrl", fig.ossUrl);
+        m.put("bbox", fig.bbox);
+        m.put("conf", fig.conf);
+        m.put("assigned", assigned);
+        list.add(m);
+    }
+
+    /** base64 PNG → OSS（走 RuoYi OssFactory，与 SysOssServiceImpl.upload 同范式）。失败返 null（不抛）。 */
+    private String uploadCropToOss(String imageBase64) {
+        if (StringUtils.isBlank(imageBase64)) {
+            return null;
+        }
+        try {
+            byte[] bytes = Base64.getDecoder().decode(imageBase64);
+            OssClient storage = OssFactory.instance();
+            UploadResult ur = storage.uploadSuffix(bytes, ".png", "image/png");
+            return ur.getUrl();
+        } catch (Exception e) {
+            log.warn("[ingest-worker] 裁图上传 OSS 失败 err={}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** figures_json → ImageRef 列（role=figure）；只取 assigned!=false 的（整卷未确信归属的不作真题图）。 */
+    private List<IngestQuestionBo.ImageRef> buildFigureImageRefs(String figuresJson) {
+        List<IngestQuestionBo.ImageRef> refs = new ArrayList<>();
+        if (StringUtils.isBlank(figuresJson)) {
+            return refs;
+        }
+        try {
+            List<Map> figs = JsonUtils.parseArray(figuresJson, Map.class);
+            if (figs == null) {
+                return refs;
+            }
+            for (Map f : figs) {
+                Object assigned = f.get("assigned");
+                if (assigned instanceof Boolean && !((Boolean) assigned)) {
+                    continue;   // 未确信归属，不作真题图（图仍在 figures_json 待人工挂）
+                }
+                Object url = f.get("ossUrl");
+                if (url == null || String.valueOf(url).isBlank()) {
+                    continue;
+                }
+                IngestQuestionBo.ImageRef ref = new IngestQuestionBo.ImageRef();
+                ref.setOssUrl(String.valueOf(url));
+                ref.setRole("figure");
+                Object seq = f.get("seq");
+                ref.setSeq(seq instanceof Number ? ((Number) seq).intValue() : refs.size() + 1);
+                ref.setIsDecorative(0);
+                refs.add(ref);
+            }
+        } catch (Exception e) {
+            log.warn("[ingest-worker] figures_json 解析失败（跳过裁图挂载）err={}", e.getMessage());
+        }
+        return refs;
+    }
+
+    private List<BizIngestJobItem> selectItemsBySeq(Long jobId) {
+        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            itemMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<BizIngestJobItem>()
+                .eq(BizIngestJobItem::getJobId, jobId)
+                .orderByAsc(BizIngestJobItem::getSeq))));
+    }
+
+    /** 裁图临时载体（页内位置用于整卷 y 序归属）。 */
+    private static class Fig {
+        String ossUrl;
+        List<Integer> bbox;
+        double conf;
+        int page;
+        int y1;
     }
 
     // ==================== qtype / difficulty 映射 ====================
