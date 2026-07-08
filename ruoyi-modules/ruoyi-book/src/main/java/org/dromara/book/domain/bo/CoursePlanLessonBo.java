@@ -18,5 +18,7 @@ public class CoursePlanLessonBo {
     private Object kgNodeIds;
     /** 分段模板数组 JSON */
     private Object segTemplate;
+    /** 专项卷位数组 JSON（PRD-B-101）：[{slot_seq,name,style,rules,note,paper_id,manual_ready}] */
+    private Object paperSlots;
     // R1b S3：prepState 不再收前端写入——备课状态唯一权威 = biz_prep_pack.status
 }

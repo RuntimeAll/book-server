@@ -58,6 +58,10 @@ public class BizPaper implements Serializable {
     @TableField("paper_type")
     private Integer paperType;
 
+    /** 卷型：'1' 普通 / '2' 备课卷（PRD-B-101；备课卷私有，公共卷库查询排除）。 */
+    @TableField("paper_kind")
+    private String paperKind;
+
     @TableField("exam_year")
     private String examYear;
 

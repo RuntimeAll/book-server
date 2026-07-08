@@ -66,6 +66,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
     private final BizPaperSectionMapper bizPaperSectionMapper;
     private final BizPaperQuestionMapper bizPaperQuestionMapper;
     private final IPaperDetailService paperDetailService;
+    private final org.dromara.book.service.schedule.PaperSlotService paperSlotService;
 
     /** Q 卡默认 section title — FE 不展示，仅满足 biz_paper_question.section_id NOT NULL 约束 */
     private static final String DEFAULT_SECTION_TITLE = "题目";
@@ -212,8 +213,15 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             }
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
             wrapper.eq("p.create_by", String.valueOf(currentUserId));
+            // PRD-B-101：mine 口径支持按卷型筛（'2'=备课卷 tab / '1'=普通卷）；空则不过滤（全量含备课卷）
+            if (bo.getPaperKind() != null && !bo.getPaperKind().isBlank()) {
+                wrapper.eq("p.paper_kind", bo.getPaperKind());
+            }
+        } else {
+            // 公共卷库：不加 create_by 归属过滤，靠下方 subject_id 分类前缀筛。
+            // 🔴 PRD-B-101 G6：备课卷私有，公共口径接口层显式排除（不只前端隐藏）。
+            wrapper.ne("p.paper_kind", "2");
         }
-        // else 公共卷库：不加 create_by 归属过滤，靠下方 subject_id 分类前缀筛
 
         if (bo.getName() != null && !bo.getName().isEmpty()) {
             wrapper.like("p.name", bo.getName());
@@ -242,7 +250,21 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         if (currentUserId == null) {
             throw new ServiceException("未登录用户不能创建试卷");
         }
-        return doCreateExamPaper(bo, String.valueOf(currentUserId));
+        // PRD-B-101 G2：lessonId 与 slotSeq 必须同现（只传一个 → 400）。
+        boolean hasLesson = bo.getLessonId() != null;
+        boolean hasSlot = bo.getSlotSeq() != null;
+        if (hasLesson != hasSlot) {
+            throw new ServiceException("lessonId 与 slotSeq 必须同时提供（备课语境绑卷位）", 400);
+        }
+        // 备课语境 → 备课卷 paper_kind='2'；否则普通卷 '1'（G2 负例）
+        String paperKind = hasLesson ? "2" : "1";
+        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(currentUserId), paperKind);
+        if (hasLesson) {
+            // 创建成功后写入该课次 paper_slots 对应 slot（slot 不存在 → 400，整事务回滚，不留孤卷）。
+            // 刚建的卷即本人卷，跳过 owner 复核。
+            paperSlotService.bindPaper(bo.getLessonId(), bo.getSlotSeq(), vo.getPaperId(), false);
+        }
+        return vo;
     }
 
     @Override
@@ -251,14 +273,24 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         if (teacherId == null) {
             throw new ServiceException("归属老师 id 不能为空");
         }
-        return doCreateExamPaper(bo, String.valueOf(teacherId));
+        boolean hasLesson = bo.getLessonId() != null;
+        boolean hasSlot = bo.getSlotSeq() != null;
+        if (hasLesson != hasSlot) {
+            throw new ServiceException("lessonId 与 slotSeq 必须同时提供（备课语境绑卷位）", 400);
+        }
+        String paperKind = hasLesson ? "2" : "1";
+        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(teacherId), paperKind);
+        if (hasLesson) {
+            paperSlotService.bindPaper(bo.getLessonId(), bo.getSlotSeq(), vo.getPaperId(), false);
+        }
+        return vo;
     }
 
     /**
      * 落库核心：写 biz_paper + section + 批量 paper_question。create_by 由调用方决定
-     * （登录态 or 显式 teacherId），是两个入口的唯一差异。
+     * （登录态 or 显式 teacherId），是两个入口的唯一差异。paperKind='1'普通/'2'备课卷（PRD-B-101）。
      */
-    private CreateExamPaperVo doCreateExamPaper(CreateExamPaperBo bo, String ownerIdStr) {
+    private CreateExamPaperVo doCreateExamPaper(CreateExamPaperBo bo, String ownerIdStr, String paperKind) {
         if (bo.getQuestionIds() == null || bo.getQuestionIds().isEmpty()) {
             throw new ServiceException("题目列表不能为空");
         }
@@ -274,6 +306,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         paper.setQuestionCount(qCount);
         paper.setScore(BigDecimal.ZERO);
         paper.setPaperType(1);
+        paper.setPaperKind(paperKind == null ? "1" : paperKind);
         paper.setStatus("1");
         paper.setSort(0);
         paper.setCreateBy(userIdStr);

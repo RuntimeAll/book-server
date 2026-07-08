@@ -8,13 +8,11 @@ import org.dromara.book.domain.bo.LessonBatchBo;
 import org.dromara.book.domain.entity.BizClass;
 import org.dromara.book.domain.entity.BizCoursePlan;
 import org.dromara.book.domain.entity.BizCoursePlanLesson;
-import org.dromara.book.domain.entity.BizPrepPack;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.domain.entity.BizStudent;
 import org.dromara.book.mapper.BizClassMapper;
 import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizCoursePlanMapper;
-import org.dromara.book.mapper.BizPrepPackMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
 import org.dromara.book.util.EduTermUtil;
@@ -46,8 +44,8 @@ public class CoursePlanService {
     private final BizScheduleSessionMapper sessionMapper;
     private final BizStudentMapper studentMapper;
     private final BizClassMapper classMapper;
-    private final BizPrepPackMapper prepPackMapper;
     private final ScheduleRenderUtil renderUtil;
+    private final PaperSlotService paperSlotService;
 
     @Transactional(rollbackFor = Exception.class)
     public Long upsertPlan(CoursePlanBo bo) {
@@ -61,6 +59,11 @@ public class CoursePlanService {
         p.setMaterialNote(bo.getMaterialNote());
         if (bo.getDefaultSegTemplate() != null) {
             p.setDefaultSegTemplate(JsonUtils.toJsonString(bo.getDefaultSegTemplate()));
+        }
+        if (bo.getDefaultPaperSlots() != null) {
+            List<Map<String, Object>> slots = paperSlotService.parseSlots(JsonUtils.toJsonString(bo.getDefaultPaperSlots()));
+            paperSlotService.validateSlots(slots);
+            p.setDefaultPaperSlots(JsonUtils.toJsonString(slots));
         }
         if (bo.getStatus() != null) p.setStatus(bo.getStatus());
         if (bo.getId() == null) {
@@ -118,6 +121,7 @@ public class CoursePlanService {
         m.put("year", p.getYear());
         m.put("materialNote", p.getMaterialNote());
         m.put("defaultSegTemplate", parse(p.getDefaultSegTemplate()));
+        m.put("defaultPaperSlots", parse(p.getDefaultPaperSlots()));
         m.put("status", p.getStatus());
         m.put("createTime", p.getCreateTime());
         m.put("updateTime", p.getUpdateTime());
@@ -131,30 +135,21 @@ public class CoursePlanService {
         Map<String, Object> m = planBrief(p);
         List<BizCoursePlanLesson> lessons = lessonMapper.selectList(new LambdaQueryWrapper<BizCoursePlanLesson>()
             .eq(BizCoursePlanLesson::getPlanId, id).orderByAsc(BizCoursePlanLesson::getLessonSeq));
-        Map<Long, String> packStatus = packStatusByLessonIds(
-            lessons.stream().map(BizCoursePlanLesson::getId).toList());
         List<Map<String, Object>> ls = new ArrayList<>();
-        for (BizCoursePlanLesson l : lessons) ls.add(lessonVo(l, packStatus));
+        for (BizCoursePlanLesson l : lessons) ls.add(lessonVo(l, p.getDefaultPaperSlots()));
         m.put("lessons", ls);
         m.put("lessonCount", ls.size());
         return m;
     }
 
     /**
-     * R1b S3：备课状态唯一权威 = biz_prep_pack.status。按 lessonIds 一次 in 查包状态映射
-     * （防列表 N+1）；无包课次不入 map，VO 层按 '0' 兜底（无包=大纲态，与 pack '0' 装配中语义对齐）。
+     * 课次 VO（PRD-B-101）。备课态唯一权威 = lesson.paper_slots 实时推导（不再读 biz_prep_pack.status）。
+     * paperSlots 输出「有效卷位」= 课次自有卷位；课次未配则回退计划默认模板（继承语义，读时回退不物理复制）。
+     * prepState 键名保留兼容 FE。
+     *
+     * @param planDefaultPaperSlots 计划级默认卷位模板 JSON（课次无卷位时继承）
      */
-    private Map<Long, String> packStatusByLessonIds(List<Long> lessonIds) {
-        Map<Long, String> map = new LinkedHashMap<>();
-        if (lessonIds == null || lessonIds.isEmpty()) return map;
-        List<BizPrepPack> packs = prepPackMapper.selectList(new LambdaQueryWrapper<BizPrepPack>()
-            .in(BizPrepPack::getPlanLessonId, lessonIds));
-        for (BizPrepPack p : packs) map.put(p.getPlanLessonId(), p.getStatus());
-        return map;
-    }
-
-    /** 课次 VO。prepState 键名保留兼容，值 = 备课包状态推导（无包='0'）。 */
-    public Map<String, Object> lessonVo(BizCoursePlanLesson l, Map<Long, String> packStatus) {
+    public Map<String, Object> lessonVo(BizCoursePlanLesson l, String planDefaultPaperSlots) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(l.getId()));
         m.put("planId", String.valueOf(l.getPlanId()));
@@ -168,8 +163,14 @@ public class CoursePlanService {
         m.put("parentCopy", l.getParentCopy());
         m.put("kgNodeIds", parse(l.getKgNodeIds()));
         m.put("segTemplate", parse(l.getSegTemplate()));
-        String st = packStatus == null ? null : packStatus.get(l.getId());
-        m.put("prepState", st == null ? "0" : st);
+        // 有效卷位：课次自有为准，未配则读时回退计划默认（不物理复制→改模板不回写已覆盖课次）
+        boolean ownSlots = l.getPaperSlots() != null && !l.getPaperSlots().isBlank();
+        String effectiveJson = ownSlots ? l.getPaperSlots() : planDefaultPaperSlots;
+        List<Map<String, Object>> effectiveSlots = paperSlotService.parseSlots(effectiveJson);
+        m.put("paperSlots", effectiveSlots);
+        m.put("paperSlotsInherited", !ownSlots);
+        // 备课态推导：始终按课次自有卷位（继承的模板无 paper_id → 推导必为 '0'，等价）
+        m.put("prepState", paperSlotService.deriveStatus(l.getPaperSlots()));
         return m;
     }
 
@@ -180,7 +181,8 @@ public class CoursePlanService {
     @Transactional(rollbackFor = Exception.class)
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> upsertLessons(Long planId, Object body) {
-        if (planMapper.selectById(planId) == null) throw new ServiceException("计划不存在");
+        BizCoursePlan plan = planMapper.selectById(planId);
+        if (plan == null) throw new ServiceException("计划不存在");
         // 归一化到 List<CoursePlanLessonBo>
         Object listNode = body;
         if (body instanceof Map<?, ?> mp && mp.get("lessons") != null) {
@@ -206,6 +208,18 @@ public class CoursePlanService {
             l.setParentCopy(lb.getParentCopy());
             if (lb.getKgNodeIds() != null) l.setKgNodeIds(JsonUtils.toJsonString(lb.getKgNodeIds()));
             if (lb.getSegTemplate() != null) l.setSegTemplate(JsonUtils.toJsonString(lb.getSegTemplate()));
+            if (lb.getPaperSlots() != null) {
+                String oldSlotsJson = l.getPaperSlots();
+                List<Map<String, Object>> slots = paperSlotService.parseSlots(JsonUtils.toJsonString(lb.getPaperSlots()));
+                paperSlotService.validateSlots(slots);
+                // M-1（PRD-B-101 §10 反性）：整体覆写时若任一原绑定消失（卷位被删 / paper_id 被清或换）
+                // → 该课次全部卷位 manual_ready 清 false（与 unbindSlot 单点解绑口径一致，杜绝"删掉绑卷卷位仍显手动绿"）。
+                // 纯新增 / 改名 / 改配方不触发。
+                if (paperSlotService.anyBindingLost(oldSlotsJson, slots)) {
+                    for (Map<String, Object> s : slots) s.put("manual_ready", false);
+                }
+                l.setPaperSlots(JsonUtils.toJsonString(slots));
+            }
             if (lb.getId() == null) {
                 if (l.getLessonSeq() == null) l.setLessonSeq(0);
                 lessonMapper.insert(l);
@@ -214,9 +228,7 @@ public class CoursePlanService {
             }
             saved.add(l);
         }
-        Map<Long, String> packStatus = packStatusByLessonIds(
-            saved.stream().map(BizCoursePlanLesson::getId).toList());
-        for (BizCoursePlanLesson l : saved) out.add(lessonVo(l, packStatus));
+        for (BizCoursePlanLesson l : saved) out.add(lessonVo(l, plan.getDefaultPaperSlots()));
         return out;
     }
 
@@ -251,6 +263,7 @@ public class CoursePlanService {
         p.setYear(src.getYear());
         p.setMaterialNote(src.getMaterialNote());
         p.setDefaultSegTemplate(src.getDefaultSegTemplate());
+        p.setDefaultPaperSlots(src.getDefaultPaperSlots());
         p.setStatus("0");
         planMapper.insert(p);
         List<BizCoursePlanLesson> lessons = lessonMapper.selectList(new LambdaQueryWrapper<BizCoursePlanLesson>()
@@ -268,9 +281,25 @@ public class CoursePlanService {
             l.setParentCopy(s.getParentCopy());
             l.setKgNodeIds(s.getKgNodeIds());
             l.setSegTemplate(s.getSegTemplate());
+            // PRD-B-101 拍板：副本卷位配方（slot_seq/name/style/rules/note）照抄，
+            // 但 paper_id 置 null + manual_ready 置 false——备课卷是特定学生/日期的产物，
+            // 副本课次从"未备"起步（plan 级 default_paper_slots 模板照抄不动，本就不含绑定）。
+            l.setPaperSlots(stripSlotBindings(s.getPaperSlots()));
             lessonMapper.insert(l);
         }
         return p.getId();
+    }
+
+    /** 卷位深拷贝清绑定：paper_id→null、manual_ready→false，配方字段原样保留。空/无卷位原样返回。 */
+    private String stripSlotBindings(String paperSlotsJson) {
+        if (paperSlotsJson == null || paperSlotsJson.isBlank()) return paperSlotsJson;
+        List<Map<String, Object>> slots = paperSlotService.parseSlots(paperSlotsJson);
+        if (slots.isEmpty()) return paperSlotsJson;
+        for (Map<String, Object> s : slots) {
+            s.put("paper_id", null);
+            s.put("manual_ready", false);
+        }
+        return JsonUtils.toJsonString(slots);
     }
 
     /**

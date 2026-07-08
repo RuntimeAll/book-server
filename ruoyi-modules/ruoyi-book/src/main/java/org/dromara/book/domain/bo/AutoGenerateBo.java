@@ -61,6 +61,17 @@ public class AutoGenerateBo implements Serializable {
     private Long teacherId;
 
     /**
+     * 备课语境·课次 id（PRD-B-101 G7，与 /teacher/exam/paper/create 同语义）。
+     * 与 {@link #slotSeq} 必须同现（只传一个 → 400）；二者同现时要求 save=true + teacherId 有效，
+     * 落库卷 paper_kind='2' 且事务内绑该课次 paper_slots 对应 slot（slot 不存在 → 400 整体回滚）。
+     * 不传 → 行为完全不变。
+     */
+    private Long lessonId;
+
+    /** 备课语境·卷位序号（PRD-B-101 G7）。与 {@link #lessonId} 必须同现。 */
+    private Integer slotSeq;
+
+    /**
      * 大纲单项 = 一个组卷需求单元。
      */
     @Data

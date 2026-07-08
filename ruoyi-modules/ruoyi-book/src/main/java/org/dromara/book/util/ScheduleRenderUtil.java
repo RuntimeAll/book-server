@@ -1,8 +1,6 @@
 package org.dromara.book.util;
 
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
-import lombok.Data;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
@@ -20,12 +18,10 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -88,33 +84,6 @@ public class ScheduleRenderUtil {
 
     /** 解析后的字体缓存 [main, heading]（进程内探测一次）。 */
     private volatile File[] resolvedFonts;
-
-    @Getter
-    public static class PdfResult {
-        private final String file;
-        private final int pages;
-        public PdfResult(String file, int pages) { this.file = file; this.pages = pages; }
-    }
-
-    /** 段渲染数据（BUG-004：groups 可选段内分组；无 groups 走 questions 平铺/星级）。 */
-    @Data
-    public static class SegData {
-        private String name;
-        private String style;
-        private String topic;
-        private String note;
-        private String rules;
-        /** 题目 [{id, stem, star, qtype}]，stem=biz_question.stem_text 原样。groups 非空时忽略。 */
-        private List<Map<String, Object>> questions = new ArrayList<>();
-        /** 可选段内分组（灰阶小标题），对照原版「基础过关（易错向）」式。 */
-        private List<SegGroup> groups;
-    }
-
-    @Data
-    public static class SegGroup {
-        private String title;
-        private List<Map<String, Object>> questions = new ArrayList<>();
-    }
 
     // ─────────────────────────── 产物目录 ───────────────────────────
 
@@ -210,31 +179,6 @@ public class ScheduleRenderUtil {
         }
     }
 
-    /** HTML → 一份 PDF 落产物目录。返回相对文件名 + 真页数（pdfbox getNumberOfPages）。 */
-    public PdfResult renderPdf(String html, String name) {
-        Path root = artifactRoot();
-        String base = safe(name);
-        Path pdfFile = root.resolve(base + ".pdf");
-        try {
-            // 留一份 HTML 便于人工对拍样张（非契约产物）
-            Files.writeString(root.resolve(base + ".html"), html, StandardCharsets.UTF_8);
-            byte[] bytes = htmlToPdfBytes(html);
-            if (bytes.length == 0) {
-                throw new ServiceException("PDF 生成失败（产物为空）：" + base);
-            }
-            Files.write(pdfFile, bytes);
-            int pages;
-            try (PDDocument doc = PDDocument.load(bytes)) {
-                pages = doc.getNumberOfPages();
-            }
-            return new PdfResult(pdfFile.getFileName().toString(), pages);
-        } catch (ServiceException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new ServiceException("PDF 渲染异常：" + e.getMessage());
-        }
-    }
-
     /**
      * HTML → PNG（家长版长图，BUG-010 去 Edge）：注入 @page 尺寸（width×height px、零边距）
      * → 进程内出 PDF → pdfbox 光栅化第 1 页。192dpi = CSS px 布局不变、位图 2 倍保清晰。
@@ -267,165 +211,6 @@ public class ScheduleRenderUtil {
 
     private String safe(String name) {
         return name.replaceAll("[^a-zA-Z0-9_\\-]", "_");
-    }
-
-    // ─────────────────────────── 备课材料整包 HTML ───────────────────────────
-
-    /**
-     * 备课材料全段拼一份 HTML（对照 09a/b/c；BUG-010 单文件拍板）：段间强制起新页。
-     * 专项段（style/rules 真含层级标记）= 核心口诀 kj 框 + 三层星级；
-     * 普通段带 groups = 灰阶小标题分组（BUG-004）；否则平铺题列。
-     * 留白分档（BUG-004）：按题型 选择/判断 20mm、填空 22mm、计算/解答 30mm；
-     * 思维段整段 70mm；题型缺失退回段级现值（课内 20mm / 其余 30mm）。
-     * 🔴 仅题目无答案解析。
-     */
-    public String buildPrepPackHtml(List<SegData> segs) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><title>备课材料</title><style>");
-        // 🔴 字号面向小学四年级放大（2026-07-06 维护者反馈）：正文 17px、标题 24px、行高 1.9。
-        sb.append("@page{size:A4;margin:16mm 15mm 16mm}");
-        // 页脚：底部居中页码（2026-07-07 维护者要求；按层分页 = 每段 page-break-before 起新页）
-        sb.append("@page{@bottom-center{content:\"— 第 \" counter(page) \" 页 —\";font-family:'")
-            .append(FAMILY_MAIN).append("';font-size:10px;color:#999}}");
-        sb.append("*{box-sizing:border-box;margin:0;padding:0}");
-        sb.append("body{font-family:'").append(FAMILY_MAIN).append("';color:#111;font-size:17px;line-height:1.9}");
-        sb.append(".seg{page-break-before:always}");
-        sb.append(".seg.first{page-break-before:auto}");
-        sb.append(".hd{text-align:center;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:8px}");
-        sb.append(".hd h1{font-family:'").append(FAMILY_HEAD).append("';font-size:24px;letter-spacing:.06em;font-weight:normal}");
-        sb.append(".kj{border:1.5px solid #111;border-radius:6px;padding:8px 13px;margin:8px 0 4px;font-size:15px;line-height:1.75}");
-        sb.append(".kj b{font-family:'").append(FAMILY_HEAD).append("';font-weight:normal}");
-        sb.append(".sub{font-size:15px;color:#444;margin:6px 0 8px}");
-        sb.append(".lv{font-family:'").append(FAMILY_HEAD).append("';font-size:18px;margin:16px 0 5px;page-break-after:avoid}");
-        sb.append(".grp{font-family:'").append(FAMILY_HEAD).append("';font-size:15px;color:#555;")
-            .append("background:#f0f0f0;border-left:3px solid #9a9a9a;padding:3px 9px;margin:13px 0 7px;page-break-after:avoid}");
-        sb.append(".q{margin:0 0 9px;page-break-inside:avoid}");
-        sb.append(".q .t b{font-family:'").append(FAMILY_HEAD).append("';font-weight:normal}");
-        sb.append(".star{color:#e8912a;font-size:14px;letter-spacing:1px}");
-        sb.append(".q img{max-width:100%}");
-        sb.append(".foot{margin-top:8mm;text-align:center;font-size:12px;color:#666}");
-        sb.append("</style></head><body>");
-        for (int i = 0; i < segs.size(); i++) {
-            appendSeg(sb, segs.get(i), i == 0);
-        }
-        sb.append("</body></html>");
-        return sb.toString();
-    }
-
-    private void appendSeg(StringBuilder sb, SegData seg, boolean first) {
-        String name = seg.getName();
-        boolean think = name != null && name.contains("思维");
-        boolean inner = name != null && (name.contains("课内") || name.contains("同步"));
-        boolean grouped = seg.getGroups() != null && !seg.getGroups().isEmpty();
-        // 🔴 D12：仅当 style/rules 真含层级标记（★ 或「第[一二三]层」）才走口诀+三层版式；
-        // 带 groups 的段优先分组版式（BUG-004 自定义两层结构）。
-        boolean special = !grouped && (hasLayerMark(seg.getStyle()) || hasLayerMark(seg.getRules()));
-        String title = seg.getTopic() != null && !seg.getTopic().isBlank() ? seg.getTopic()
-            : (name != null ? name : "练习");
-
-        sb.append("<div class=\"seg").append(first ? " first" : "").append("\">");
-        sb.append("<div class=\"hd\"><h1>").append(esc(title)).append("</h1></div>");
-
-        if (special) {
-            String kj = seg.getNote() != null && !seg.getNote().isBlank() ? seg.getNote()
-                : (seg.getRules() != null ? seg.getRules() : "");
-            if (!kj.isBlank()) {
-                sb.append("<div class=\"kj\"><b>核心口诀</b>　").append(esc(kj)).append("</div>");
-            }
-            appendStarLayers(sb, seg.getQuestions(), think, inner);
-        } else {
-            // 普通段：note/rules 作副标题文案，不出口诀框、不出层标题。
-            String subtitle = seg.getNote() != null && !seg.getNote().isBlank() ? seg.getNote() : seg.getRules();
-            if (subtitle != null && !subtitle.isBlank()) {
-                sb.append("<div class=\"sub\">").append(esc(subtitle)).append("</div>");
-            }
-            int n = 1;
-            if (grouped) {
-                // BUG-004：段内分组灰阶小标题（对照原版「基础过关（易错向）」式），题号跨组连续
-                for (SegGroup g : seg.getGroups()) {
-                    if (g.getTitle() != null && !g.getTitle().isBlank()) {
-                        sb.append("<div class=\"grp\">").append(esc(g.getTitle())).append("</div>");
-                    }
-                    for (Map<String, Object> q : g.getQuestions()) {
-                        sb.append(qHtml(n++, q, think, inner));
-                    }
-                }
-            } else {
-                for (Map<String, Object> q : seg.getQuestions()) {
-                    sb.append(qHtml(n++, q, think, inner));
-                }
-            }
-        }
-        sb.append("</div>");
-    }
-
-    private void appendStarLayers(StringBuilder sb, List<Map<String, Object>> questions,
-                                  boolean think, boolean inner) {
-        String[] heads = {
-            "第一层 ★ 基础练习",
-            "第二层 ★★ 挑战进阶",
-            "第三层 ★★★ 压轴挑战（选做，能想到哪一步写到哪一步）"
-        };
-        int n = 1;
-        for (int layer = 1; layer <= 3; layer++) {
-            final int lv = layer;
-            List<Map<String, Object>> group = questions.stream()
-                .filter(q -> starLevel(q) == lv).toList();
-            if (group.isEmpty()) continue;
-            sb.append("<div class=\"lv\">").append(heads[layer - 1]).append("</div>");
-            for (Map<String, Object> q : group) {
-                sb.append(qHtml(n++, q, think, inner));
-            }
-        }
-    }
-
-    /** 星级：'2'/'3' → 2/3；其余（'1'/null/空）归第一层。 */
-    private int starLevel(Map<String, Object> q) {
-        Object s = q.get("star");
-        if (s == null) return 1;
-        String v = String.valueOf(s).trim();
-        if ("2".equals(v)) return 2;
-        if ("3".equals(v)) return 3;
-        return 1;
-    }
-
-    private String stem(Map<String, Object> q) {
-        Object s = q.get("stem");
-        return s == null ? "" : String.valueOf(s);
-    }
-
-    private String qHtml(int n, Map<String, Object> q, boolean think, boolean inner) {
-        return "<div class=\"q\"><div class=\"t\"><b>" + n + ".</b>" + starMark(q) + "　" + stem(q) + "</div>"
-            + "<div style=\"height:" + spacerHeight(q, think, inner) + "\"></div></div>";
-    }
-
-    /** 题号后难度星：q.star 非空且&gt;0 时输出 ★×lv（专项段每题标难度；star=biz_question.star_level，NULL 不显示）。 */
-    private String starMark(Map<String, Object> q) {
-        Object s = q.get("star");
-        if (s == null) return "";
-        int lv;
-        try { lv = Integer.parseInt(String.valueOf(s).trim()); } catch (Exception e) { return ""; }
-        if (lv <= 0) return "";
-        StringBuilder b = new StringBuilder("　<span class=\"star\">");
-        for (int i = 0; i < lv; i++) b.append("★");
-        return b.append("</span>").toString();
-    }
-
-    /**
-     * 答题留白分档（BUG-004）：思维段整段 70mm（现状口径）；否则按题型
-     * 选择(1)/判断(3) 20mm、填空(2/4) 22mm、计算/解答(5) 30mm；
-     * 题型缺失退回段级现值（课内 20mm / 其余 30mm）。
-     */
-    private String spacerHeight(Map<String, Object> q, boolean think, boolean inner) {
-        if (think) return "70mm";
-        Object t = q.get("qtype");
-        String v = t == null ? "" : String.valueOf(t).trim();
-        return switch (v) {
-            case "1", "3" -> "20mm";
-            case "2", "4" -> "22mm";
-            case "5" -> "30mm";
-            default -> inner ? "20mm" : "30mm";
-        };
     }
 
     // ─────────────────────────── 家长版长图 HTML ───────────────────────────
@@ -527,8 +312,8 @@ public class ScheduleRenderUtil {
                 ? l.getParentCopy() : (l.getTitle() != null ? l.getTitle() : "专项练习");
             zx = stripInternalWords(zx);
             sb.append("<div class=\"seg\"><span class=\"k m\">专项</span> <span class=\"x\">").append(esc(zx)).append("</span></div>");
-            // 课内 = segTemplate[2].topic（家长产物：过内部词防线）
-            String inner = stripInternalWords(innerTopic(l.getSegTemplate()));
+            // 课内 = 卷位 name 拼（PRD-B-101，有 paper_slots 用之）；无则回退旧 segTemplate[2].topic
+            String inner = stripInternalWords(innerTopic(l));
             if (inner != null && !inner.isBlank()) {
                 sb.append("<div class=\"seg\"><span class=\"k s\">课内</span> <span class=\"x\">").append(esc(inner)).append("</span></div>");
             }
@@ -537,8 +322,39 @@ public class ScheduleRenderUtil {
         return sb.toString();
     }
 
+    /**
+     * 家长版长图「课内」文案（PRD-B-101 隐藏消费点适配）：
+     * 有 paper_slots 时用各卷位 name 拼（🔴 只取 name，rules/note 不进文案；内部词由上游 stripInternalWords 过滤）；
+     * 无 paper_slots 回退旧 segTemplate[2].topic 逻辑。
+     */
     @SuppressWarnings("unchecked")
-    private String innerTopic(String segTemplateJson) {
+    private String innerTopic(BizCoursePlanLesson l) {
+        // 优先 paper_slots
+        String slotsJson = l.getPaperSlots();
+        if (slotsJson != null && !slotsJson.isBlank()) {
+            try {
+                List<Object> arr = JsonUtils.parseArray(slotsJson, Object.class);
+                if (arr != null && !arr.isEmpty()) {
+                    StringBuilder sb = new StringBuilder();
+                    for (Object o : arr) {
+                        if (o instanceof Map<?, ?> slot) {
+                            Object name = ((Map<String, Object>) slot).get("name");
+                            if (name != null && !String.valueOf(name).isBlank()) {
+                                if (sb.length() > 0) sb.append("、");
+                                sb.append(String.valueOf(name).trim());
+                            }
+                        }
+                    }
+                    if (sb.length() > 0) return sb.toString();
+                }
+            } catch (Exception ignore) {
+            }
+        }
+        return innerTopicFromSeg(l.getSegTemplate());
+    }
+
+    @SuppressWarnings("unchecked")
+    private String innerTopicFromSeg(String segTemplateJson) {
         if (segTemplateJson == null || segTemplateJson.isBlank()) return null;
         try {
             List<Object> arr = JsonUtils.parseArray(segTemplateJson, Object.class);
@@ -564,14 +380,6 @@ public class ScheduleRenderUtil {
     private String esc(String s) {
         if (s == null) return "";
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
-
-    /** style/rules 是否真含层级标记（★ 或「第[一二三]层」）—— D12 专项卷判据。 */
-    private boolean hasLayerMark(String s) {
-        if (s == null || s.isBlank()) {
-            return false;
-        }
-        return s.contains("★") || Pattern.compile("第[一二三]层").matcher(s).find();
     }
 
     /** 家长产物内部词防线（family = ★/第N层/N层/素材/挑题/薄弱），确定性剥离。宁可钝不可泄。 */

@@ -6,7 +6,9 @@ import org.dromara.book.domain.bo.CoursePlanBo;
 import org.dromara.book.domain.bo.LessonBatchBo;
 import org.dromara.book.domain.bo.LessonReorderBo;
 import org.dromara.book.service.schedule.CoursePlanService;
+import org.dromara.book.service.schedule.PaperSlotService;
 import org.dromara.common.core.domain.R;
+import org.dromara.common.core.exception.ServiceException;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,6 +34,7 @@ import java.util.Map;
 public class CoursePlanController {
 
     private final CoursePlanService planService;
+    private final PaperSlotService paperSlotService;
 
     @SaCheckLogin
     @PostMapping("/plan")
@@ -103,5 +106,52 @@ public class CoursePlanController {
     public R<Map<String, Object>> parentExport(@PathVariable Long id,
                                               @RequestParam(required = false) Long targetId) {
         return R.ok(planService.parentExport(id, targetId));
+    }
+
+    // ───────────────── PRD-B-101 专项卷位·绑定/解绑/标记已备好 ─────────────────
+
+    /**
+     * 绑定既有卷到卷位（D7 兜底：任意 mine 卷可挂）。body: {@code {"paperId": 123}}。
+     * 返回 {@code {paperSlots, prepState}}（更新后卷位列表 + 推导备课态）。
+     */
+    @SaCheckLogin
+    @PostMapping("/plan/lesson/{lessonId}/slot/{slotSeq}/bind")
+    public R<Map<String, Object>> bindSlot(@PathVariable Long lessonId, @PathVariable Integer slotSeq,
+                                           @RequestBody Map<String, Object> body) {
+        Object pid = body == null ? null : body.get("paperId");
+        if (pid == null || String.valueOf(pid).isBlank()) {
+            throw new ServiceException("paperId 不能为空", 400);
+        }
+        Long paperId;
+        try {
+            paperId = Long.valueOf(String.valueOf(pid).trim());
+        } catch (NumberFormatException e) {
+            throw new ServiceException("paperId 非法：" + pid, 400);
+        }
+        return R.ok(slotResult(paperSlotService.bindPaper(lessonId, slotSeq, paperId, true)));
+    }
+
+    /** 解绑卷位（paper_id 置 null，卷留库不删；🔴 自动清全课次 manual_ready）。返回 {paperSlots, prepState}。 */
+    @SaCheckLogin
+    @PostMapping("/plan/lesson/{lessonId}/slot/{slotSeq}/unbind")
+    public R<Map<String, Object>> unbindSlot(@PathVariable Long lessonId, @PathVariable Integer slotSeq) {
+        return R.ok(slotResult(paperSlotService.unbindSlot(lessonId, slotSeq)));
+    }
+
+    /** 标记已备好 / 取消（manual_ready 覆盖，课次级）。body: {@code {"ready": true}}。返回 {paperSlots, prepState}。 */
+    @SaCheckLogin
+    @PostMapping("/plan/lesson/{lessonId}/manual-ready")
+    public R<Map<String, Object>> manualReady(@PathVariable Long lessonId,
+                                              @RequestBody(required = false) Map<String, Object> body) {
+        boolean ready = body == null || body.get("ready") == null
+            || Boolean.parseBoolean(String.valueOf(body.get("ready")));
+        return R.ok(slotResult(paperSlotService.markReady(lessonId, ready)));
+    }
+
+    private Map<String, Object> slotResult(List<Map<String, Object>> slots) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("paperSlots", slots);
+        r.put("prepState", paperSlotService.deriveStatusFromList(slots));
+        return r;
     }
 }

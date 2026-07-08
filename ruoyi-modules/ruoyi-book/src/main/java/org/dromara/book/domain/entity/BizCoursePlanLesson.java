@@ -58,5 +58,11 @@ public class BizCoursePlanLesson extends BaseEntity {
     /** 本课分段配置 JSON（空则继承 plan） */
     private String segTemplate;
 
+    /**
+     * 专项卷位 JSON（PRD-B-101，替代 seg_template 语义）：
+     * [{slot_seq,name,style,rules,note,paper_id,manual_ready}]。空则继承 plan.default_paper_slots（读时回退）。
+     */
+    private String paperSlots;
+
     // R1b S3：prep_state 已删列——备课状态唯一权威 = biz_prep_pack.status（VO 输出按 plan_lesson_id join 推导）
 }

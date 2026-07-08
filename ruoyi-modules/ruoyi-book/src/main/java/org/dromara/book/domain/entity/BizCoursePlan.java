@@ -49,6 +49,9 @@ public class BizCoursePlan extends BaseEntity {
     /** 默认分段模板 JSON */
     private String defaultSegTemplate;
 
+    /** 计划级默认卷位模板 JSON（PRD-B-101；lesson.paper_slots 空则继承）。 */
+    private String defaultPaperSlots;
+
     /** 状态：'0' 草稿 / '1' 启用 / '2' 归档 */
     private String status;
 }

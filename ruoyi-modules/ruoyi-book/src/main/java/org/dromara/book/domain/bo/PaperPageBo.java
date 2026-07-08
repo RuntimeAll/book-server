@@ -53,4 +53,10 @@ public class PaperPageBo implements Serializable {
      * 🔴 PRD-B-013: 共享标记列已 DROP，公共卷库语义改为分类树前缀匹配。
      */
     private String scope;
+
+    /**
+     * 卷型筛选（PRD-B-101，仅 mine 口径生效）：'1' 普通 / '2' 备课卷；空 = 不按卷型过滤。
+     * <p>🔴 公共卷库（scope≠mine）恒排除 paper_kind='2'（G6 反性=接口层查不到备课卷），本参数在公共口径被忽略。
+     */
+    private String paperKind;
 }
