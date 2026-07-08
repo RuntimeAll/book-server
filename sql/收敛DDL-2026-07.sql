@@ -763,7 +763,7 @@ CREATE TABLE `biz_question_knowledge` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `question_id` bigint NOT NULL,
   `knowledge_id` varchar(20) NOT NULL COMMENT '关联 biz_subject.id（叶子）',
-  `source` char(1) DEFAULT NULL COMMENT 'U用户 / S标准 / A=AI增量打标',
+  `source` varchar(8) DEFAULT NULL COMMENT 'U用户 / S标准 / AI=AI锚定(PRD-A-024批2录题KG锚定，原char(1)已扩)',
   `create_time` datetime DEFAULT NULL,
   `is_primary` tinyint(1) NOT NULL DEFAULT '1' COMMENT '1主考点/0副考点（同一知识体系 biz_subject，主副只此标记区分）',
   PRIMARY KEY (`id`),

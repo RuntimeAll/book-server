@@ -131,7 +131,7 @@ public class KgAnchorService {
                 return build(normEq.get(0).getId(), kpName, normEq.get(0).getName(), "norm", 0.95, false);
             }
         }
-        // 1c) 包含（双向）
+        // 1c) 包含（双向，严格 norm）
         List<BizSubject> contains = new ArrayList<>();
         if (exact.isEmpty() && normEq.isEmpty()) {
             for (BizSubject l : leaves) {
@@ -144,9 +144,24 @@ public class KgAnchorService {
                 return build(contains.get(0).getId(), kpName, contains.get(0).getName(), "contains", 0.85, false);
             }
         }
+        // 1d) 宽松包含（再去虚词 的/和/与/地/得/了）：捕「显微镜的结构和使用↔与使用」「长度测量的规范操作↔长度的测量」类近义一字差。
+        List<BizSubject> loose = new ArrayList<>();
+        if (exact.isEmpty() && normEq.isEmpty() && contains.isEmpty()) {
+            String ns = normLoose(kpName);
+            for (BizSubject l : leaves) {
+                String ls = normLoose(l.getName());
+                if (!ns.isEmpty() && !ls.isEmpty() && (ls.contains(ns) || ns.contains(ls))) {
+                    loose.add(l);
+                }
+            }
+            if (loose.size() == 1) {
+                return build(loose.get(0).getId(), kpName, loose.get(0).getName(), "loose", 0.75, false);
+            }
+        }
 
-        // 2) 多候选 → LLM 单选（合并各段候选，去重）
-        List<BizSubject> cands = !exact.isEmpty() ? exact : (!normEq.isEmpty() ? normEq : contains);
+        // 2) 多候选 → LLM 单选（按优先级取第一非空候选段，去重）
+        List<BizSubject> cands = !exact.isEmpty() ? exact
+            : (!normEq.isEmpty() ? normEq : (!contains.isEmpty() ? contains : loose));
         if (cands.size() > 1) {
             try {
                 List<Map<String, Object>> candPayload = new ArrayList<>();
@@ -207,5 +222,10 @@ public class KgAnchorService {
             return "";
         }
         return s.replaceAll("[\\s\\u3000（）()《》【】\\[\\]{}\"'“”‘’·、，,。.：:；;！!？?\\-—_~～]", "").trim();
+    }
+
+    /** 宽松归一化：在 {@link #norm} 基础上再去结构虚词（的/和/与/地/得/了），捕近义一字差。仅第 1d 段用。 */
+    static String normLoose(String s) {
+        return norm(s).replaceAll("[的和与地得了及以]", "");
     }
 }
