@@ -55,6 +55,7 @@ public class CoursePlanService {
         if (bo.getTargetType() != null) p.setTargetType(bo.getTargetType());
         if (bo.getTargetId() != null) p.setTargetId(bo.getTargetId());
         p.setTermTag(bo.getTermTag());
+        if (bo.getSubject() != null) p.setSubject(EduTermUtil.normalizeSubject(bo.getSubject()));
         p.setYear(bo.getYear());
         p.setMaterialNote(bo.getMaterialNote());
         if (bo.getDefaultSegTemplate() != null) {
@@ -118,6 +119,8 @@ public class CoursePlanService {
         m.put("targetType", p.getTargetType());
         m.put("targetId", p.getTargetId() == null ? null : String.valueOf(p.getTargetId()));
         m.put("termTag", p.getTermTag());
+        m.put("subject", p.getSubject());
+        m.put("subjectLabel", EduTermUtil.subjectLabel(p.getSubject()));
         m.put("year", p.getYear());
         m.put("materialNote", p.getMaterialNote());
         m.put("defaultSegTemplate", parse(p.getDefaultSegTemplate()));

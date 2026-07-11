@@ -21,6 +21,7 @@ import org.dromara.book.mapper.BizPrepPackMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
+import org.dromara.book.util.EduTermUtil;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.satoken.utils.LoginHelper;
 import org.springframework.stereotype.Service;
@@ -230,6 +231,8 @@ public class ScheduleSessionService {
                 s.setLessonLocked("0");
                 s.setExternalTitle(it.getExternalTitle());
                 s.setNote(it.getNote());
+                // 学科归位课程安排层(2026-07-11)：显式传则存，空=展示时兜底 计划→对象
+                s.setSubject(EduTermUtil.normalizeSubject(it.getSubject()));
                 Long lessonId = it.getPlanLessonId();
                 if (lessonId == null && autoBind && !"3".equals(type) && autoIdx < autoLessonQueue.size()) {
                     lessonId = autoLessonQueue.get(autoIdx++);
@@ -426,6 +429,7 @@ public class ScheduleSessionService {
         if (bo.getStart() != null) s.setStartTime(bo.getStart());
         if (bo.getEnd() != null) s.setEndTime(bo.getEnd());
         if (bo.getNote() != null) s.setNote(bo.getNote());
+        if (bo.getSubject() != null) s.setSubject(EduTermUtil.normalizeSubject(bo.getSubject()));
         if (bo.getPlanLessonId() != null) {
             // R1b S4：改绑课次时由 lesson 反查 plan_id 同步，杜绝 plan_lesson_id 与 plan_id 漂移
             BizCoursePlanLesson lesson = lessonMapper.selectById(bo.getPlanLessonId());
@@ -566,6 +570,9 @@ public class ScheduleSessionService {
         m.put("prepStatus", "3".equals(s.getSessionType()) ? null
             : paperSlotService.deriveStatus(lesson == null ? null : lesson.getPaperSlots()));
         m.put("lessonLocked", s.getLessonLocked());
+        String subj = resolveSubject(s);
+        m.put("subject", subj);
+        m.put("subjectLabel", EduTermUtil.subjectLabel(subj));
         m.put("externalTitle", s.getExternalTitle());
         m.put("note", s.getNote());
         m.put("createTime", s.getCreateTime());
@@ -593,6 +600,26 @@ public class ScheduleSessionService {
         }
         BizStudent s = studentMapper.selectById(id);
         return s == null ? null : s.getName();
+    }
+
+    /** 学科兜底链：场次显式 → 计划.subject → 对象.subject（学科归位课程安排层 2026-07-11）。 */
+    private String resolveSubject(BizScheduleSession s) {
+        if (s.getSubject() != null && !s.getSubject().isBlank()) return s.getSubject();
+        if (s.getPlanId() != null) {
+            BizCoursePlan p = planMapper.selectById(s.getPlanId());
+            if (p != null && p.getSubject() != null && !p.getSubject().isBlank()) return p.getSubject();
+        }
+        return targetSubject(s.getTargetType(), s.getTargetId());
+    }
+
+    private String targetSubject(String type, Long id) {
+        if (id == null) return null;
+        if ("1".equals(type)) {
+            BizClass c = classMapper.selectById(id);
+            return c == null ? null : c.getSubject();
+        }
+        BizStudent st = studentMapper.selectById(id);
+        return st == null ? null : st.getSubject();
     }
 
     private String targetColor(String type, Long id) {

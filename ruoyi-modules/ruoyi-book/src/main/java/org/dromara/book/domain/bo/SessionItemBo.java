@@ -15,6 +15,8 @@ public class SessionItemBo {
     private Long planLessonId;
     /** 场次类型：'1' 正课 / '2' 测试 / '3' 外部占位 */
     private String sessionType;
+    /** 学科（字典 biz_edu_subject，可空=沿计划/对象兜底；兼容中文标签） */
+    private String subject;
     /** 外部占位标题 */
     private String externalTitle;
     private String note;

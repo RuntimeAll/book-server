@@ -50,6 +50,9 @@ public class BizScheduleSession extends BaseEntity {
     /** 场次类型：'1' 正课 / '2' 测试 / '3' 外部占位 */
     private String sessionType;
 
+    /** 学科（字典 biz_edu_subject；NULL=展示时兜底 计划→对象） */
+    private String subject;
+
     /** 状态：'0' 已排 / '1' 已上 / '2' 请假 / '3' 取消 */
     private String sessionStatus;
 

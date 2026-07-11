@@ -40,6 +40,9 @@ public class BizCoursePlan extends BaseEntity {
     /** 期段（字典：暑假/上学期/寒假/下学期） */
     private String termTag;
 
+    /** 学科（字典 biz_edu_subject；一计划一科，2026-07-11 学科归位课程安排层） */
+    private String subject;
+
     /** 年份 */
     private Integer year;
 
