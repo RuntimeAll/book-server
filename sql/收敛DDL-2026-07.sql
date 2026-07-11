@@ -1562,3 +1562,15 @@ ALTER TABLE `biz_course_plan`
 ALTER TABLE `biz_course_plan_lesson` DROP COLUMN `prep_state`;
 
 ALTER TABLE `biz_session_review` DROP COLUMN `parent_msg`;
+
+-- ============================================================
+-- 学科归位到课程安排层（排课总览 bug 修复轮）2026-07-11
+-- 拍板：学科原只挂学生（单值），一生两科（如数学+科学轮流）无处安放、排课单科目列空白。
+--   · biz_course_plan.subject：一计划一科（字典 biz_edu_subject：1数学/2科学/3语文/4英语）
+--   · biz_schedule_session.subject：散排/覆盖用；NULL = 展示时兜底链 场次→计划→学生对象
+--   · biz_student.subject 保留作默认科目（建对象时的主学科）
+-- ============================================================
+
+ALTER TABLE `biz_course_plan` ADD COLUMN `subject` varchar(20) NULL COMMENT '学科(字典biz_edu_subject;一计划一科)' AFTER `term_tag`;
+
+ALTER TABLE `biz_schedule_session` ADD COLUMN `subject` varchar(20) NULL COMMENT '学科(字典biz_edu_subject;NULL=兜底计划/对象)' AFTER `session_type`;

@@ -11,6 +11,8 @@ public class CoursePlanBo {
     /** S1 计划归属对象 id（建计划必传） */
     private Long targetId;
     private String termTag;
+    /** 学科（字典 biz_edu_subject；兼容中文标签，服务端归一化） */
+    private String subject;
     private Integer year;
     private String materialNote;
     /** 默认分段模板（数组 JSON） */
