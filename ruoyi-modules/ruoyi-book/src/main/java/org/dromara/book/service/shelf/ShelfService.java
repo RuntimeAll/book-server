@@ -291,6 +291,10 @@ public class ShelfService {
         if (bo.getTitle() == null || bo.getTitle().isBlank()) {
             throw new ServiceException("书名 title 不能为空", 400);
         }
+        // 防御闸：payload 缺 tree（如字段名写错为 nodes）或 tree 非数组/空数组 → 拒绝，不再静默建空壳书
+        if (bo.getTree() == null || bo.getTree().isEmpty()) {
+            throw new ServiceException("整树 tree 缺失或非数组：拒绝建空书（请按 schema 传非空 tree 数组）", 400);
+        }
         // finding 4：整树建书前批量校验所有题引用存在（防 B 线程序化直出书塞空壳引用，事务级 fail-fast）
         Set<Long> allQids = new LinkedHashSet<>();
         if (bo.getTree() != null) {
