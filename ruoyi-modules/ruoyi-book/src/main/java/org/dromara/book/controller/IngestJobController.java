@@ -8,9 +8,11 @@ import org.dromara.book.domain.bo.IngestJobHostedBo;
 import org.dromara.book.domain.bo.IngestJobItemEditBo;
 import org.dromara.book.domain.entity.BizIngestJob;
 import org.dromara.book.domain.entity.BizIngestJobItem;
+import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.vo.IngestJobVo;
 import org.dromara.book.mapper.BizIngestJobItemMapper;
 import org.dromara.book.mapper.BizIngestJobMapper;
+import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.service.IIngestService;
 import org.dromara.book.service.IngestJobWorker;
 import org.dromara.common.core.exception.ServiceException;
@@ -58,6 +60,7 @@ public class IngestJobController {
 
     private final BizIngestJobMapper jobMapper;
     private final BizIngestJobItemMapper itemMapper;
+    private final BizQuestionMapper questionMapper;
     private final IIngestService ingestService;
     private final IngestJobWorker ingestJobWorker;
     /** B5 源件留存：走若依标准 OSS service（注册 sys_oss 表，非直连 OssFactory 只写 image_asset）。 */
@@ -279,6 +282,41 @@ public class IngestJobController {
             out.add(vo);
         }
         return out;
+    }
+
+    /**
+     * 2b) GET /teacher/ingest/drafts — 当前老师**直录草稿**列表（PRD-001 D14 / scope⑥「题库草稿区可查」）。
+     *
+     * <p>直录主路（①层）落库即 status='0' 草稿；老师 promote 前需在此看切割结果（题干/题型/来源/时间）再批量发布，
+     * 这正是「切割对不对在草稿区审」的那道审核。归属硬隔离：仅 {@code create_user == 当前登录} 且 status='0'。
+     * <p>q.id 一律 String 返（防雪花号 JS 精度截断）。可选 {@code limit}（默认 100，上限 500）。
+     */
+    @SaCheckLogin
+    @GetMapping("/drafts")
+    public Map<String, Object> drafts(@RequestParam(value = "limit", required = false) Integer limit) {
+        Long teacherId = LoginHelper.getUserId();
+        int lim = limit == null ? 100 : Math.min(Math.max(limit, 1), 500);
+        List<BizQuestion> qs = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            questionMapper.selectList(new LambdaQueryWrapper<BizQuestion>()
+                .eq(BizQuestion::getCreateUser, teacherId)
+                .eq(BizQuestion::getStatus, "0")
+                .orderByDesc(BizQuestion::getCreateTime)
+                .last("LIMIT " + lim))));
+        List<Map<String, Object>> rows = new ArrayList<>(qs.size());
+        for (BizQuestion q : qs) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", String.valueOf(q.getId()));
+            m.put("questionType", q.getQuestionType());
+            String stem = q.getStemText() == null ? "" : q.getStemText();
+            m.put("stemPreview", stem.length() > 60 ? stem.substring(0, 60) : stem);
+            m.put("importSource", q.getImportSource());
+            m.put("createTime", q.getCreateTime());
+            rows.add(m);
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("rows", rows);
+        r.put("total", rows.size());
+        return r;
     }
 
     /**
