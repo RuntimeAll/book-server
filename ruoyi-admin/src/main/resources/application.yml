@@ -234,6 +234,8 @@ tenant:
     # PRD-A-002 路B 批量录题作业 + 拆出题暂存表（V27，无 tenant_id，同上单租户约定）
     - biz_ingest_job
     - biz_ingest_job_item
+    # PRD-004 课后反馈单（无 tenant_id，同上单租户约定；Mapper 已 @InterceptorIgnore 双保险）
+    - biz_feedback_sheet
 
 # MyBatisPlus配置
 # https://baomidou.com/config/
@@ -328,6 +330,9 @@ xss:
     # 🔴 PRD-002 书架域：书内 override_json/explain_json/整树 import 均可含数学 < >，
     # XSS 过滤器会静默剥 <...> 腐蚀题面/讲解内容。全域排除。
     - /teacher/shelf/**
+    # 🔴 PRD-004 课后反馈单：学习内容/不足点为自由文本，可含数学 < > 不等式，
+    # XssFilter 静默剥 <...> 会腐蚀内容/损坏 rows_json。全域排除（PNG 渲染侧 esc 兜底转义）。
+    - /teacher/feedback/**
 
 --- # 分布式锁 lock4j 全局配置
 lock4j:
