@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckLogin;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.IngestJobCommitBo;
+import org.dromara.book.domain.bo.IngestJobHostedBo;
 import org.dromara.book.domain.bo.IngestJobItemEditBo;
 import org.dromara.book.domain.entity.BizIngestJob;
 import org.dromara.book.domain.entity.BizIngestJobItem;
@@ -64,6 +65,9 @@ public class IngestJobController {
 
     /** 允许上传后缀（图片主干 + pdf/docx 受理后由 worker 友好降级） */
     private static final long MAX_FILE_SIZE = 30L * 1024 * 1024;
+
+    /** 托管录题 lane 值（PRD-001 D14，复用 biz_ingest_job.lane，零 DDL） */
+    private static final String LANE_HOSTED = "hosted";
 
     /**
      * 1) POST /teacher/ingest/job — 上传创建作业。
@@ -148,6 +152,105 @@ public class IngestJobController {
 
         Map<String, Object> r = new HashMap<>();
         r.put("jobId", job.getId());
+        return r;
+    }
+
+    /**
+     * 1b) POST /teacher/ingest/job/hosted — 托管录题作业（PRD-001 D14 / §10）。
+     *
+     * <p>skill 侧 split.py 确定性切割后把 <b>pre-split items</b> 整批交托管：建 job(lane='hosted')
+     * + 逐条落 biz_ingest_job_item，状态<b>直达 DONE 待审</b>（不走 toolkit 异步拆题 worker），
+     * 复用现有审核页 /ingest/review/:jobId 与 commit 正路。
+     *
+     * <p>🔴 零 DDL：lane 填 'hosted'；items 全落现列。teacherId 由 LoginHelper 注入，绝不信 body。
+     * <p>🔴 幂等：同 {@code fileHash + teacherId + lane='hosted'} 已存在则返回既有 jobId、不重复建。
+     * <p>🔴 bookTitle 收但不存（直出书交接 A 线 /teacher/shelf/import，跨线契约 §3）。
+     */
+    @SaCheckLogin
+    @PostMapping("/job/hosted")
+    public Map<String, Object> hosted(@RequestBody IngestJobHostedBo bo) {
+        Long teacherId = LoginHelper.getUserId();
+        if (bo == null || StringUtils.isBlank(bo.getSubjectId())) {
+            throw new ServiceException("subjectId 不能为空");
+        }
+        List<IngestJobHostedBo.HostedItem> items = bo.getItems();
+        if (items == null || items.isEmpty()) {
+            throw new ServiceException("items 不能为空");
+        }
+
+        // 幂等：同 fileHash + teacher + lane='hosted' 去重（fileHash 存 job.remark）
+        String fileHash = StringUtils.trimToNull(bo.getFileHash());
+        if (fileHash != null) {
+            BizIngestJob dup = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+                jobMapper.selectOne(new LambdaQueryWrapper<BizIngestJob>()
+                    .eq(BizIngestJob::getTeacherId, teacherId)
+                    .eq(BizIngestJob::getLane, LANE_HOSTED)
+                    .eq(BizIngestJob::getRemark, fileHash)
+                    .last("LIMIT 1"))));
+            if (dup != null) {
+                Map<String, Object> r = new HashMap<>();
+                r.put("jobId", dup.getId());
+                r.put("itemCount", dup.getQuestionCount());
+                r.put("deduped", true);
+                return r;
+            }
+        }
+
+        Date now = new Date();
+        BizIngestJob job = new BizIngestJob();
+        job.setTeacherId(teacherId);
+        job.setSubjectId(bo.getSubjectId());
+        job.setSourceFileName(StringUtils.substring(
+            StringUtils.defaultString(bo.getSourceFileName(), "hosted"), 0, 255));
+        job.setSourceType("hosted");
+        job.setLane(LANE_HOSTED);
+        job.setAnswerMode("from_source");
+        job.setCommitMode("review");
+        job.setStatus(BizIngestJob.STATUS_DONE);       // 直达 DONE 待审（无异步拆题）
+        job.setQuestionCount(items.size());
+        job.setCommittedCount(0);
+        job.setRemark(fileHash);                         // 幂等键留存
+        job.setCreateUser(teacherId);
+        job.setCreateBy(String.valueOf(teacherId));
+        job.setCreateTime(now);
+        job.setUpdateTime(now);
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            jobMapper.insert(job);
+            return null;
+        }));
+
+        Long jobId = job.getId();
+        int[] seqAuto = {0};
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            for (IngestJobHostedBo.HostedItem it : items) {
+                BizIngestJobItem row = new BizIngestJobItem();
+                row.setJobId(jobId);
+                row.setSeq(it.getSeq() != null ? it.getSeq() : (++seqAuto[0]));
+                row.setStemText(it.getStemText());
+                row.setQuestionType(it.getQuestionType() != null ? it.getQuestionType() : 5);
+                row.setOptionsJson(StringUtils.trimToNull(it.getOptionsJson()));
+                row.setAnswerText(it.getAnswerText());
+                row.setAnalyzeText(it.getAnalyzeText());
+                row.setHasFigure(it.getHasFigure() != null ? it.getHasFigure() : 0);
+                row.setDifficulty(it.getDifficulty());
+                // json 列：空串会被 MySQL 拒（须合法 JSON 或 NULL）→ 一律 trimToNull
+                row.setFiguresJson(StringUtils.trimToNull(it.getFiguresJson()));
+                row.setKpAnchorJson(StringUtils.trimToNull(it.getKpAnchorJson()));
+                row.setDnaJson(StringUtils.trimToNull(it.getDnaJson()));
+                row.setNeedReview(0);
+                row.setItemStatus(BizIngestJobItem.STATUS_PENDING);
+                row.setCreateTime(now);
+                row.setUpdateTime(now);
+                itemMapper.insert(row);
+            }
+            return null;
+        }));
+
+        Map<String, Object> r = new HashMap<>();
+        r.put("jobId", jobId);
+        r.put("itemCount", items.size());
+        r.put("deduped", false);
+        r.put("status", BizIngestJob.STATUS_DONE);
         return r;
     }
 
