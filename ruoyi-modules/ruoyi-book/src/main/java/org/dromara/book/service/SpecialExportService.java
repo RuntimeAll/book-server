@@ -336,6 +336,9 @@ public class SpecialExportService {
     private byte[] renderPdf(Path work, Map<String, Object> data, String paper) {
         try {
             String json = om.writeValueAsString(data);
+            // 防 </script> 提前闭合 <script type="application/json"> 注入块（Jackson 默认不转义 /）：
+            // 题目内容含字面 </script> 会截断 script 块致整卷 JSON.parse 失败→渲空卷，转义所有 </ 为 <\/。
+            json = json.replace("</", "<\\/");
             String tpl = Files.readString(work.resolve(THEME_HTML), StandardCharsets.UTF_8);
             // 单注入点替换（json 里的 $ 不能被当作正则替换组）
             String html = tpl.replace(DATA_TOKEN, json);
