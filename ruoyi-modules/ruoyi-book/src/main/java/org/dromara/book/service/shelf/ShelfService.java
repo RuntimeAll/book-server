@@ -6,22 +6,30 @@ import org.dromara.book.domain.bo.ShelfBookBo;
 import org.dromara.book.domain.bo.ShelfImportBo;
 import org.dromara.book.domain.bo.ShelfItemBo;
 import org.dromara.book.domain.bo.ShelfNodeBo;
+import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizShelfBook;
 import org.dromara.book.domain.entity.BizShelfItem;
 import org.dromara.book.domain.entity.BizShelfNode;
+import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizShelfBookMapper;
 import org.dromara.book.mapper.BizShelfItemMapper;
 import org.dromara.book.mapper.BizShelfNodeMapper;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
+import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 书架 Service（PRD-002）。书/节点树/内容项一体：CRUD + 整树查询 + 整树建书（import）+ used_count 自增。
@@ -38,6 +46,7 @@ public class ShelfService {
     private final BizShelfBookMapper bookMapper;
     private final BizShelfNodeMapper nodeMapper;
     private final BizShelfItemMapper itemMapper;
+    private final BizQuestionMapper questionMapper;
 
     // ───────────────── 书 CRUD + 列表 ─────────────────
 
@@ -216,6 +225,9 @@ public class ShelfService {
         Long qid = parseId(bo.getQuestionId());
         it.setKind(bo.getKind() != null ? bo.getKind() : (qid != null ? "question" : "explain"));
         it.setQuestionId(qid);
+        if (qid != null) {
+            validateQuestionsExist(List.of(qid));   // 防空壳引用（finding 4：不存在的 qid 静默入库）
+        }
         it.setOverrideJson(toJson(bo.getOverride()));
         it.setExplainJson(toJson(bo.getExplain()));
         it.setUsedCount(0);
@@ -279,6 +291,15 @@ public class ShelfService {
         if (bo.getTitle() == null || bo.getTitle().isBlank()) {
             throw new ServiceException("书名 title 不能为空", 400);
         }
+        // finding 4：整树建书前批量校验所有题引用存在（防 B 线程序化直出书塞空壳引用，事务级 fail-fast）
+        Set<Long> allQids = new LinkedHashSet<>();
+        if (bo.getTree() != null) {
+            for (ShelfImportBo.ImportNode node : bo.getTree()) {
+                collectQids(node, allQids);
+            }
+        }
+        validateQuestionsExist(allQids);
+
         BizShelfBook b = new BizShelfBook();
         b.setTitle(bo.getTitle());
         b.setBookType(bo.getBookType() == null ? "workbook" : bo.getBookType());
@@ -343,6 +364,39 @@ public class ShelfService {
     }
 
     // ───────────────── helpers ─────────────────
+
+    /** 递归收集整树里所有 kind=question 的 questionId（非空）。 */
+    private void collectQids(ShelfImportBo.ImportNode node, Set<Long> out) {
+        if (node == null) return;
+        if (node.getItems() != null) {
+            for (ShelfImportBo.ImportItem item : node.getItems()) {
+                Long qid = parseId(item.getQuestionId());
+                boolean isQuestion = "question".equals(item.getKind()) || (item.getKind() == null && qid != null);
+                if (isQuestion && qid != null) out.add(qid);
+            }
+        }
+        if (node.getChildren() != null) {
+            for (ShelfImportBo.ImportNode child : node.getChildren()) collectQids(child, out);
+        }
+    }
+
+    /**
+     * 题引用存在性校验（finding 4）：任一 questionId 在 biz_question 查不到即 400，
+     * 阻断"不存在的 qid 静默入库成空壳引用"（同 create_paper 已知半坑）。
+     * biz_question 无 tenant_id/data-scope 语义，线程级 ignore 兜底（对齐 QuestionServiceImpl）。
+     */
+    private void validateQuestionsExist(Collection<Long> qids) {
+        if (qids == null || qids.isEmpty()) return;
+        Set<Long> distinct = new LinkedHashSet<>(qids);
+        List<BizQuestion> found = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
+            questionMapper.selectBatchIds(distinct)));
+        Set<Long> foundIds = found == null ? Set.of()
+            : found.stream().map(BizQuestion::getId).collect(Collectors.toSet());
+        List<Long> missing = distinct.stream().filter(id -> !foundIds.contains(id)).collect(Collectors.toList());
+        if (!missing.isEmpty()) {
+            throw new ServiceException("题引用不存在（biz_question 无此题）: " + missing, 400);
+        }
+    }
 
     /** 归属校验：书必须存在且属当前登录老师，否则 404（水平越权兜底）。 */
     private BizShelfBook requireOwnedBook(Long bookId) {
