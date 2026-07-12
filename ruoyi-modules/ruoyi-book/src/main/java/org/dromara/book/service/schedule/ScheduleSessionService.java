@@ -565,10 +565,11 @@ public class ScheduleSessionService {
         m.put("endTime", s.getEndTime());
         m.put("sessionType", s.getSessionType());
         m.put("sessionStatus", s.getSessionStatus());
-        // 外部占位无备课点；PRD-B-101：备课态唯一权威 = 该场次课次 lesson.paper_slots 实时推导
-        // （不再读缓存列 session.prep_status；无课次/无卷位 → '0'）。
+        // 外部占位无备课点；PRD-003 D7：备课态唯一权威 = 该场次课次的专项材料位 lesson.special_ids
+        // 实时推导（B-101 卷位链 D7 退役，不再读 paper_slots 也不读缓存列 session.prep_status；
+        // 无课次/无材料 → '0'）。修「plans 页 vs 首页提醒/日程/月历双权威分裂」。
         m.put("prepStatus", "3".equals(s.getSessionType()) ? null
-            : paperSlotService.deriveStatus(lesson == null ? null : lesson.getPaperSlots()));
+            : paperSlotService.deriveStatusFromMaterials(lesson == null ? null : lesson.getSpecialIds()));
         m.put("lessonLocked", s.getLessonLocked());
         String subj = resolveSubject(s);
         m.put("subject", subj);

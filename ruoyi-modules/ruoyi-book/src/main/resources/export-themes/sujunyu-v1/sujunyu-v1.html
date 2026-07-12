@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>专项导出 · sujunyu-v1</title>
+<link rel="stylesheet" href="katex/katex.min.css">
+<script src="katex/katex.min.js"></script>
+<script src="katex/contrib/auto-render.min.js"></script>
+<style>
+@page { size: A4; margin: 14mm 12mm; }
+* { box-sizing: border-box; }
+body { font-family: "SimSun","Songti SC",serif; font-size: 12pt; line-height: 1.75; color: #111; margin: 0; }
+.doc { max-width: 186mm; margin: 0 auto; }
+h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 19pt; margin: 4mm 0 1mm; }
+.sub { text-align: center; color: #555; font-size: 10.5pt; margin-bottom: 5mm; }
+/* 蓝色区块头 */
+.sec { font-family: "SimHei","Microsoft YaHei",sans-serif; color: #1268b3; font-size: 13.5pt; margin: 7mm 0 2.5mm; page-break-after: avoid; }
+.sec .icon { margin-right: 2mm; }
+/* 金色难度档 */
+.tier { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 12pt; color: #b8860b; border-bottom: 1px dashed #d8b860; padding-bottom: 1mm; margin: 5mm 0 2.5mm; page-break-after: avoid; }
+.star { color: #b8860b; font-size: 10pt; margin-right: 1.5mm; }
+.q { margin: 0 0 2mm; page-break-inside: avoid; }
+.q .no { font-weight: bold; }
+.q .opts { margin-top: 1mm; display: flex; gap: 8mm; flex-wrap: wrap; }
+.q .fig { margin: 2mm 0; text-align: center; }
+.q .fig img { max-width: 100%; max-height: 70mm; object-fit: contain; }
+/* 答题留空块（题目卷） */
+.gap { }
+/* 答案红框（答案卷） */
+.ansbox { background: #e8f1fb; border-left: 3px solid #9ec5e8; padding: 2mm 3mm; margin: 1.5mm 0 4mm; page-break-inside: avoid; }
+.ansbox .lab { color: #c00000; font-weight: bold; font-family: "SimHei","Microsoft YaHei",sans-serif; }
+.ansbox p { color: #c00000; margin: 0.5mm 0; }
+.foot { text-align: center; color: #999; font-size: 9pt; margin-top: 6mm; }
+/* KaTeX 微调：与宋体正文行内对齐 */
+.katex { font-size: 1.02em; }
+/* markdown 表格（题干/解析里的数据表，避免裸管道印上卷面） */
+.q table.mdtbl { border-collapse: collapse; margin: 2mm 0; font-size: 11pt; }
+.q table.mdtbl th, .q table.mdtbl td { border: 0.4pt solid #555; padding: 1mm 3mm; text-align: center; }
+.q table.mdtbl th { background: #eef3f8; font-family: "SimHei","Microsoft YaHei",sans-serif; font-weight: normal; }
+</style>
+</head>
+<body>
+<div class="doc" id="doc"></div>
+<!-- BE 注入点：把下面整段 JSON 替换为专项数据 -->
+<script id="paper-data" type="application/json">__PAPER_DATA__</script>
+<script>
+(function () {
+  var raw = document.getElementById('paper-data').textContent;
+  var data;
+  try { data = JSON.parse(raw); } catch (e) { data = { title: '数据解析失败', sections: [] }; }
+
+  var isAnswer = data.paper === 'answer';
+  var withAnalysis = !!data.withAnalysis;
+  var withStars = !!data.withStars;
+  var doc = document.getElementById('doc');
+
+  // esc = 纯文本用（赋给 textContent，浏览器不再解析，无需转义 HTML）
+  function esc(s) { return (s == null ? '' : String(s)); }
+  function starStr(n) { var s = ''; for (var i = 0; i < (n || 0); i++) s += '★'; return s; }
+
+  // escHtml = 交给 innerHTML 前真转义 & < >，杜绝「a<b」被当 HTML 标签吞掉/截断（AC2 保真铁律）。
+  // KaTeX auto-render 在 text node 上工作：转义后浏览器把 &lt; 解码回 '<' 存进 text node，
+  // 公式 $a<b$ 因此原样进入 KaTeX 被正确渲染，不再需要裸 innerHTML 注入。
+  function escHtml(s) {
+    return (s == null ? '' : String(s))
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  // 行内 markdown：先 HTML 转义，再套 **加粗**（数学 $...$ 分隔符原样保留给 KaTeX）
+  function inlineMd(s) {
+    return escHtml(s).replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+  }
+  function splitRow(line) {
+    var s = line.trim();
+    if (s.charAt(0) === '|') s = s.slice(1);
+    if (s.charAt(s.length - 1) === '|') s = s.slice(0, -1);
+    return s.split('|').map(function (c) { return c.trim(); });
+  }
+  // 分隔行：形如 |---|---| 或 |:--|--:|（全是 | : - 空白，且含 -）
+  function isSep(line) {
+    return line.indexOf('|') >= 0 && /^[\s|:\-]+$/.test(line) && line.indexOf('-') >= 0;
+  }
+  // md2html：把题库 markdown（含数据表格/加粗/换行）安全转 HTML 后交 innerHTML。
+  // 表格块渲成 <table>；其余行转义后以 <br> 断行。修「表格裸管道印上卷面」缺陷。
+  function md2html(raw) {
+    var lines = (raw == null ? '' : String(raw)).split(/\r?\n/);
+    var out = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (line.indexOf('|') >= 0 && i + 1 < lines.length && isSep(lines[i + 1])) {
+        var header = splitRow(line);
+        i += 2;
+        var rows = [];
+        while (i < lines.length && lines[i].indexOf('|') >= 0 && !isSep(lines[i]) && lines[i].trim() !== '') {
+          rows.push(splitRow(lines[i]));
+          i++;
+        }
+        var t = '<table class="mdtbl"><thead><tr>';
+        header.forEach(function (c) { t += '<th>' + inlineMd(c) + '</th>'; });
+        t += '</tr></thead><tbody>';
+        rows.forEach(function (r) {
+          t += '<tr>';
+          r.forEach(function (c) { t += '<td>' + inlineMd(c) + '</td>'; });
+          t += '</tr>';
+        });
+        t += '</tbody></table>';
+        out.push(t);
+        continue;
+      }
+      out.push(inlineMd(line));
+      i++;
+    }
+    // 拼接：表格块前后不额外加 <br>（块级自带断行），文本行之间 <br>
+    var html = '';
+    for (var k = 0; k < out.length; k++) {
+      var piece = out[k];
+      var pieceIsTable = piece.indexOf('<table') === 0;
+      var prevIsTable = k > 0 && out[k - 1].indexOf('<table') === 0;
+      if (k > 0 && !pieceIsTable && !prevIsTable) html += '<br>';
+      html += piece;
+    }
+    return html;
+  }
+
+  function h1(title, sub) {
+    var el = document.createElement('h1'); el.textContent = esc(title); doc.appendChild(el);
+    if (sub) { var s = document.createElement('div'); s.className = 'sub'; s.textContent = esc(sub); doc.appendChild(s); }
+  }
+
+  function renderQuestion(q) {
+    var wrap = document.createElement('div'); wrap.className = 'q';
+    var stem = document.createElement('div');
+    var noHtml = '<span class="no">' + escHtml(q.no) + '．</span>';
+    var starHtml = (withStars && q.star) ? '<span class="star">' + starStr(q.star) + '</span>' : '';
+    stem.innerHTML = noHtml + starHtml + md2html(q.stem);
+    wrap.appendChild(stem);
+    // 选项
+    if (q.options && q.options.length) {
+      var opts = document.createElement('div'); opts.className = 'opts';
+      q.options.forEach(function (o) { var sp = document.createElement('span'); sp.innerHTML = md2html(o); opts.appendChild(sp); });
+      wrap.appendChild(opts);
+    }
+    // 配图
+    if (q.figure) {
+      var fig = document.createElement('div'); fig.className = 'fig';
+      var img = document.createElement('img'); img.src = q.figure; fig.appendChild(img); wrap.appendChild(fig);
+    }
+    if (isAnswer) {
+      // 答案卷：红框
+      var box = document.createElement('div'); box.className = 'ansbox';
+      var ap = document.createElement('p'); ap.innerHTML = '<span class="lab">【答案】</span>' + md2html(q.answer); box.appendChild(ap);
+      if (withAnalysis && q.analysis) {
+        var xp = document.createElement('p'); xp.innerHTML = '<span class="lab">【解析】</span>' + md2html(q.analysis); box.appendChild(xp);
+      }
+      wrap.appendChild(box);
+    } else {
+      // 题目卷：留空块
+      var gapMm = q.gap != null ? q.gap : (data.defaultGap != null ? data.defaultGap : 24);
+      var g = document.createElement('div'); g.className = 'gap'; g.style.height = gapMm + 'mm'; wrap.appendChild(g);
+    }
+    return wrap;
+  }
+
+  function renderTier(t) {
+    if (t.label != null) {
+      var tl = document.createElement('div'); tl.className = 'tier';
+      var star = (withStars && t.star) ? '<span class="star">' + starStr(t.star) + '</span>' : '';
+      tl.innerHTML = star + escHtml(t.label);
+      doc.appendChild(tl);
+    }
+    (t.questions || []).forEach(function (q) {
+      if (q.star == null && t.star != null) q.star = t.star;
+      if (q.gap == null && t.gap != null) q.gap = t.gap;
+      doc.appendChild(renderQuestion(q));
+    });
+  }
+
+  function renderSection(sec) {
+    var s = document.createElement('div'); s.className = 'sec';
+    s.innerHTML = '<span class="icon">&#128214;</span>' + escHtml(sec.name);
+    doc.appendChild(s);
+    (sec.questions || []).forEach(function (q) { doc.appendChild(renderQuestion(q)); });
+    (sec.tiers || []).forEach(renderTier);
+  }
+
+  h1(data.title, data.date ? (isAnswer ? (esc(data.date) + '（教师用·含答案' + (withAnalysis ? '解析' : '') + '）') : esc(data.date)) : '');
+  (data.sections || []).forEach(renderSection);
+
+  var foot = document.createElement('div'); foot.className = 'foot'; foot.textContent = '— 完 —'; doc.appendChild(foot);
+
+  // 同步排版数学公式（$...$ / \(...\) / \[...\]），随后 Chrome 打印即定稿
+  if (window.renderMathInElement) {
+    renderMathInElement(document.body, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '\\[', right: '\\]', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false }
+      ],
+      throwOnError: false
+    });
+  }
+  document.documentElement.setAttribute('data-render-done', '1');
+})();
+</script>
+</body>
+</html>

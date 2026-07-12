@@ -65,6 +65,33 @@ public class PaperSlotService {
         return deriveStatusFromList(parseSlots(paperSlotsJson));
     }
 
+    /**
+     * 🔴 备课态推导·材料位口径（PRD-003 D7 后唯一权威，取代 paper_slots 推导）。
+     *
+     * <p>D7 拍板 B-101 卷位链（paper_slots 编辑器/绑定端点/manual_ready）全部退役，课次材料统一走
+     * 专项材料位（special_ids）。备课态因此改由 special_ids 推导，杜绝「plans 页按材料显已备好、
+     * 首页提醒/日程/月历按 paper_slots 显未备」的双权威分裂——D7 后无任何 UI 写 paper_slots，
+     * 新课次卷位永远为空，若仍按卷位推导则永久催办已备好的课次。
+     *
+     * <p>推导：课次已绑专项材料（special_ids 非空）→ 已备好 '2'；否则 未备 '0'。
+     * （材料位无「部分绑定」中间态，故不产出 '1'。）
+     *
+     * @param specialIdsJson lesson.special_ids JSON 字符串
+     */
+    public String deriveStatusFromMaterials(String specialIdsJson) {
+        if (specialIdsJson == null || specialIdsJson.isBlank()) return "0";
+        try {
+            List<Object> arr = JsonUtils.parseArray(specialIdsJson, Object.class);
+            if (arr != null) {
+                for (Object o : arr) {
+                    if (o != null && !String.valueOf(o).isBlank()) return "2";
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return "0";
+    }
+
     /** 备课态推导（唯一权威）。入参 = 已解析卷位列表。 */
     public String deriveStatusFromList(List<Map<String, Object>> slots) {
         if (slots == null || slots.isEmpty()) return "0";
