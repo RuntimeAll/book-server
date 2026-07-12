@@ -24,3 +24,7 @@ Thumbs.db
 # 本地配置（敏感，不入库）
 # application-prod.yml 在 src/main/resources 中有占位版本，真凭据落 部署空间/
 .serena/
+
+# 运行期导出产物(PNG/PDF)，非代码
+ruoyi-admin/prep-artifacts/
+prep-artifacts/
