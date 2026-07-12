@@ -101,8 +101,16 @@ public class FeedbackSheetService {
         BizFeedbackSheet e = requireOwned(id);
         List<Map<String, Object>> rows = parseRows(e.getRowsJson());
         String html = buildHtml(e.getTitle(), rows);
-        // 表头 ~64px + 每行 ~34px + 标题条 ~52px + 内边距；位图 2 倍(192dpi)保清晰
-        int height = 130 + Math.max(rows.size(), 1) * 40;
+        // 🔴 BUG-014 收边（PRD-004 修复轮）：旧式 130+rows*40 高估致底部 ~36% 白条。
+        //   改按**实际内容**估高：标题条+表头+内边距 ≈ 88px；每行按最长列（学习内容≈13字/行、
+        //   不足点≈11字/行）估换行数 * 24px + 6px 行距，长文本自动多算一行不裁切、短行不留白。
+        int contentH = 0;
+        for (Map<String, Object> row : (rows.isEmpty() ? List.of(Map.<String, Object>of()) : rows)) {
+            int cLines = wrapLines(str(row.get("content")), 13);
+            int wLines = wrapLines(str(row.get("weakness")), 11);
+            contentH += Math.max(cLines, wLines) * 24 + 6;
+        }
+        int height = 88 + contentH;
         String file = renderUtil.renderToPng(html, "feedback_" + id, 640, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
@@ -219,6 +227,12 @@ public class FeedbackSheetService {
 
     private String str(Object o) {
         return o == null ? "" : String.valueOf(o);
+    }
+
+    /** 估算一段文本在给定每行字数下的换行行数（≥1），用于 PNG 内容高度收边。 */
+    private int wrapLines(String s, int perLine) {
+        if (s == null || s.isBlank()) return 1;
+        return Math.max(1, (int) Math.ceil(s.trim().length() / (double) perLine));
     }
 
     private String esc(String s) {
