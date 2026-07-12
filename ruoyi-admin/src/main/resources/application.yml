@@ -325,6 +325,9 @@ xss:
     # 🔴 PRD-C-213 教学安排域：lesson 标题/段配置/核心口诀/题干均可含数学 < >，
     # XSS 过滤器会静默剥 <...> 腐蚀内容（备课包渲染/家长文案/回收记录）。全域排除。
     - /teacher/schedule/**
+    # 🔴 PRD-003 专项编排：pick/题目 override 副本(题干/答案/解析含数学 < >)、专项标题/节点名均可含数学，
+    # XssFilter 静默剥 <...> 会腐蚀数学不等式/JSON。全域排除；渲染侧 DOMPurify 兜底。
+    - /teacher/special/**
 
 --- # 分布式锁 lock4j 全局配置
 lock4j:
