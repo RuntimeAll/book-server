@@ -263,11 +263,19 @@ public class SpecialExportService {
 
     /** 从 blockJson 抽选项：cells type='option' → "A．内容"。 */
     private List<String> resolveOptions(Map<String, Object> ov, QuestionDetailVo q) {
-        Object ovOpts = ov.get("options");
-        if (ovOpts instanceof List<?> l) {
+        // 显式覆盖选项（含空列表=清空）时一律以 override 为准，不回落源题选项
+        if (ov.containsKey("options")) {
+            Object ovOpts = ov.get("options");
             List<String> out = new ArrayList<>();
-            for (Object o : l) if (o != null) out.add(String.valueOf(o));
-            if (!out.isEmpty()) return out;
+            if (ovOpts instanceof List<?> l) {
+                for (Object o : l) if (o != null) out.add(String.valueOf(o));
+            }
+            return out;
+        }
+        // 🔴 改编题干（override.stem 存在）时不回落源题旧选项：改编后的题干配原选择题选项会自相矛盾
+        //    （题干已换成填空/范围题，下面却仍印 A/B/C/D）。修「override 源选项残留卷面」缺陷。
+        if (ov.get("stem") != null) {
+            return new ArrayList<>();
         }
         List<String> out = new ArrayList<>();
         if (q == null || !notBlank(q.getBlockJson())) return out;
