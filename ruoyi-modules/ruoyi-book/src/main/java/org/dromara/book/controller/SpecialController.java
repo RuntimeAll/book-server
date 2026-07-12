@@ -3,6 +3,7 @@ package org.dromara.book.controller;
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.service.SpecialService;
+import org.dromara.book.service.SpecialExportService;
 import org.dromara.common.core.domain.R;
 import org.dromara.common.core.exception.ServiceException;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,6 +36,7 @@ import java.util.Map;
 public class SpecialController {
 
     private final SpecialService specialService;
+    private final SpecialExportService specialExportService;
 
     // ───────── 专项书 CRUD ─────────
 
@@ -141,6 +143,18 @@ public class SpecialController {
     @PostMapping("/{specialId}/pick")
     public R<Map<String, Object>> pick(@PathVariable Long specialId, @RequestBody Map<String, Object> body) {
         return R.ok(specialService.pick(specialId, body));
+    }
+
+    // ───────── 双卷 PDF 导出（P5 / D3） ─────────
+
+    /**
+     * 导出专项双卷 PDF（题目卷 / 答案卷）。body {papers, withAnalysis, withStars}。
+     * 返回 {specialId, questionUrl?, answerUrl?, markedCount}；导出即对涉及 item used_count+1。
+     */
+    @SaCheckLogin
+    @PostMapping("/{specialId}/export")
+    public R<Map<String, Object>> export(@PathVariable Long specialId, @RequestBody Map<String, Object> body) {
+        return R.ok(specialExportService.export(specialId, body));
     }
 
     // ───────── 材料位（special_ids 单列） ─────────
