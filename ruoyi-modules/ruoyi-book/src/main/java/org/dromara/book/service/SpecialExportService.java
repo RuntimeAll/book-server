@@ -204,7 +204,8 @@ public class SpecialExportService {
             if (fig != null) qo.put("figure", fig);
             Object gap = it.get("gap");
             if (gap != null) qo.put("gap", intOf(gap));
-            qo.put("answer", resolveAnswer(ov, q));
+            String answer = resolveAnswer(ov, q);
+            if (notBlank(answer)) qo.put("answer", answer);
             String analysis = resolveAnalysis(ov, q);
             if (analysis != null) qo.put("analysis", analysis);
             out.add(qo);

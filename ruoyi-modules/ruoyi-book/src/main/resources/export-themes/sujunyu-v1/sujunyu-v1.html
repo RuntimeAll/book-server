@@ -148,11 +148,13 @@ h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; fon
     if (isAnswer) {
       // 答案卷：红框
       var box = document.createElement('div'); box.className = 'ansbox';
-      var ap = document.createElement('p'); ap.innerHTML = '<span class="lab">【答案】</span>' + md2html(q.answer); box.appendChild(ap);
+      if (q.answer) {
+        var ap = document.createElement('p'); ap.innerHTML = '<span class="lab">【答案】</span>' + md2html(q.answer); box.appendChild(ap);
+      }
       if (withAnalysis && q.analysis) {
         var xp = document.createElement('p'); xp.innerHTML = '<span class="lab">【解析】</span>' + md2html(q.analysis); box.appendChild(xp);
       }
-      wrap.appendChild(box);
+      if (box.children.length) wrap.appendChild(box);
     } else {
       // 题目卷：留空块
       var gapMm = q.gap != null ? q.gap : (data.defaultGap != null ? data.defaultGap : 24);
