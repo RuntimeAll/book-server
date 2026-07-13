@@ -66,7 +66,6 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
     private final BizPaperSectionMapper bizPaperSectionMapper;
     private final BizPaperQuestionMapper bizPaperQuestionMapper;
     private final IPaperDetailService paperDetailService;
-    private final org.dromara.book.service.schedule.PaperSlotService paperSlotService;
 
     /** Q 卡默认 section title — FE 不展示，仅满足 biz_paper_question.section_id NOT NULL 约束 */
     private static final String DEFAULT_SECTION_TITLE = "题目";
@@ -250,20 +249,8 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         if (currentUserId == null) {
             throw new ServiceException("未登录用户不能创建试卷");
         }
-        // PRD-B-101 G2：lessonId 与 slotSeq 必须同现（只传一个 → 400）。
-        boolean hasLesson = bo.getLessonId() != null;
-        boolean hasSlot = bo.getSlotSeq() != null;
-        if (hasLesson != hasSlot) {
-            throw new ServiceException("lessonId 与 slotSeq 必须同时提供（备课语境绑卷位）", 400);
-        }
-        // 备课语境 → 备课卷 paper_kind='2'；否则普通卷 '1'（G2 负例）
-        String paperKind = hasLesson ? "2" : "1";
-        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(currentUserId), paperKind);
-        if (hasLesson) {
-            // 创建成功后写入该课次 paper_slots 对应 slot（slot 不存在 → 400，整事务回滚，不留孤卷）。
-            // 刚建的卷即本人卷，跳过 owner 复核。
-            paperSlotService.bindPaper(bo.getLessonId(), bo.getSlotSeq(), vo.getPaperId(), false);
-        }
+        // 卷位（paper_slots）已退役：不再接收/校验 lessonId+slotSeq，也不绑卷位，统一普通卷 paper_kind='1'。
+        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(currentUserId), "1");
         return vo;
     }
 
@@ -273,16 +260,8 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         if (teacherId == null) {
             throw new ServiceException("归属老师 id 不能为空");
         }
-        boolean hasLesson = bo.getLessonId() != null;
-        boolean hasSlot = bo.getSlotSeq() != null;
-        if (hasLesson != hasSlot) {
-            throw new ServiceException("lessonId 与 slotSeq 必须同时提供（备课语境绑卷位）", 400);
-        }
-        String paperKind = hasLesson ? "2" : "1";
-        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(teacherId), paperKind);
-        if (hasLesson) {
-            paperSlotService.bindPaper(bo.getLessonId(), bo.getSlotSeq(), vo.getPaperId(), false);
-        }
+        // 卷位（paper_slots）已退役：不再接收/校验 lessonId+slotSeq，也不绑卷位，统一普通卷 paper_kind='1'。
+        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(teacherId), "1");
         return vo;
     }
 

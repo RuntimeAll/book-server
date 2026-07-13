@@ -81,15 +81,7 @@ public class AutoPaperServiceImpl implements IAutoPaperService {
         if (bo == null || bo.getOutline() == null || bo.getOutline().isEmpty()) {
             throw new ServiceException("组卷大纲 outline 不能为空");
         }
-        // PRD-B-101 G7：lessonId 与 slotSeq 必须同现（与 /teacher/exam/paper/create 同语义）。
-        boolean bindSlot = bo.getLessonId() != null;
-        if (bindSlot != (bo.getSlotSeq() != null)) {
-            throw new ServiceException("lessonId 与 slotSeq 必须同时提供（备课语境绑卷位）", 400);
-        }
-        // 绑卷位必须真的落库：save=true + teacherId 有效，否则无卷可绑=契约误用，显式 400 不静默。
-        if (bindSlot && (!Boolean.TRUE.equals(bo.getSave()) || bo.getTeacherId() == null)) {
-            throw new ServiceException("绑卷位（lessonId+slotSeq）要求 save=true 且 teacherId 有效", 400);
-        }
+        // 卷位（paper_slots）已退役：组卷不再接收/校验 lessonId+slotSeq，也不绑卷位。
         boolean dedup = bo.getDedup() == null || bo.getDedup();
 
         // 全局已选题 id（dedup=true 时跨 outline 项去重）
@@ -200,10 +192,6 @@ public class AutoPaperServiceImpl implements IAutoPaperService {
                 CreateExamPaperBo createBo = new CreateExamPaperBo();
                 createBo.setName(paper.getTitle());
                 createBo.setQuestionIds(questionIds);
-                // PRD-B-101 G7：透传备课语境 → createExamPaperForTeacher 统一处理
-                // paper_kind='2' + 事务内绑卷位（slot 不存在 → 400 整体回滚），逻辑单一事实源不复制。
-                createBo.setLessonId(bo.getLessonId());
-                createBo.setSlotSeq(bo.getSlotSeq());
                 CreateExamPaperVo created = paperLibraryService.createExamPaperForTeacher(createBo, bo.getTeacherId());
                 vo.setPaperId(created.getPaperId());
                 // 🔴 book-ui 用 hash 路由（createWebHashHistory），深链必须带 /#，
@@ -211,10 +199,6 @@ public class AutoPaperServiceImpl implements IAutoPaperService {
                 vo.setPaperUrl(frontBaseUrl + "/#/papers/source/" + created.getPaperId());
                 log.info("[AI组卷] 已落库 paperId={} teacherId={} 题数={}", created.getPaperId(), bo.getTeacherId(), questionIds.size());
             }
-        }
-        // 绑卷位被请求但组卷无题未落库 → 显式 400（不静默吞掉绑定诉求）
-        if (bindSlot && vo.getPaperId() == null) {
-            throw new ServiceException("组卷结果为空未落库，无法绑卷位（检查 outline 是否命中题库）", 400);
         }
         return vo;
     }
