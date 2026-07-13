@@ -44,6 +44,10 @@ public class FeedbackSheetService {
 
     /** 建/改反馈单，返回 id。 */
     public Long upsert(FeedbackSheetBo bo) {
+        // 反馈单以学生为主体，targetId 必填。缺失时返 400 而非落库触 NOT NULL 抛裸 500（BUG-D4-01/P7-BUG-1）。
+        if (bo.getTargetId() == null) {
+            throw new ServiceException("请选择学生（targetId 必填）", 400);
+        }
         BizFeedbackSheet e;
         if (bo.getId() != null) {
             e = requireOwned(bo.getId());
@@ -179,7 +183,8 @@ public class FeedbackSheetService {
     private BizFeedbackSheet requireOwned(Long id) {
         BizFeedbackSheet e = sheetMapper.selectById(id);
         if (e == null || !LoginHelper.getUserId().equals(e.getCreateBy())) {
-            throw new ServiceException("反馈单不存在或无权访问");
+            // 归属拦截统一返 4xx（403），而非默认裸 500（BUG-D4-02 一致性）。不区分不存在/无权，防存在性探测。
+            throw new ServiceException("反馈单不存在或无权访问", 403);
         }
         return e;
     }

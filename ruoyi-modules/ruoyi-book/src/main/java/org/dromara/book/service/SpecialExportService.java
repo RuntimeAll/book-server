@@ -239,6 +239,9 @@ public class SpecialExportService {
     private String resolveAnswer(Map<String, Object> ov, QuestionDetailVo q) {
         String s = str(ov.get("answer"), null);
         if (s != null) return s;
+        // 🔴 改编题干（override.stem 存在）但未改答案时不回落源题旧答案：新题面配旧答案会自相矛盾
+        //    （答案卷印出与改编题干不符的原答案）。与 resolveOptions 同守卫。
+        if (ov.get("stem") != null) return "";
         if (q != null) {
             if (notBlank(q.getAnswerTextContent())) return q.getAnswerTextContent();
             if (notBlank(q.getAnswer())) return q.getAnswer();
@@ -249,6 +252,8 @@ public class SpecialExportService {
     private String resolveAnalysis(Map<String, Object> ov, QuestionDetailVo q) {
         String s = str(ov.get("analysis"), null);
         if (s != null) return s;
+        // 🔴 改编题干但未改解析时不回落源题旧解析（同 resolveAnswer/resolveOptions 守卫）。
+        if (ov.get("stem") != null) return null;
         if (q != null) {
             if (notBlank(q.getAnalyzeTextContent())) return q.getAnalyzeTextContent();
             if (notBlank(q.getExplain())) return q.getExplain();
@@ -359,20 +364,24 @@ public class SpecialExportService {
             cmd.add("--print-to-pdf=" + pdfOut.toAbsolutePath());
             cmd.add(htmlOut.toAbsolutePath().toUri().toString());
 
-            Process p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            // 读干输出防阻塞
-            byte[] logbytes;
-            try (InputStream in = p.getInputStream()) {
-                logbytes = in.readAllBytes();
-            }
+            // 🔴 stdout 重定向到文件，而非进程内 readAllBytes() 阻塞读：
+            //    原实现 in.readAllBytes() 排在 waitFor(60s) 之前，Chrome 迟迟不退出时该读永不返回，
+            //    60s 守卫永远到不了 → 死代码（实测单题可跑满 200s+ 钉死 XNIO worker，并发→线程池耗尽）。
+            //    文件重定向让读不再阻塞主线程，waitFor(60s) 真正生效。
+            Path logFile = work.resolve("chrome-" + paper + ".log");
+            Process p = new ProcessBuilder(cmd)
+                .redirectErrorStream(true)
+                .redirectOutput(logFile.toFile())
+                .start();
             boolean done = p.waitFor(CHROME_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (!done) {
                 p.destroyForcibly();
-                throw new ServiceException("PDF 渲染超时", 500);
+                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS); // 等待回收，避免残留 Chrome 进程
+                throw new ServiceException("PDF 渲染超时（超 " + (CHROME_TIMEOUT_MS / 1000) + "s）", 500);
             }
             if (!Files.exists(pdfOut) || Files.size(pdfOut) == 0) {
-                log.error("[special-export] chrome 无产物 exit={} log={}", p.exitValue(),
-                    new String(logbytes, StandardCharsets.UTF_8));
+                String logtxt = Files.exists(logFile) ? Files.readString(logFile, StandardCharsets.UTF_8) : "";
+                log.error("[special-export] chrome 无产物 exit={} log={}", p.exitValue(), logtxt);
                 throw new ServiceException("PDF 渲染失败（无产物）", 500);
             }
             return Files.readAllBytes(pdfOut);

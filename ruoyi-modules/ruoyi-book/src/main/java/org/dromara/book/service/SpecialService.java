@@ -564,6 +564,11 @@ public class SpecialService {
     private BizCoursePlanLesson requireLesson(Long lessonId) {
         BizCoursePlanLesson l = lessonId == null ? null : lessonMapper.selectById(lessonId);
         if (l == null) throw new ServiceException("课次不存在: lessonId=" + lessonId, 400);
+        // 🔴 归属校验：材料位 bind/unbind/查 只能操作本人课次，杜绝跨教师水平越权（BUG-D3-1 IDOR）。
+        Long uid = requireLogin();
+        if (l.getCreateBy() != null && !uid.equals(l.getCreateBy())) {
+            throw new ServiceException("无权操作他人的课次", 403);
+        }
         return l;
     }
 
