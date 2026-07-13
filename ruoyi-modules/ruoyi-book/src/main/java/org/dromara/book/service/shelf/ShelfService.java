@@ -90,6 +90,9 @@ public class ShelfService {
         LambdaQueryWrapper<BizShelfBook> w = new LambdaQueryWrapper<BizShelfBook>()
             .eq(BizShelfBook::getOwnerId, uid)
             .eq(bookType != null && !bookType.isBlank(), BizShelfBook::getBookType, bookType)
+            // 书架列表排除 book_type='special'：专项是 C 线备课栏工作集（走 /teacher/special/list），不是书架书；
+            // 除非调用方显式按 special 类型查，否则一律剔除，避免专项泄漏进书架列表（集成回归 FINDING-1）。
+            .ne(!"special".equals(bookType), BizShelfBook::getBookType, "special")
             .eq(subjectId != null && !subjectId.isBlank(), BizShelfBook::getSubjectId, subjectId)
             .eq(status != null && !status.isBlank(), BizShelfBook::getStatus, status)
             .orderByDesc(BizShelfBook::getId);
