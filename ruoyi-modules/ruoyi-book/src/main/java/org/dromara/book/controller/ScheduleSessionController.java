@@ -12,6 +12,7 @@ import org.dromara.book.util.ScheduleRenderUtil;
 import jakarta.servlet.http.HttpServletResponse;
 import org.dromara.common.core.domain.R;
 import org.dromara.common.core.exception.ServiceException;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -73,6 +74,14 @@ public class ScheduleSessionController {
     @PutMapping("/session/{id}")
     public R<Void> update(@PathVariable Long id, @RequestBody SessionUpdateBo bo) {
         sessionService.update(id, bo);
+        return R.ok();
+    }
+
+    /** 硬删场次（移除课程）。区别于 cancel 的软取消（status='3'），本接口物理删除整行、不可恢复。 */
+    @SaCheckLogin
+    @DeleteMapping("/session/{id}")
+    public R<Void> delete(@PathVariable Long id) {
+        sessionService.delete(id);
         return R.ok();
     }
 
