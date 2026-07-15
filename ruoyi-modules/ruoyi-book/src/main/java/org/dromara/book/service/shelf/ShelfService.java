@@ -10,10 +10,12 @@ import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizShelfBook;
 import org.dromara.book.domain.entity.BizShelfItem;
 import org.dromara.book.domain.entity.BizShelfNode;
+import org.dromara.book.domain.entity.BizSubject;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizShelfBookMapper;
 import org.dromara.book.mapper.BizShelfItemMapper;
 import org.dromara.book.mapper.BizShelfNodeMapper;
+import org.dromara.book.mapper.BizSubjectMapper;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
@@ -47,6 +49,7 @@ public class ShelfService {
     private final BizShelfNodeMapper nodeMapper;
     private final BizShelfItemMapper itemMapper;
     private final BizQuestionMapper questionMapper;
+    private final BizSubjectMapper subjectMapper;
 
     // ───────────────── 书 CRUD + 列表 ─────────────────
 
@@ -100,10 +103,43 @@ public class ShelfService {
         for (BizShelfBook b : bookMapper.selectList(w)) {
             rows.add(bookBrief(b, true));
         }
+        enrichSubjectDims(rows);
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("rows", rows);
         r.put("total", rows.size());
         return r;
+    }
+
+    /**
+     * 书架筛选维度回填（对齐卷库筛选）：书 subject_id → biz_subject 结构列
+     * （subject/stage/grade/volume/edition 枚举码），供前端与卷库同构地按学科/学段/年级/册筛选。
+     *
+     * <p>只在列表页附加 5 个结构码字段（*Code），不改书自持的 grade/edition 文本列，不破坏既有契约。
+     * subject_id 未挂 biz_subject 或该 biz_subject 结构列为空的书（多为未分类科学书），对应码留 null，
+     * 只在「全部」维度下出现——诚实反映数据现状，不臆造归类。
+     */
+    private void enrichSubjectDims(List<Map<String, Object>> rows) {
+        Set<String> subjectIds = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            Object sid = row.get("subjectId");
+            if (sid != null && !String.valueOf(sid).isBlank()) subjectIds.add(String.valueOf(sid));
+        }
+        Map<String, BizSubject> subjMap = new LinkedHashMap<>();
+        if (!subjectIds.isEmpty()) {
+            List<BizSubject> subs = subjectMapper.selectBatchIds(subjectIds);
+            if (subs != null) {
+                for (BizSubject s : subs) subjMap.put(s.getId(), s);
+            }
+        }
+        for (Map<String, Object> row : rows) {
+            Object sid = row.get("subjectId");
+            BizSubject s = sid == null ? null : subjMap.get(String.valueOf(sid));
+            row.put("subjectCode", s == null ? null : s.getSubject());
+            row.put("stageCode", s == null ? null : s.getStage());
+            row.put("gradeCode", s == null ? null : s.getGrade());
+            row.put("volumeCode", s == null ? null : s.getVolume());
+            row.put("editionCode", s == null ? null : s.getEdition());
+        }
     }
 
     public Map<String, Object> getBook(Long id) {
