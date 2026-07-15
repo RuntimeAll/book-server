@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>整书导出 · book-v1</title>
+<link rel="stylesheet" href="katex/katex.min.css">
+<script src="katex/katex.min.js"></script>
+<script src="katex/contrib/auto-render.min.js"></script>
+<style>
+@page { size: A4; margin: 14mm 12mm; }
+* { box-sizing: border-box; }
+body { font-family: "SimSun","Songti SC",serif; font-size: 11.5pt; line-height: 1.7; color: #111; margin: 0; }
+.doc { max-width: 186mm; margin: 0 auto; }
+/* ── 扉页 ── */
+.cover { text-align: center; padding-top: 60mm; }
+.cover h1 { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 26pt; margin: 0 0 6mm; }
+.cover .sub { color: #555; font-size: 11pt; margin-bottom: 18mm; }
+.cover .toc { display: inline-block; text-align: left; font-size: 12pt; line-height: 2.1; }
+.cover .toc .toc-title { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 14pt; color: #1268b3; margin-bottom: 3mm; }
+/* ── 章节标题层级 ── */
+h1.chap { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 17pt; color: #1268b3;
+          border-bottom: 2px solid #1268b3; padding-bottom: 1.5mm; margin: 2mm 0 5mm; page-break-after: avoid; }
+h2.kp { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 13pt; color: #b8860b;
+        border-bottom: 1px dashed #d8b860; padding-bottom: 1mm; margin: 6mm 0 2.5mm; page-break-after: avoid; }
+h3.subkp { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 12pt; color: #333; margin: 4mm 0 2mm; page-break-after: avoid; }
+/* ── explain 讲解块 ── */
+.explain { background: #f4f8fc; border-left: 3px solid #9ec5e8; padding: 2mm 3.5mm; margin: 2.5mm 0 3.5mm; page-break-inside: avoid; }
+.explain .etitle { font-family: "SimHei","Microsoft YaHei",sans-serif; color: #1268b3; margin-bottom: 1mm; }
+/* ── 题 ── */
+.q { margin: 0 0 3mm; page-break-inside: avoid; }
+.q .no { font-weight: bold; }
+.q .opts { margin-top: 1mm; display: grid; grid-template-columns: repeat(auto-fit, minmax(38mm, 1fr)); gap: 1mm 6mm; }
+.q .fig { margin: 2mm 0; }
+.q .fig img { max-width: 100%; max-height: 80mm; object-fit: contain; }
+.q .fig.al-center { text-align: center; }
+.q .fig.al-right { text-align: right; }
+img.inline-img { max-width: 100%; max-height: 40mm; vertical-align: middle; }
+/* 答案区 */
+.ansbox { background: #fdf3f3; border-left: 3px solid #e0a0a0; padding: 1.5mm 3mm; margin: 1.5mm 0 3mm; page-break-inside: avoid; }
+.ansbox .lab { color: #c00000; font-weight: bold; font-family: "SimHei","Microsoft YaHei",sans-serif; }
+.ansbox p { color: #c00000; margin: 0.5mm 0; }
+.foot { text-align: center; color: #999; font-size: 9pt; margin-top: 6mm; }
+.katex { font-size: 1.02em; }
+.q table.mdtbl, .explain table.mdtbl { border-collapse: collapse; margin: 2mm 0; font-size: 10.5pt; }
+table.mdtbl th, table.mdtbl td { border: 0.4pt solid #555; padding: 1mm 3mm; text-align: center; }
+table.mdtbl th { background: #eef3f8; font-family: "SimHei","Microsoft YaHei",sans-serif; font-weight: normal; }
+</style>
+</head>
+<body>
+<div class="doc" id="doc"></div>
+<!-- BE 注入点：把下面整段 JSON 替换为本讲数据 -->
+<script id="paper-data" type="application/json">__PAPER_DATA__</script>
+<script>
+(function () {
+  var raw = document.getElementById('paper-data').textContent;
+  var data;
+  try { data = JSON.parse(raw); } catch (e) { data = { cover: true, bookTitle: '数据解析失败', toc: [] }; }
+
+  var withAnswers = !!data.withAnswers;
+  var doc = document.getElementById('doc');
+
+  function esc(s) { return (s == null ? '' : String(s)); }
+  // escHtml = 交给 innerHTML 前真转义 & < >（数学 $a<b$ 经 text node 解码回原文给 KaTeX，保真铁律）
+  function escHtml(s) {
+    return (s == null ? '' : String(s))
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  // 行内 markdown：HTML 转义 → 行内图 ![](url) → **加粗**（$...$ 原样留给 KaTeX）
+  function inlineMd(s) {
+    return escHtml(s)
+      .replace(/!\[[^\]]*\]\((https?:[^)\s]+)\)/g, '<img class="inline-img" src="$1">')
+      .replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+  }
+  function splitRow(line) {
+    var s = line.trim();
+    if (s.charAt(0) === '|') s = s.slice(1);
+    if (s.charAt(s.length - 1) === '|') s = s.slice(0, -1);
+    return s.split('|').map(function (c) { return c.trim(); });
+  }
+  function isSep(line) {
+    return line.indexOf('|') >= 0 && /^[\s|:\-]+$/.test(line) && line.indexOf('-') >= 0;
+  }
+  // md2html：markdown（表格/加粗/行内图/换行）安全转 HTML（四步管线精简版：转义→表格→行内→断行）
+  function md2html(raw) {
+    var lines = (raw == null ? '' : String(raw)).split(/\r?\n/);
+    var out = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (line.indexOf('|') >= 0 && i + 1 < lines.length && isSep(lines[i + 1])) {
+        var header = splitRow(line);
+        i += 2;
+        var rows = [];
+        while (i < lines.length && lines[i].indexOf('|') >= 0 && !isSep(lines[i]) && lines[i].trim() !== '') {
+          rows.push(splitRow(lines[i]));
+          i++;
+        }
+        var t = '<table class="mdtbl"><thead><tr>';
+        header.forEach(function (c) { t += '<th>' + inlineMd(c) + '</th>'; });
+        t += '</tr></thead><tbody>';
+        rows.forEach(function (r) {
+          t += '<tr>';
+          r.forEach(function (c) { t += '<td>' + inlineMd(c) + '</td>'; });
+          t += '</tr>';
+        });
+        t += '</tbody></table>';
+        out.push(t);
+        continue;
+      }
+      out.push(inlineMd(line));
+      i++;
+    }
+    var html = '';
+    for (var k = 0; k < out.length; k++) {
+      var piece = out[k];
+      var pieceIsTable = piece.indexOf('<table') === 0;
+      var prevIsTable = k > 0 && out[k - 1].indexOf('<table') === 0;
+      if (k > 0 && !pieceIsTable && !prevIsTable) html += '<br>';
+      html += piece;
+    }
+    return html;
+  }
+
+  // ── blockJson 三型渲染（text / image / option）——整块喂入，不丢图 ──
+  function renderBlockRows(rows, wrap, qNo) {
+    var first = true;
+    (rows || []).forEach(function (row) {
+      var cells = row.cells || [];
+      var options = cells.filter(function (c) { return c.type === 'option'; });
+      if (options.length) {
+        var opts = document.createElement('div'); opts.className = 'opts';
+        options.forEach(function (c) {
+          var md = (c.content || []).map(function (x) { return x.md || ''; }).join('');
+          var sp = document.createElement('span');
+          sp.innerHTML = (c.label ? escHtml(c.label) + '．' : '') + md2html(md);
+          opts.appendChild(sp);
+        });
+        wrap.appendChild(opts);
+        first = false;
+        return;
+      }
+      cells.forEach(function (c) {
+        if (c.type === 'text') {
+          var div = document.createElement('div');
+          var prefix = (first && qNo != null) ? '<span class="no">' + escHtml(qNo) + '．</span>' : '';
+          div.innerHTML = prefix + md2html(c.md);
+          wrap.appendChild(div);
+          first = false;
+        } else if (c.type === 'image' && c.url) {
+          var fig = document.createElement('div');
+          fig.className = 'fig' + (c.align === 'center' ? ' al-center' : (c.align === 'right' ? ' al-right' : ''));
+          var img = document.createElement('img');
+          img.src = c.url;
+          if (c.width) img.style.width = c.width + '%';
+          fig.appendChild(img); wrap.appendChild(fig);
+        }
+      });
+    });
+    // 整块无 text cell 时题号单独落行（如纯图题）
+    if (first && qNo != null) {
+      var no = document.createElement('div');
+      no.innerHTML = '<span class="no">' + escHtml(qNo) + '．</span>';
+      wrap.insertBefore(no, wrap.firstChild);
+    }
+  }
+
+  function renderQuestion(b) {
+    var wrap = document.createElement('div'); wrap.className = 'q';
+    if (b.rows && b.rows.length) {
+      renderBlockRows(b.rows, wrap, b.no);
+    } else {
+      var div = document.createElement('div');
+      div.innerHTML = '<span class="no">' + escHtml(b.no) + '．</span>' + md2html(b.stem || '（题面缺失）');
+      wrap.appendChild(div);
+    }
+    if (withAnswers && b.answer) {
+      var box = document.createElement('div'); box.className = 'ansbox';
+      var ap = document.createElement('p');
+      ap.innerHTML = '<span class="lab">【答案】</span>' + md2html(b.answer);
+      box.appendChild(ap); wrap.appendChild(box);
+    }
+    return wrap;
+  }
+
+  function renderExplain(b) {
+    var e = document.createElement('div'); e.className = 'explain';
+    if (b.title) { var t = document.createElement('div'); t.className = 'etitle'; t.textContent = esc(b.title); e.appendChild(t); }
+    if (b.text) { var x = document.createElement('div'); x.innerHTML = md2html(b.text); e.appendChild(x); }
+    return e;
+  }
+
+  function renderHeading(b) {
+    var lv = b.level || 1;
+    var el = document.createElement(lv === 1 ? 'h1' : (lv === 2 ? 'h2' : 'h3'));
+    el.className = lv === 1 ? 'chap' : (lv === 2 ? 'kp' : 'subkp');
+    el.textContent = esc(b.text);
+    return el;
+  }
+
+  if (data.cover) {
+    // ── 扉页：书名 + 讲目录 ──
+    var cov = document.createElement('div'); cov.className = 'cover';
+    var h = document.createElement('h1'); h.textContent = esc(data.bookTitle); cov.appendChild(h);
+    if (data.sub) { var s = document.createElement('div'); s.className = 'sub'; s.textContent = esc(data.sub); cov.appendChild(s); }
+    var toc = document.createElement('div'); toc.className = 'toc';
+    var tt = document.createElement('div'); tt.className = 'toc-title'; tt.textContent = '目 录'; toc.appendChild(tt);
+    (data.toc || []).forEach(function (name, i) {
+      var li = document.createElement('div'); li.textContent = (i + 1) + '. ' + esc(name); toc.appendChild(li);
+    });
+    cov.appendChild(toc); doc.appendChild(cov);
+  } else {
+    (data.blocks || []).forEach(function (b) {
+      if (b.type === 'heading') doc.appendChild(renderHeading(b));
+      else if (b.type === 'explain') doc.appendChild(renderExplain(b));
+      else if (b.type === 'question') doc.appendChild(renderQuestion(b));
+    });
+  }
+
+  if (window.renderMathInElement) {
+    renderMathInElement(document.body, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '\\[', right: '\\]', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false }
+      ],
+      throwOnError: false
+    });
+  }
+  document.documentElement.setAttribute('data-render-done', '1');
+})();
+</script>
+</body>
+</html>
