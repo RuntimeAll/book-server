@@ -324,6 +324,9 @@ xss:
     # 🔴 PRD-C-204 题库核实增维：update-attrs 现收 DNA 文本(solutionSkeleton/hardPoints 含数学 < >)，
     # 不排除则 XssFilter 静默剥 <...> 腐蚀数学。改完需重启 BE 才生效。
     - /teacher/question/update-attrs
+    # 🔴 update-block 收题面 blockJson(题干/选项/解析含数学 < > 不等式,如 4<5)，
+    # XssFilter 静默剥 <...> 会腐蚀数学串/损坏 JSON（一上一致性修复实锤）。排除；渲染侧 DOMPurify 兜底。
+    - /teacher/question/update-block
     # 🔴 PRD-C-213 教学安排域：lesson 标题/段配置/核心口诀/题干均可含数学 < >，
     # XSS 过滤器会静默剥 <...> 腐蚀内容（备课包渲染/家长文案/回收记录）。全域排除。
     - /teacher/schedule/**
