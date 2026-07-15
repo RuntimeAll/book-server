@@ -70,5 +70,11 @@ public class BizCoursePlanLesson extends BaseEntity {
      */
     private String specialIds;
 
+    /**
+     * 本课绑定的书章节节点 id 数组 JSON（书籍章节材料位，复刻 special_ids 范式）：{@code [biz_shelf_node.id,...]}。
+     * 🔴 更新只 UPDATE 本列（partial entity updateById，勿整行 upsert 抹掉 paper_slots/special_ids）。
+     */
+    private String bookNodeIds;
+
     // R1b S3：prep_state 已删列——备课状态唯一权威 = biz_prep_pack.status（VO 输出按 plan_lesson_id join 推导）
 }

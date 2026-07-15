@@ -1574,3 +1574,15 @@ ALTER TABLE `biz_session_review` DROP COLUMN `parent_msg`;
 ALTER TABLE `biz_course_plan` ADD COLUMN `subject` varchar(20) NULL COMMENT '学科(字典biz_edu_subject;一计划一科)' AFTER `term_tag`;
 
 ALTER TABLE `biz_schedule_session` ADD COLUMN `subject` varchar(20) NULL COMMENT '学科(字典biz_edu_subject;NULL=兜底计划/对象)' AFTER `session_type`;
+
+-- ============================================================
+-- 课时绑定「书籍章节」材料位（B 位 2026-07-15）
+-- 拍板：材料位从"仅专项"扩为"专项 ∪ 书章节"——课次可直接绑书架书（biz_shelf_book）
+--   的目录节点（biz_shelf_node），备课态口径同步扩为「有专项或有书章节 = 已备好」。
+--   · book_node_ids 与 special_ids/kg_node_ids 同构（json id 数组，字符串元素）
+--   · 🔴 更新只 UPDATE 本列（partial updateById），绝不整行 upsert（防抹 paper_slots 绑定事故）
+-- 已于 2026-07-15 直接 apply 到 :3307 ai_lesson_prep（四线共库，一次生效全线）。
+-- ============================================================
+
+ALTER TABLE `biz_course_plan_lesson`
+  ADD COLUMN `book_node_ids` json NULL COMMENT '本课绑定的书章节节点id数组JSON(biz_shelf_node.id;材料位,只UPDATE单列)' AFTER `special_ids`;

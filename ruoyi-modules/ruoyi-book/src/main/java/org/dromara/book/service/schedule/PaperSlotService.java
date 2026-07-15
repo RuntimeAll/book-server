@@ -73,23 +73,30 @@ public class PaperSlotService {
      * 首页提醒/日程/月历按 paper_slots 显未备」的双权威分裂——D7 后无任何 UI 写 paper_slots，
      * 新课次卷位永远为空，若仍按卷位推导则永久催办已备好的课次。
      *
-     * <p>推导：课次已绑专项材料（special_ids 非空）→ 已备好 '2'；否则 未备 '0'。
-     * （材料位无「部分绑定」中间态，故不产出 '1'。）
+     * <p>推导：课次已绑材料（special_ids 非空 <b>或</b> book_node_ids 非空，「有专项或有书章节=已备好」）
+     * → 已备好 '2'；否则 未备 '0'。（材料位无「部分绑定」中间态，故不产出 '1'。）
      *
-     * @param specialIdsJson lesson.special_ids JSON 字符串
+     * @param specialIdsJson  lesson.special_ids JSON 字符串
+     * @param bookNodeIdsJson lesson.book_node_ids JSON 字符串（书章节材料位）
      */
-    public String deriveStatusFromMaterials(String specialIdsJson) {
-        if (specialIdsJson == null || specialIdsJson.isBlank()) return "0";
+    public String deriveStatusFromMaterials(String specialIdsJson, String bookNodeIdsJson) {
+        if (hasAnyId(specialIdsJson) || hasAnyId(bookNodeIdsJson)) return "2";
+        return "0";
+    }
+
+    /** json id 数组是否含至少一个非空元素。 */
+    private boolean hasAnyId(String json) {
+        if (json == null || json.isBlank()) return false;
         try {
-            List<Object> arr = JsonUtils.parseArray(specialIdsJson, Object.class);
+            List<Object> arr = JsonUtils.parseArray(json, Object.class);
             if (arr != null) {
                 for (Object o : arr) {
-                    if (o != null && !String.valueOf(o).isBlank()) return "2";
+                    if (o != null && !String.valueOf(o).isBlank()) return true;
                 }
             }
         } catch (Exception ignore) {
         }
-        return "0";
+        return false;
     }
 
     /** 备课态推导（唯一权威）。入参 = 已解析卷位列表。 */

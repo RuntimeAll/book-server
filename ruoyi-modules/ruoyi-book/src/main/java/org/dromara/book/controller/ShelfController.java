@@ -6,6 +6,7 @@ import org.dromara.book.domain.bo.ShelfBookBo;
 import org.dromara.book.domain.bo.ShelfImportBo;
 import org.dromara.book.domain.bo.ShelfItemBo;
 import org.dromara.book.domain.bo.ShelfNodeBo;
+import org.dromara.book.service.shelf.BookExportService;
 import org.dromara.book.service.shelf.ShelfService;
 import org.dromara.common.core.domain.R;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,6 +36,7 @@ import java.util.Map;
 public class ShelfController {
 
     private final ShelfService shelfService;
+    private final BookExportService bookExportService;
 
     // ───────────────── 书 ─────────────────
 
@@ -158,6 +160,63 @@ public class ShelfController {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("usedCount", next);
         return R.ok(r);
+    }
+
+    // ───────────────── 课次 ↔ 书章节材料位（book_node_ids 单列，复刻 special 材料位范式） ─────────────────
+
+    /** 课次绑书章节。body: {@code {"nodeId":"..."}}。🔴 BE 只 UPDATE book_node_ids 单列。 */
+    @SaCheckLogin
+    @PostMapping("/lesson/{lessonId}/bind-node")
+    public R<Map<String, Object>> bindLessonNode(@PathVariable Long lessonId, @RequestBody Map<String, Object> body) {
+        Long nodeId = idOf(body == null ? null : body.get("nodeId"));
+        List<String> ids = shelfService.bindLessonNode(lessonId, nodeId);
+        return R.ok(lessonNodeIdsVo(lessonId, ids));
+    }
+
+    /** 课次解绑书章节。body: {@code {"nodeId":"..."}}。 */
+    @SaCheckLogin
+    @PostMapping("/lesson/{lessonId}/unbind-node")
+    public R<Map<String, Object>> unbindLessonNode(@PathVariable Long lessonId, @RequestBody Map<String, Object> body) {
+        Long nodeId = idOf(body == null ? null : body.get("nodeId"));
+        List<String> ids = shelfService.unbindLessonNode(lessonId, nodeId);
+        return R.ok(lessonNodeIdsVo(lessonId, ids));
+    }
+
+    /** 查询课次已绑书章节材料 → {lessonId, bookNodeIds, materials:[{nodeId,nodeTitle,bookId,bookTitle,questionCount}]}。 */
+    @SaCheckLogin
+    @GetMapping("/lesson/{lessonId}/book-materials")
+    public R<Map<String, Object>> lessonBookMaterials(@PathVariable Long lessonId) {
+        return R.ok(shelfService.lessonBookMaterials(lessonId));
+    }
+
+    private Map<String, Object> lessonNodeIdsVo(Long lessonId, List<String> ids) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("lessonId", String.valueOf(lessonId));
+        r.put("bookNodeIds", ids);
+        return r;
+    }
+
+    private Long idOf(Object o) {
+        if (o == null || String.valueOf(o).isBlank()) return null;
+        try {
+            return Long.valueOf(String.valueOf(o).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    // ───────────────── 书导出 PDF ─────────────────
+
+    /**
+     * 整书导出 PDF。body: {@code {withAnswers?:boolean}}。
+     * 讲义/练习册书=分讲 HTML→Chrome→PDF+pdfbox 合并；图片书(textbook)=整页图逐页拼 A4。
+     * 返回 {@code {url, pages?}}（OSS）。鉴权=登录 + book owner 或超管。
+     */
+    @SaCheckLogin
+    @PostMapping("/book/{bookId}/export")
+    public R<Map<String, Object>> exportBook(@PathVariable Long bookId,
+                                             @RequestBody(required = false) Map<String, Object> body) {
+        return R.ok(bookExportService.export(bookId, body == null ? new LinkedHashMap<>() : body));
     }
 
     // ───────────────── 整树一次建书（直出书交接面，契约§3） ─────────────────

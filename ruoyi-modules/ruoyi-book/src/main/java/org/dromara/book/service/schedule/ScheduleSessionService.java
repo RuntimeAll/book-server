@@ -583,7 +583,8 @@ public class ScheduleSessionService {
         // 实时推导（B-101 卷位链 D7 退役，不再读 paper_slots 也不读缓存列 session.prep_status；
         // 无课次/无材料 → '0'）。修「plans 页 vs 首页提醒/日程/月历双权威分裂」。
         m.put("prepStatus", "3".equals(s.getSessionType()) ? null
-            : paperSlotService.deriveStatusFromMaterials(lesson == null ? null : lesson.getSpecialIds()));
+            : paperSlotService.deriveStatusFromMaterials(lesson == null ? null : lesson.getSpecialIds(),
+                lesson == null ? null : lesson.getBookNodeIds()));
         m.put("lessonLocked", s.getLessonLocked());
         String subj = resolveSubject(s);
         m.put("subject", subj);

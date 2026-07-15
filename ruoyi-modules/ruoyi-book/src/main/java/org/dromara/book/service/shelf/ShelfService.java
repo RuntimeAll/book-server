@@ -6,11 +6,13 @@ import org.dromara.book.domain.bo.ShelfBookBo;
 import org.dromara.book.domain.bo.ShelfImportBo;
 import org.dromara.book.domain.bo.ShelfItemBo;
 import org.dromara.book.domain.bo.ShelfNodeBo;
+import org.dromara.book.domain.entity.BizCoursePlanLesson;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.domain.entity.BizShelfBook;
 import org.dromara.book.domain.entity.BizShelfItem;
 import org.dromara.book.domain.entity.BizShelfNode;
 import org.dromara.book.domain.entity.BizSubject;
+import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizShelfBookMapper;
 import org.dromara.book.mapper.BizShelfItemMapper;
@@ -50,6 +52,7 @@ public class ShelfService {
     private final BizShelfItemMapper itemMapper;
     private final BizQuestionMapper questionMapper;
     private final BizSubjectMapper subjectMapper;
+    private final BizCoursePlanLessonMapper lessonMapper;
 
     // ───────────────── 书 CRUD + 列表 ─────────────────
 
@@ -321,6 +324,111 @@ public class ShelfService {
         it.setUsedCount(next);
         itemMapper.updateById(it);
         return next;
+    }
+
+    // ───────────────── 书章节材料位（book_node_ids 单列，复刻 special_ids 范式） ─────────────────
+
+    /** 课次绑书章节（append，去重）。🔴 只 UPDATE book_node_ids 一列，绝不整行 upsert。 */
+    @Transactional(rollbackFor = Exception.class)
+    public List<String> bindLessonNode(Long lessonId, Long nodeId) {
+        BizCoursePlanLesson lesson = requireLessonOwned(lessonId);
+        requireBindableNode(nodeId); // node 存在且其书 owner=当前用户或超管
+        List<String> ids = parseIdList(lesson.getBookNodeIds());
+        String nid = String.valueOf(nodeId);
+        if (!ids.contains(nid)) ids.add(nid);
+        persistBookNodeIds(lessonId, ids);
+        return ids;
+    }
+
+    /** 课次解绑书章节（remove）。🔴 只 UPDATE book_node_ids 一列。 */
+    @Transactional(rollbackFor = Exception.class)
+    public List<String> unbindLessonNode(Long lessonId, Long nodeId) {
+        BizCoursePlanLesson lesson = requireLessonOwned(lessonId);
+        List<String> ids = parseIdList(lesson.getBookNodeIds());
+        ids.remove(String.valueOf(nodeId));
+        persistBookNodeIds(lessonId, ids);
+        return ids;
+    }
+
+    /** 查询课次已绑书章节材料（node 反查书：biz_shelf_node.book_id）。 */
+    public Map<String, Object> lessonBookMaterials(Long lessonId) {
+        BizCoursePlanLesson lesson = requireLessonOwned(lessonId);
+        List<String> ids = parseIdList(lesson.getBookNodeIds());
+        List<Map<String, Object>> materials = new ArrayList<>();
+        for (String id : ids) {
+            Long nid = parseId(id);
+            if (nid == null) continue;
+            BizShelfNode n = nodeMapper.selectById(nid);
+            if (n == null) continue; // 节点已删，静默跳过
+            BizShelfBook b = bookMapper.selectById(n.getBookId());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("nodeId", String.valueOf(n.getId()));
+            m.put("nodeTitle", n.getName());
+            m.put("bookId", String.valueOf(n.getBookId()));
+            m.put("bookTitle", b == null ? null : b.getTitle());
+            // 子树题数（绑「讲」级节点时题在 kp 子节点下，按子树统计才真实）
+            List<Long> subtree = collectSubtree(n.getBookId(), n.getId());
+            long questionCount = itemMapper.selectCount(new LambdaQueryWrapper<BizShelfItem>()
+                .in(BizShelfItem::getNodeId, subtree).eq(BizShelfItem::getKind, "question"));
+            m.put("questionCount", questionCount);
+            materials.add(m);
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("lessonId", String.valueOf(lessonId));
+        r.put("bookNodeIds", ids);
+        r.put("materials", materials);
+        return r;
+    }
+
+    /** 🔴 partial update：仅 book_node_ids（+审计列），不碰 paper_slots/special_ids。 */
+    private void persistBookNodeIds(Long lessonId, List<String> ids) {
+        BizCoursePlanLesson up = new BizCoursePlanLesson();
+        up.setId(lessonId);
+        up.setBookNodeIds(JsonUtils.toJsonString(ids));
+        lessonMapper.updateById(up);
+    }
+
+    /** 课次归属校验：材料位 bind/unbind/查 只能操作本人课次（对齐 SpecialService.requireLesson IDOR 闸）。 */
+    private BizCoursePlanLesson requireLessonOwned(Long lessonId) {
+        BizCoursePlanLesson l = lessonId == null ? null : lessonMapper.selectById(lessonId);
+        if (l == null) throw new ServiceException("课次不存在: lessonId=" + lessonId, 400);
+        Long uid = LoginHelper.getUserId();
+        if (uid == null) throw new ServiceException("未登录", 401);
+        if (l.getCreateBy() != null && !uid.equals(l.getCreateBy()) && !LoginHelper.isSuperAdmin()) {
+            throw new ServiceException("无权操作他人的课次", 403);
+        }
+        return l;
+    }
+
+    /** 绑定校验：node 存在，且其书 owner=当前用户或超管。 */
+    private BizShelfNode requireBindableNode(Long nodeId) {
+        if (nodeId == null) throw new ServiceException("nodeId 不能为空", 400);
+        BizShelfNode n = nodeMapper.selectById(nodeId);
+        if (n == null) throw new ServiceException("书章节节点不存在: " + nodeId, 400);
+        BizShelfBook b = bookMapper.selectById(n.getBookId());
+        if (b == null) throw new ServiceException("章节所属书不存在", 404);
+        Long uid = LoginHelper.getUserId();
+        if (uid != null && b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
+            throw new ServiceException("无权绑定他人书籍的章节", 403);
+        }
+        return n;
+    }
+
+    private List<String> parseIdList(String json) {
+        List<String> out = new ArrayList<>();
+        if (json == null || json.isBlank()) return out;
+        try {
+            List<Object> arr = JsonUtils.parseArray(json, Object.class);
+            if (arr != null) {
+                for (Object o : arr) {
+                    if (o == null) continue;
+                    String s = String.valueOf(o).trim();
+                    if (!s.isEmpty() && !out.contains(s)) out.add(s);
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return out;
     }
 
     // ───────────────── 整树一次建书 import（直出书交接面，契约§3） ─────────────────

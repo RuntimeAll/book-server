@@ -172,9 +172,9 @@ public class CoursePlanService {
         List<Map<String, Object>> effectiveSlots = paperSlotService.parseSlots(effectiveJson);
         m.put("paperSlots", effectiveSlots);
         m.put("paperSlotsInherited", !ownSlots);
-        // 备课态推导（PRD-003 D7）：改按专项材料位 special_ids（卷位链退役），与首页提醒/日程/月历同源，
-        // 杜绝双权威分裂。paperSlots 字段仍输出（只读兼容期，B-101 旧数据留库不展示）。
-        m.put("prepState", paperSlotService.deriveStatusFromMaterials(l.getSpecialIds()));
+        // 备课态推导（PRD-003 D7）：改按材料位 special_ids ∪ book_node_ids（有专项或有书章节=已备好），
+        // 与首页提醒/日程/月历同源，杜绝双权威分裂。paperSlots 字段仍输出（只读兼容期，B-101 旧数据留库不展示）。
+        m.put("prepState", paperSlotService.deriveStatusFromMaterials(l.getSpecialIds(), l.getBookNodeIds()));
         return m;
     }
 
