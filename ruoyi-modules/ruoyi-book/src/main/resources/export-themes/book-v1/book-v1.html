@@ -170,7 +170,9 @@ table.mdtbl th { background: #eef3f8; font-family: "SimHei","Microsoft YaHei",sa
       renderBlockRows(b.rows, wrap, b.no);
     } else {
       var div = document.createElement('div');
-      div.innerHTML = '<span class="no">' + escHtml(b.no) + '．</span>' + md2html(b.stem || '（题面缺失）');
+      // 无自带题号则题号位留空（不渲染孤零顿点），对齐 renderBlockRows 的 qNo != null 判断
+      var prefix = (b.no != null) ? '<span class="no">' + escHtml(b.no) + '．</span>' : '';
+      div.innerHTML = prefix + md2html(b.stem || '（题面缺失）');
       wrap.appendChild(div);
     }
     if (withAnswers && b.answer) {

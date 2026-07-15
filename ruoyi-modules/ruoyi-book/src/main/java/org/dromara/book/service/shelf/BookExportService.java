@@ -181,12 +181,11 @@ public class BookExportService {
             parts.add(renderPdf(work, cover, "cover"));
 
             // 分讲渲染
-            int[] no = {0};
             int idx = 0;
             for (BizShelfNode chapter : chapters) {
                 idx++;
                 List<Map<String, Object>> blocks = new ArrayList<>();
-                buildBlocks(chapter, 1, childrenOf, itemsByNode, blockJsonByQid, answerByQid, no, blocks);
+                buildBlocks(chapter, 1, childrenOf, itemsByNode, blockJsonByQid, answerByQid, blocks);
                 if (blocks.size() <= 1) continue; // 只有标题的空讲跳过
                 Map<String, Object> data = new LinkedHashMap<>();
                 data.put("bookTitle", book.getTitle());
@@ -208,13 +207,19 @@ public class BookExportService {
         }
     }
 
-    /** DFS 一讲子树 → 主题 blocks（heading/explain/question）。题号全书连续。 */
+    /**
+     * DFS 一讲子树 → 主题 blocks（heading/explain/question）。
+     *
+     * <p>题号形态对齐书浏览页（2026-07-15 用户拍板）：不自造全书连续大号；题干行首若自带原书
+     * 小题号 {@code N．}/{@code N.}（全角顿点恒剥、半角句点负前瞻挡小数）就提出来当题号、正文去号；
+     * 无自带号的（如【典型例题】开头）题号位留空、绝不编造。剥号只动题面首个 text 块，只剥一次。
+     */
     private void buildBlocks(BizShelfNode node, int level,
                              Map<Long, List<BizShelfNode>> childrenOf,
                              Map<Long, List<BizShelfItem>> itemsByNode,
                              Map<Long, String> blockJsonByQid,
                              Map<Long, String> answerByQid,
-                             int[] no, List<Map<String, Object>> out) {
+                             List<Map<String, Object>> out) {
         Map<String, Object> heading = new LinkedHashMap<>();
         heading.put("type", "heading");
         heading.put("level", Math.min(level, 3));
@@ -232,20 +237,29 @@ public class BookExportService {
             } else if ("question".equals(it.getKind()) && it.getQuestionId() != null) {
                 Map<String, Object> b = new LinkedHashMap<>();
                 b.put("type", "question");
-                b.put("no", ++no[0]);
+                // 🔴 不自造题号：题干行首自带小号则提出来当题号（正文去号），无号则题号位留空
                 Map<String, Object> ov = parseObjMap(it.getOverrideJson());
                 Object ovStem = ov.get("stem");
                 String blockJson = blockJsonByQid.get(it.getQuestionId());
                 if (ovStem != null && !String.valueOf(ovStem).isBlank()) {
                     // 书内改题副本：以 override 题面为准（不回落源 blockJson，防新题面配旧图/旧选项）
-                    b.put("stem", String.valueOf(ovStem));
+                    String[] lifted = liftLeadingNo(String.valueOf(ovStem));
+                    if (lifted[0] != null) b.put("no", lifted[0]);
+                    b.put("stem", lifted[1]);
                 } else if (blockJson != null && !blockJson.isBlank()) {
                     // 🔴 blockJson 整块喂主题（rows 原样传递，text/image/option 三型全保真，不丢图）
                     Object rows = rowsOf(blockJson);
-                    if (rows != null) b.put("rows", rows);
-                    else b.put("stem", "（题面解析失败 qid=" + it.getQuestionId() + "）");
+                    if (rows != null) {
+                        String liftedNo = liftNoFromRows(rows);
+                        if (liftedNo != null) b.put("no", liftedNo);
+                        b.put("rows", rows);
+                    } else {
+                        b.put("stem", "（题面解析失败 qid=" + it.getQuestionId() + "）");
+                    }
                 } else {
-                    b.put("stem", stemFallback(it.getQuestionId()));
+                    String[] lifted = liftLeadingNo(stemFallback(it.getQuestionId()));
+                    if (lifted[0] != null) b.put("no", lifted[0]);
+                    b.put("stem", lifted[1]);
                 }
                 String ans = answerByQid.get(it.getQuestionId());
                 if (ans != null && !ans.isBlank() && ovStem == null) b.put("answer", ans);
@@ -253,8 +267,52 @@ public class BookExportService {
             }
         }
         for (BizShelfNode child : childrenOf.getOrDefault(node.getId(), List.of())) {
-            buildBlocks(child, level + 1, childrenOf, itemsByNode, blockJsonByQid, answerByQid, no, out);
+            buildBlocks(child, level + 1, childrenOf, itemsByNode, blockJsonByQid, answerByQid, out);
         }
+    }
+
+    /**
+     * 从行首剥一次原书小题号（与 book-ui liftLeadingNo 同款）：
+     * 全角顿点 {@code N．} 恒剥；半角句点 {@code N.} 仅当其后不紧跟数字才剥（挡 3.14 小数）。
+     *
+     * @return {号, 剩余}；未命中返回 {null, 原文}。
+     */
+    private static final java.util.regex.Pattern LEADING_NO =
+        java.util.regex.Pattern.compile("^[ \\t\\u00a0]*(\\d{1,3})(?:\\uff0e|\\.(?!\\d))[ \\t\\u00a0]*");
+
+    private String[] liftLeadingNo(String text) {
+        String s = text == null ? "" : text;
+        java.util.regex.Matcher m = LEADING_NO.matcher(s);
+        if (m.find()) {
+            return new String[]{m.group(1), s.substring(m.end())};
+        }
+        return new String[]{null, s};
+    }
+
+    /**
+     * 在 rows 里剥号：只动**文档序第一个 text 块**（= 题干开头），命中则就地去号并返回该号；
+     * 首个 text 块无号 → 返回 null（不继续找、不编造），对齐 book-ui liftFromBlockDoc。
+     */
+    @SuppressWarnings("unchecked")
+    private String liftNoFromRows(Object rows) {
+        if (!(rows instanceof List)) return null;
+        for (Object rowObj : (List<Object>) rows) {
+            if (!(rowObj instanceof Map)) continue;
+            Object cellsObj = ((Map<String, Object>) rowObj).get("cells");
+            if (!(cellsObj instanceof List)) continue;
+            for (Object cellObj : (List<Object>) cellsObj) {
+                if (!(cellObj instanceof Map)) continue;
+                Map<String, Object> cell = (Map<String, Object>) cellObj;
+                if ("text".equals(cell.get("type"))) {
+                    Object md = cell.get("md");
+                    String[] lifted = liftLeadingNo(md == null ? "" : String.valueOf(md));
+                    if (lifted[0] == null) return null; // 首个 text 块无号 → 不剥、不编造
+                    cell.put("md", lifted[1]);
+                    return lifted[0];
+                }
+            }
+        }
+        return null;
     }
 
     /** blockJson → rows（Jackson 树 → 普通 List/Map，随 __PAPER_DATA__ 序列化进主题）。 */
