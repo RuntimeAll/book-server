@@ -452,6 +452,20 @@ public class ScheduleSessionService {
         return s;
     }
 
+    /**
+     * 硬删场次（移除课程，2026-07 新增）。🔴 归属校验：仅本人创建的场次可删，防水平越权（IDOR）。
+     * biz_schedule_session 无逻辑删列 → deleteById 为物理删除，整行移除、不可恢复
+     * （区别于 leaveOrCancel 的软取消 status='3'，那种行仍在）。无绑定计划亦不触发顺延。
+     */
+    public void delete(Long id) {
+        BizScheduleSession s = require(id);
+        Long uid = LoginHelper.getUserId();
+        if (uid != null && s.getCreateBy() != null && !uid.equals(s.getCreateBy())) {
+            throw new ServiceException("无权删除他人的场次");
+        }
+        sessionMapper.deleteById(id);
+    }
+
     // ─────────────────────── 读 ───────────────────────
 
     /** 月历数据（对象名/色、时间、planLesson 标题、type、prep_status；外部占位无备课点）。 */
