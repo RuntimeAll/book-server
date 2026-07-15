@@ -30,11 +30,17 @@ h3.subkp { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 12pt; 
 .q { margin: 0 0 3mm; page-break-inside: avoid; }
 .q .no { font-weight: bold; }
 .q .opts { margin-top: 1mm; display: grid; grid-template-columns: repeat(auto-fit, minmax(38mm, 1fr)); gap: 1mm 6mm; }
+/* 图选项：选项 content 里的 image 型（对齐 FE .qbr-option .qbr-img，限高防选项行被撑爆） */
+.q .opts img.opt-img { max-width: 100%; max-height: 28mm; object-fit: contain; vertical-align: middle; }
+/* 多 cell 行：一行 N cell = N 列横排网格（对齐 FE .qbr-row 语义），列数由脚本按 cells.length 注入 */
+.q .cellrow { display: grid; gap: 1mm 4mm; align-items: start; margin: 1mm 0; }
+.q .cellrow .fig { margin: 0; }
 .q .fig { margin: 2mm 0; }
 .q .fig img { max-width: 100%; max-height: 80mm; object-fit: contain; }
 .q .fig.al-center { text-align: center; }
 .q .fig.al-right { text-align: right; }
-img.inline-img { max-width: 100%; max-height: 40mm; vertical-align: middle; }
+/* 行内 md 图 ![](url)：2.5em 行内钳制与文字同行（对齐 FE .qbr-text :deep(img)），版式宽图兜底 max-width:100% */
+img.inline-img { max-width: 100%; max-height: 2.5em; vertical-align: middle; object-fit: contain; }
 /* 答案区 */
 .ansbox { background: #fdf3f3; border-left: 3px solid #e0a0a0; padding: 1.5mm 3mm; margin: 1.5mm 0 3mm; page-break-inside: avoid; }
 .ansbox .lab { color: #c00000; font-weight: bold; font-family: "SimHei","Microsoft YaHei",sans-serif; }
@@ -121,39 +127,85 @@ table.mdtbl th { background: #eef3f8; font-family: "SimHei","Microsoft YaHei",sa
     return html;
   }
 
+  // 图片元素（option 内 / 独立 image cell 通用）：width = 占容器宽 %，缺省 40（对齐 FE imageStyle 兜底）
+  function buildImg(c, cls) {
+    var img = document.createElement('img');
+    img.src = c.url;
+    if (cls) img.className = cls;
+    var w = Math.min(100, Math.max(1, Number(c.width) || 40));
+    img.style.width = w + '%';
+    return img;
+  }
+  // 独立 image cell → .fig 版式图（保留 align 左中右）
+  function buildFig(c) {
+    var fig = document.createElement('div');
+    fig.className = 'fig' + (c.align === 'center' ? ' al-center' : (c.align === 'right' ? ' al-right' : ''));
+    fig.appendChild(buildImg(c, null));
+    return fig;
+  }
+  // option cell → span（content 数组按 text|image 两型都渲，图选项不再被吞）
+  function buildOption(c) {
+    var sp = document.createElement('span');
+    if (c.label) {
+      var lb = document.createElement('span');
+      lb.innerHTML = escHtml(c.label) + '．';
+      sp.appendChild(lb);
+    }
+    (c.content || []).forEach(function (x) {
+      if (x.type === 'image' && x.url) {
+        sp.appendChild(buildImg(x, 'opt-img'));
+      } else if (x.md != null && x.md !== '') {
+        var tx = document.createElement('span');
+        tx.innerHTML = md2html(x.md);
+        sp.appendChild(tx);
+      }
+    });
+    return sp;
+  }
+
   // ── blockJson 三型渲染（text / image / option）——整块喂入，不丢图 ──
   function renderBlockRows(rows, wrap, qNo) {
     var first = true;
+    // 单 cell 渲染（text 带题号前缀 / image / option），供整行与网格 cell 复用
+    function buildCell(c) {
+      if (c.type === 'text') {
+        var div = document.createElement('div');
+        var prefix = (first && qNo != null) ? '<span class="no">' + escHtml(qNo) + '．</span>' : '';
+        div.innerHTML = prefix + md2html(c.md);
+        first = false;
+        return div;
+      }
+      if (c.type === 'image' && c.url) return buildFig(c);
+      if (c.type === 'option') return buildOption(c);
+      return null;
+    }
     (rows || []).forEach(function (row) {
       var cells = row.cells || [];
       var options = cells.filter(function (c) { return c.type === 'option'; });
       if (options.length) {
         var opts = document.createElement('div'); opts.className = 'opts';
-        options.forEach(function (c) {
-          var md = (c.content || []).map(function (x) { return x.md || ''; }).join('');
-          var sp = document.createElement('span');
-          sp.innerHTML = (c.label ? escHtml(c.label) + '．' : '') + md2html(md);
-          opts.appendChild(sp);
-        });
+        options.forEach(function (c) { opts.appendChild(buildOption(c)); });
         wrap.appendChild(opts);
         first = false;
         return;
       }
+      if (cells.length > 1) {
+        // 多 cell 行 = N 列横排网格（对齐 FE .qbr-row：repeat(N, minmax(0,1fr))）
+        var grid = document.createElement('div');
+        grid.className = 'cellrow';
+        grid.style.gridTemplateColumns = 'repeat(' + cells.length + ', minmax(0, 1fr))';
+        cells.forEach(function (c) {
+          var cellDiv = document.createElement('div');
+          var el = buildCell(c);
+          if (el) cellDiv.appendChild(el);
+          grid.appendChild(cellDiv);
+        });
+        wrap.appendChild(grid);
+        return;
+      }
       cells.forEach(function (c) {
-        if (c.type === 'text') {
-          var div = document.createElement('div');
-          var prefix = (first && qNo != null) ? '<span class="no">' + escHtml(qNo) + '．</span>' : '';
-          div.innerHTML = prefix + md2html(c.md);
-          wrap.appendChild(div);
-          first = false;
-        } else if (c.type === 'image' && c.url) {
-          var fig = document.createElement('div');
-          fig.className = 'fig' + (c.align === 'center' ? ' al-center' : (c.align === 'right' ? ' al-right' : ''));
-          var img = document.createElement('img');
-          img.src = c.url;
-          if (c.width) img.style.width = c.width + '%';
-          fig.appendChild(img); wrap.appendChild(fig);
-        }
+        var el = buildCell(c);
+        if (el) wrap.appendChild(el);
       });
     });
     // 整块无 text cell 时题号单独落行（如纯图题）
