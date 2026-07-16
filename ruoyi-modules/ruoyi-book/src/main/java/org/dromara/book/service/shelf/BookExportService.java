@@ -263,6 +263,14 @@ public class BookExportService {
                 }
                 String ans = answerByQid.get(it.getQuestionId());
                 if (ans != null && !ans.isBlank() && ovStem == null) b.put("answer", ans);
+                // 角色三键透传（教材配套书迁移后 override_json 携 role/roleLabel/roleSeq）：主题按此渲染
+                //   样式化前缀【典型例题1】/【对应练习2】，与源书视觉一致；无 roleLabel 的题不加前缀。
+                Object roleLabel = ov.get("roleLabel");
+                if (roleLabel != null && !String.valueOf(roleLabel).isBlank()) {
+                    b.put("role", ov.get("role"));
+                    b.put("roleLabel", roleLabel);
+                    b.put("roleSeq", ov.get("roleSeq"));
+                }
                 out.add(b);
             }
         }

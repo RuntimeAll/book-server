@@ -27,6 +27,13 @@ public class QuestionLineageVo implements Serializable {
     /** 角色：variant / mother / none */
     private String role;
 
+    /**
+     * 母题来源（DB mother_source）—— 血缘家族性质区分依据。
+     * {@code "教材配套"} = 典型例题/配套练习对；其余（含 null）= 举一反三母题/变式题。
+     * variant 角色取本题（回落母题）的 mother_source；mother 角色取自身。
+     */
+    private String motherSource;
+
     /** 母题节点（variant=母题；mother=自己；none=null） */
     private LineageNodeVo mother;
 

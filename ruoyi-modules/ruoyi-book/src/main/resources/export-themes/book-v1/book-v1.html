@@ -29,6 +29,10 @@ h3.subkp { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 12pt; 
 /* ── 题 ── */
 .q { margin: 0 0 3mm; page-break-inside: avoid; }
 .q .no { font-weight: bold; }
+/* 角色前缀（教材配套书）：加粗样式化【典型例题1】/【对应练习2】，与源书标记视觉一致 */
+.q .role-tag { font-family: "SimHei","Microsoft YaHei",sans-serif; font-weight: bold; margin-right: 1mm; }
+.q .role-tag.role-example { color: #1268b3; }
+.q .role-tag.role-practice { color: #b8860b; }
 .q .opts { margin-top: 1mm; display: grid; grid-template-columns: repeat(auto-fit, minmax(38mm, 1fr)); gap: 1mm 6mm; }
 /* 图选项：选项 content 里的 image 型（对齐 FE .qbr-option .qbr-img，限高防选项行被撑爆） */
 .q .opts img.opt-img { max-width: 100%; max-height: 28mm; object-fit: contain; vertical-align: middle; }
@@ -163,14 +167,25 @@ table.mdtbl th { background: #eef3f8; font-family: "SimHei","Microsoft YaHei",sa
     return sp;
   }
 
+  // 角色前缀 HTML（教材配套书：override_json 携 roleLabel/roleSeq/role）；无 roleLabel 返空串。
+  function roleTagHtml(b) {
+    if (b == null || b.roleLabel == null || String(b.roleLabel) === '') return '';
+    var seq = (b.roleSeq == null || b.roleSeq === '') ? '' : String(b.roleSeq);
+    var cls = (b.role === 'example') ? 'role-example' : 'role-practice';
+    return '<span class="role-tag ' + cls + '">【' + escHtml(String(b.roleLabel) + seq) + '】</span>';
+  }
+
   // ── blockJson 三型渲染（text / image / option）——整块喂入，不丢图 ──
-  function renderBlockRows(rows, wrap, qNo) {
+  function renderBlockRows(rows, wrap, qNo, rolePrefix) {
+    rolePrefix = rolePrefix || '';
     var first = true;
     // 单 cell 渲染（text 带题号前缀 / image / option），供整行与网格 cell 复用
     function buildCell(c) {
       if (c.type === 'text') {
         var div = document.createElement('div');
-        var prefix = (first && qNo != null) ? '<span class="no">' + escHtml(qNo) + '．</span>' : '';
+        var prefix = first
+          ? (rolePrefix + (qNo != null ? '<span class="no">' + escHtml(qNo) + '．</span>' : ''))
+          : '';
         div.innerHTML = prefix + md2html(c.md);
         first = false;
         return div;
@@ -208,23 +223,24 @@ table.mdtbl th { background: #eef3f8; font-family: "SimHei","Microsoft YaHei",sa
         if (el) wrap.appendChild(el);
       });
     });
-    // 整块无 text cell 时题号单独落行（如纯图题）
-    if (first && qNo != null) {
+    // 整块无 text cell 时题号 / 角色前缀单独落行（如纯图题）
+    if (first && (qNo != null || rolePrefix)) {
       var no = document.createElement('div');
-      no.innerHTML = '<span class="no">' + escHtml(qNo) + '．</span>';
+      no.innerHTML = rolePrefix + (qNo != null ? '<span class="no">' + escHtml(qNo) + '．</span>' : '');
       wrap.insertBefore(no, wrap.firstChild);
     }
   }
 
   function renderQuestion(b) {
     var wrap = document.createElement('div'); wrap.className = 'q';
+    var rolePrefix = roleTagHtml(b);
     if (b.rows && b.rows.length) {
-      renderBlockRows(b.rows, wrap, b.no);
+      renderBlockRows(b.rows, wrap, b.no, rolePrefix);
     } else {
       var div = document.createElement('div');
       // 无自带题号则题号位留空（不渲染孤零顿点），对齐 renderBlockRows 的 qNo != null 判断
       var prefix = (b.no != null) ? '<span class="no">' + escHtml(b.no) + '．</span>' : '';
-      div.innerHTML = prefix + md2html(b.stem || '（题面缺失）');
+      div.innerHTML = rolePrefix + prefix + md2html(b.stem || '（题面缺失）');
       wrap.appendChild(div);
     }
     if (withAnswers && b.answer) {

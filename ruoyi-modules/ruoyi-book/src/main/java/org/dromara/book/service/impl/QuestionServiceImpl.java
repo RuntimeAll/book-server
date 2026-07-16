@@ -704,7 +704,7 @@ public class QuestionServiceImpl implements IQuestionService {
             BizQuestion self = bizQuestionMapper.selectOne(new LambdaQueryWrapper<BizQuestion>()
                 .select(BizQuestion::getId, BizQuestion::getMotherQuestionId, BizQuestion::getVariantRelation,
                     BizQuestion::getQuestionType, BizQuestion::getDifficult, BizQuestion::getStatus,
-                    BizQuestion::getStemText, BizQuestion::getStemTextContentId)
+                    BizQuestion::getStemText, BizQuestion::getStemTextContentId, BizQuestion::getMotherSource)
                 .eq(BizQuestion::getId, id));
             if (self == null) {
                 return vo; // 题不存在 → role='none' 空壳
@@ -717,7 +717,7 @@ public class QuestionServiceImpl implements IQuestionService {
                 BizQuestion mother = bizQuestionMapper.selectOne(new LambdaQueryWrapper<BizQuestion>()
                     .select(BizQuestion::getId, BizQuestion::getVariantRelation, BizQuestion::getQuestionType,
                         BizQuestion::getDifficult, BizQuestion::getStatus,
-                        BizQuestion::getStemText, BizQuestion::getStemTextContentId)
+                        BizQuestion::getStemText, BizQuestion::getStemTextContentId, BizQuestion::getMotherSource)
                     .eq(BizQuestion::getId, motherId)
                     .ne(BizQuestion::getStatus, "2"));
                 List<BizQuestion> siblings = bizQuestionMapper.selectList(new LambdaQueryWrapper<BizQuestion>()
@@ -729,6 +729,10 @@ public class QuestionServiceImpl implements IQuestionService {
                     .orderByAsc(BizQuestion::getId));
                 vo.setMother(toLineageNode(mother));
                 vo.setVariants(toLineageNodes(siblings));
+                // 家族来源：本题（变式）自带优先，回落母题；供 FE 区分「典型例题/配套练习」vs「母题/变式题」
+                vo.setMotherSource(StringUtils.isNotBlank(self.getMotherSource())
+                    ? self.getMotherSource()
+                    : (mother != null ? mother.getMotherSource() : null));
                 return vo;
             }
 
@@ -745,6 +749,7 @@ public class QuestionServiceImpl implements IQuestionService {
                 vo.setRole("mother");
                 vo.setMother(toLineageNode(self));
                 vo.setVariants(toLineageNodes(children));
+                vo.setMotherSource(self.getMotherSource());
                 return vo;
             }
 
