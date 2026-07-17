@@ -94,7 +94,7 @@ public class ShelfService {
     public Map<String, Object> pageBooks(String bookType, String subjectId, String status) {
         Long uid = LoginHelper.getUserId();
         LambdaQueryWrapper<BizShelfBook> w = new LambdaQueryWrapper<BizShelfBook>()
-            .eq(BizShelfBook::getOwnerId, uid)
+            .and(q -> q.eq(BizShelfBook::getOwnerId, uid).or().eq(BizShelfBook::getIsPublic, 1))
             .eq(bookType != null && !bookType.isBlank(), BizShelfBook::getBookType, bookType)
             // 书架列表排除 book_type='special'：专项是 C 线备课栏工作集（走 /teacher/special/list），不是书架书；
             // 除非调用方显式按 special 类型查，否则一律剔除，避免专项泄漏进书架列表（集成回归 FINDING-1）。
@@ -146,12 +146,12 @@ public class ShelfService {
     }
 
     public Map<String, Object> getBook(Long id) {
-        return bookBrief(requireOwnedBook(id), true);
+        return bookBrief(requireReadableBook(id), true);
     }
 
     /** 整树查询：书 + 目录节点树（含内容项），一次返回可渲染（PRD scope ①书结构查询）。 */
     public Map<String, Object> getStructure(Long id) {
-        BizShelfBook b = requireOwnedBook(id);
+        BizShelfBook b = requireReadableBook(id);
         Map<String, Object> m = bookBrief(b, false);
 
         List<BizShelfNode> nodes = nodeMapper.selectList(new LambdaQueryWrapper<BizShelfNode>()
@@ -408,7 +408,8 @@ public class ShelfService {
         BizShelfBook b = bookMapper.selectById(n.getBookId());
         if (b == null) throw new ServiceException("章节所属书不存在", 404);
         Long uid = LoginHelper.getUserId();
-        if (uid != null && b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
+        boolean pub = b.getIsPublic() != null && b.getIsPublic() == 1;
+        if (!pub && uid != null && b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
             throw new ServiceException("无权绑定他人书籍的章节", 403);
         }
         return n;
@@ -560,6 +561,18 @@ public class ShelfService {
         return b;
     }
 
+    /** 可读校验：owner 本人 / is_public=1 / 超管 三者其一即可读（写路径仍走 requireOwnedBook）。 */
+    private BizShelfBook requireReadableBook(Long bookId) {
+        BizShelfBook b = bookMapper.selectById(bookId);
+        if (b == null) throw new ServiceException("书不存在", 404);
+        if (b.getIsPublic() != null && b.getIsPublic() == 1) return b;
+        Long uid = LoginHelper.getUserId();
+        if (uid != null && b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
+            throw new ServiceException("无权访问该书", 403);
+        }
+        return b;
+    }
+
     /** 收集节点子树 id（含自身），用于级联删除。 */
     private List<Long> collectSubtree(Long bookId, Long rootId) {
         List<BizShelfNode> all = nodeMapper.selectList(new LambdaQueryWrapper<BizShelfNode>()
@@ -590,6 +603,7 @@ public class ShelfService {
         m.put("edition", b.getEdition());
         m.put("ownerId", b.getOwnerId() == null ? null : String.valueOf(b.getOwnerId()));
         m.put("status", b.getStatus());
+        m.put("isPublic", b.getIsPublic() != null && b.getIsPublic() == 1);
         m.put("styleMeta", parse(b.getStyleMetaJson()));
         m.put("sourceJobId", b.getSourceJobId() == null ? null : String.valueOf(b.getSourceJobId()));
         m.put("remark", b.getRemark());

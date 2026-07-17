@@ -48,6 +48,9 @@ public class BizShelfBook extends BaseEntity {
     /** 0 正常 / 1 归档 */
     private String status;
 
+    /** 公开可读：0 私有（仅 owner）/ 1 全员可见（读/导出/绑定，写仍限 owner） */
+    private Integer isPublic;
+
     /** 编排风格元数据 JSON（导出主题等） */
     private String styleMetaJson;
 
