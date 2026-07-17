@@ -200,8 +200,8 @@ public class SpecialExportService {
             qo.put("stem", resolveStem(ov, q));
             List<String> opts = resolveOptions(ov, q);
             if (!opts.isEmpty()) qo.put("options", opts);
-            String fig = resolveFigure(ov, q);
-            if (fig != null) qo.put("figure", fig);
+            List<String> figs = resolveFigures(ov, q);
+            if (!figs.isEmpty()) qo.put("figures", figs);
             Object gap = it.get("gap");
             if (gap != null) qo.put("gap", intOf(gap));
             String answer = resolveAnswer(ov, q);
@@ -228,12 +228,28 @@ public class SpecialExportService {
         String s = str(ov.get("stem"), null);
         if (s != null) return s;
         if (q != null) {
-            if (notBlank(q.getStemTextContent())) return q.getStemTextContent();
-            if (notBlank(q.getStemText())) return q.getStemText();
+            if (notBlank(q.getStemTextContent())) return cleanStem(q.getStemTextContent());
+            if (notBlank(q.getStemText())) return cleanStem(q.getStemText());
             String fromBlock = stemFromBlock(q.getBlockJson());
-            if (fromBlock != null) return fromBlock;
+            if (fromBlock != null) return cleanStem(fromBlock);
         }
         return "（题干缺失）";
+    }
+
+    /**
+     * 卷面题干清理：专项自带连续题号，题库题干残留的原书题号（"25．"）与
+     * 图片选项题的裸标签行（"A．\tB．\tC．"，选项内容是图、文本只剩标签）都不该再上卷。
+     */
+    private String cleanStem(String stem) {
+        if (!notBlank(stem)) return stem;
+        String s = stem.replaceFirst("^\\s*\\d{1,3}[．.]\\s*", "");
+        StringBuilder sb = new StringBuilder();
+        for (String line : s.split("\r?\n")) {
+            if (line.matches("\\s*(?:[A-D][．.]\\s*)+")) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(line);
+        }
+        return sb.toString();
     }
 
     private String resolveAnswer(Map<String, Object> ov, QuestionDetailVo q) {
@@ -261,10 +277,54 @@ public class SpecialExportService {
         return null;
     }
 
-    private String resolveFigure(Map<String, Object> ov, QuestionDetailVo q) {
+    /**
+     * 收集题干配图（多图）：override.figure > stem_img > blockJson 非选项行的 image cells
+     * 与 text cells 内联 ![](url)。小学题库批次的图全在 blockJson image cells（stem_img=null），
+     * 旧实现只看 stem_img 导致整卷图丢——此处统一收齐，顺序保持 blockJson 行序。
+     */
+    private List<String> resolveFigures(Map<String, Object> ov, QuestionDetailVo q) {
+        List<String> out = new ArrayList<>();
         String s = str(ov.get("figure"), null);
-        if (s != null) return s;
-        return q != null && notBlank(q.getStemImg()) ? q.getStemImg() : null;
+        if (s != null) {
+            out.add(s);
+            return out;
+        }
+        if (q == null) return out;
+        if (notBlank(q.getStemImg())) out.add(q.getStemImg());
+        if (!notBlank(q.getBlockJson())) return out;
+        try {
+            JsonNode root = om.readTree(q.getBlockJson());
+            for (JsonNode row : root.path("rows")) {
+                boolean rowHasOption = false;
+                for (JsonNode cell : row.path("cells")) {
+                    if ("option".equals(cell.path("type").asText())) { rowHasOption = true; break; }
+                }
+                if (rowHasOption) continue;   // 选项图走 resolveOptions/mdOf，不重复收
+                for (JsonNode cell : row.path("cells")) {
+                    String type = cell.path("type").asText();
+                    if ("image".equals(type)) {
+                        String url = cell.path("url").asText("");
+                        if (!url.isBlank() && !out.contains(url)) out.add(url);
+                    } else if ("text".equals(type)) {
+                        collectMdImages(cell.path("md").asText(""), out);
+                    }
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return out;
+    }
+
+    private static final java.util.regex.Pattern MD_IMG =
+        java.util.regex.Pattern.compile("!\\[[^\\]]*\\]\\((https?://[^)\\s]+)\\)");
+
+    private void collectMdImages(String md, List<String> out) {
+        if (!notBlank(md)) return;
+        java.util.regex.Matcher m = MD_IMG.matcher(md);
+        while (m.find()) {
+            String url = m.group(1);
+            if (!out.contains(url)) out.add(url);
+        }
     }
 
     /** 从 blockJson 抽选项：cells type='option' → "A．内容"。 */
@@ -331,6 +391,13 @@ public class SpecialExportService {
         if (content == null || !content.isArray()) return "";
         StringBuilder sb = new StringBuilder();
         for (JsonNode c : content) {
+            // 图片选项（选项内容是一张图）转 ![](url)，由模板 inlineMd 渲成 <img>——
+            // 旧实现只拼 md 文本，图片选项被拼成空串（"A．"裸标签上卷）。
+            if ("image".equals(c.path("type").asText())) {
+                String url = c.path("url").asText("");
+                if (!url.isBlank()) sb.append("![](").append(url).append(")");
+                continue;
+            }
             String md = c.path("md").asText("");
             if (!md.isBlank()) sb.append(md);
         }
@@ -359,7 +426,9 @@ public class SpecialExportService {
             cmd.add("--disable-gpu");
             cmd.add("--no-sandbox");
             cmd.add("--no-pdf-header-footer");
-            cmd.add("--virtual-time-budget=8000");
+            // 20s 虚拟时间预算：整卷可能十余张 OSS 外链图，8s 预算下图未加载完就打印（白框/缺图）。
+            // 虚拟时钟在页面静止时快进，加大预算不增加正常卷的真实渲染耗时。
+            cmd.add("--virtual-time-budget=20000");
             cmd.add("--run-all-compositor-stages-before-draw");
             cmd.add("--print-to-pdf=" + pdfOut.toAbsolutePath());
             cmd.add(htmlOut.toAbsolutePath().toUri().toString());
