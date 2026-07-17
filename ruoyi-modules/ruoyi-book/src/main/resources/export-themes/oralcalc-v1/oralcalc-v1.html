@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>口算卷</title>
+<link rel="stylesheet" href="katex/katex.min.css">
+<script src="katex/katex.min.js"></script>
+<script src="katex/contrib/auto-render.min.js"></script>
+<style>
+@page { size: A4; margin: 12mm 10mm; }
+* { box-sizing: border-box; }
+body { font-family: "SimSun","Songti SC",serif; font-size: 14pt; line-height: 1.9; color: #111; margin: 0; }
+.doc { max-width: 190mm; margin: 0 auto; }
+h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 19pt; margin: 2mm 0 1mm; }
+.sub { text-align: center; color: #555; font-size: 10.5pt; margin-bottom: 2mm; }
+.meta { display: flex; justify-content: center; gap: 10mm; font-size: 12pt; margin: 2mm 0 4mm; }
+.grp { font-family: "SimHei","Microsoft YaHei",sans-serif; color: #1268b3; font-size: 13pt; margin: 4.5mm 0 1.5mm; page-break-after: avoid; }
+.grid { display: grid; column-gap: 6mm; row-gap: 2.5mm; }
+.item { white-space: nowrap; page-break-inside: avoid; }
+.ans { color: #c00000; font-weight: bold; margin-left: 1mm; }
+.foot { text-align: center; color: #999; font-size: 9pt; margin-top: 5mm; }
+.katex { font-size: 1.04em; }
+</style>
+</head>
+<body>
+<div class="doc" id="doc"></div>
+<script type="application/json" id="paper-data">__PAPER_DATA__</script>
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById('paper-data').textContent);
+  var doc = document.getElementById('doc');
+  var isAnswer = data.paper === 'answer';
+
+  function esc(s) { return s == null ? '' : String(s); }
+
+  var h = document.createElement('h1');
+  h.textContent = esc(data.title) + (isAnswer ? '（答案卷）' : '');
+  doc.appendChild(h);
+  var sub = document.createElement('div');
+  sub.className = 'sub';
+  sub.textContent = esc(data.date);
+  doc.appendChild(sub);
+  if (!isAnswer) {
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = '姓名：__________　　用时：__________　　做对：______ 题';
+    doc.appendChild(meta);
+  }
+
+  (data.groups || []).forEach(function (g) {
+    if (g.label) {
+      var gh = document.createElement('div');
+      gh.className = 'grp';
+      gh.textContent = g.label;
+      doc.appendChild(gh);
+    }
+    var grid = document.createElement('div');
+    grid.className = 'grid';
+    grid.style.gridTemplateColumns = 'repeat(' + (g.cols || 4) + ', 1fr)';
+    (g.items || []).forEach(function (it) {
+      var d = document.createElement('div');
+      d.className = 'item';
+      var qs = document.createElement('span');
+      qs.textContent = it.q;
+      d.appendChild(qs);
+      if (isAnswer) {
+        var as = document.createElement('span');
+        as.className = 'ans';
+        as.textContent = it.a;
+        d.appendChild(as);
+      }
+      grid.appendChild(d);
+    });
+    doc.appendChild(grid);
+  });
+
+  var foot = document.createElement('div');
+  foot.className = 'foot';
+  foot.textContent = '— 完 —';
+  doc.appendChild(foot);
+
+  if (window.renderMathInElement) {
+    renderMathInElement(document.body, {
+      delimiters: [
+        { left: '$', right: '$', display: false }
+      ],
+      throwOnError: false
+    });
+  }
+  document.documentElement.setAttribute('data-render-done', '1');
+})();
+</script>
+</body>
+</html>

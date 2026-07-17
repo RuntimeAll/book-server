@@ -11,18 +11,11 @@ import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.oss.core.OssClient;
 import org.dromara.common.oss.entity.UploadResult;
 import org.dromara.common.oss.factory.OssFactory;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Service;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,25 +44,10 @@ public class SpecialExportService {
     private final IQuestionService questionService;
     private final SpecialItemMapper itemMapper;
     private final ObjectMapper om;
+    private final ChromePdfRenderer renderer;
 
-    /** 主题目录（classpath），整目录含 sujunyu-v1.html + katex/ 字体，渲染前整份拷到临时目录。 */
-    private static final String THEME_PREFIX = "export-themes/sujunyu-v1/";
-    private static final String THEME_HTML = "sujunyu-v1.html";
-    private static final String DATA_TOKEN = "__PAPER_DATA__";
-
-    /** 探测的 Chrome/Edge 可执行文件（首个存在者胜）。 */
-    private static final String[] CHROME_CANDIDATES = {
-        "C:/Program Files/Google/Chrome/Application/chrome.exe",
-        "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-        System.getenv("LOCALAPPDATA") + "/Google/Chrome/Application/chrome.exe",
-        "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-        "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium"
-    };
-
-    private static final long CHROME_TIMEOUT_MS = 60_000L;
+    /** 主题目录名（classpath export-themes/ 下），渲染细节在 {@link ChromePdfRenderer}。 */
+    private static final String THEME = "sujunyu-v1";
 
     // ───────────────── 导出主流程 ─────────────────
 
@@ -111,35 +89,22 @@ public class SpecialExportService {
             throw new ServiceException("专项为空，请先添加区块与题目再导出", 400);
         }
 
-        Path work;
-        try {
-            work = Files.createTempDirectory("special-export-");
-            copyTheme(work);
-        } catch (Exception e) {
-            log.error("[special-export] 准备主题失败", e);
-            throw new ServiceException("导出环境准备失败: " + e.getMessage(), 500);
-        }
-
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("specialId", String.valueOf(specialId));
-        try {
-            for (String paper : papers) {
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("title", title);
-                data.put("date", date);
-                data.put("paper", paper);
-                data.put("withAnalysis", withAnalysis);
-                data.put("withStars", withStars);
-                data.put("defaultGap", 24);
-                data.put("sections", sections);
-                byte[] pdf = renderPdf(work, data, paper);
-                OssClient oss = OssFactory.instance();
-                UploadResult up = oss.uploadSuffix(pdf, ".pdf", "application/pdf");
-                result.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
-                log.info("[special-export] {} 卷生成 size={}B url={}", paper, pdf.length, up.getUrl());
-            }
-        } finally {
-            deleteQuietly(work);
+        for (String paper : papers) {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("title", title);
+            data.put("date", date);
+            data.put("paper", paper);
+            data.put("withAnalysis", withAnalysis);
+            data.put("withStars", withStars);
+            data.put("defaultGap", 24);
+            data.put("sections", sections);
+            byte[] pdf = renderer.render(THEME, data, paper);
+            OssClient oss = OssFactory.instance();
+            UploadResult up = oss.uploadSuffix(pdf, ".pdf", "application/pdf");
+            result.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
+            log.info("[special-export] {} 卷生成 size={}B url={}", paper, pdf.length, up.getUrl());
         }
 
         // 导出即计数：used_count+1（无题则跳过）
@@ -394,113 +359,6 @@ public class SpecialExportService {
             if (!md.isBlank()) sb.append(md);
         }
         return sb.toString().trim();
-    }
-
-    // ───────────────── 渲染（无头 Chrome） ─────────────────
-
-    private byte[] renderPdf(Path work, Map<String, Object> data, String paper) {
-        try {
-            String json = om.writeValueAsString(data);
-            // 防 </script> 提前闭合 <script type="application/json"> 注入块（Jackson 默认不转义 /）：
-            // 题目内容含字面 </script> 会截断 script 块致整卷 JSON.parse 失败→渲空卷，转义所有 </ 为 <\/。
-            json = json.replace("</", "<\\/");
-            String tpl = Files.readString(work.resolve(THEME_HTML), StandardCharsets.UTF_8);
-            // 单注入点替换（json 里的 $ 不能被当作正则替换组）
-            String html = tpl.replace(DATA_TOKEN, json);
-            Path htmlOut = work.resolve("paper-" + paper + ".html");
-            Files.writeString(htmlOut, html, StandardCharsets.UTF_8);
-            Path pdfOut = work.resolve("paper-" + paper + ".pdf");
-
-            String chrome = resolveChrome();
-            List<String> cmd = new ArrayList<>();
-            cmd.add(chrome);
-            cmd.add("--headless=new");
-            cmd.add("--disable-gpu");
-            cmd.add("--no-sandbox");
-            cmd.add("--no-pdf-header-footer");
-            // 20s 虚拟时间预算：整卷可能十余张 OSS 外链图，8s 预算下图未加载完就打印（白框/缺图）。
-            // 虚拟时钟在页面静止时快进，加大预算不增加正常卷的真实渲染耗时。
-            cmd.add("--virtual-time-budget=20000");
-            cmd.add("--run-all-compositor-stages-before-draw");
-            cmd.add("--print-to-pdf=" + pdfOut.toAbsolutePath());
-            cmd.add(htmlOut.toAbsolutePath().toUri().toString());
-
-            // 🔴 stdout 重定向到文件，而非进程内 readAllBytes() 阻塞读：
-            //    原实现 in.readAllBytes() 排在 waitFor(60s) 之前，Chrome 迟迟不退出时该读永不返回，
-            //    60s 守卫永远到不了 → 死代码（实测单题可跑满 200s+ 钉死 XNIO worker，并发→线程池耗尽）。
-            //    文件重定向让读不再阻塞主线程，waitFor(60s) 真正生效。
-            Path logFile = work.resolve("chrome-" + paper + ".log");
-            Process p = new ProcessBuilder(cmd)
-                .redirectErrorStream(true)
-                .redirectOutput(logFile.toFile())
-                .start();
-            boolean done = p.waitFor(CHROME_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
-            if (!done) {
-                p.destroyForcibly();
-                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS); // 等待回收，避免残留 Chrome 进程
-                throw new ServiceException("PDF 渲染超时（超 " + (CHROME_TIMEOUT_MS / 1000) + "s）", 500);
-            }
-            if (!Files.exists(pdfOut) || Files.size(pdfOut) == 0) {
-                String logtxt = Files.exists(logFile) ? Files.readString(logFile, StandardCharsets.UTF_8) : "";
-                log.error("[special-export] chrome 无产物 exit={} log={}", p.exitValue(), logtxt);
-                throw new ServiceException("PDF 渲染失败（无产物）", 500);
-            }
-            return Files.readAllBytes(pdfOut);
-        } catch (ServiceException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("[special-export] 渲染异常 paper={}", paper, e);
-            throw new ServiceException("PDF 渲染异常: " + e.getMessage(), 500);
-        }
-    }
-
-    private String resolveChrome() {
-        String env = System.getenv("CHROME_BIN");
-        if (notBlank(env) && Files.exists(Path.of(env))) return env;
-        for (String c : CHROME_CANDIDATES) {
-            if (c == null) continue;
-            try {
-                if (Files.exists(Path.of(c))) return c;
-            } catch (Exception ignore) {
-            }
-        }
-        throw new ServiceException("未找到 Chrome/Edge，设 CHROME_BIN 环境变量指定", 500);
-    }
-
-    /** 把 classpath:export-themes/sujunyu-v1/** 整目录拷进 work（保留相对路径）。 */
-    private void copyTheme(Path work) throws Exception {
-        PathMatchingResourcePatternResolver r = new PathMatchingResourcePatternResolver();
-        Resource[] res = r.getResources("classpath*:" + THEME_PREFIX + "**");
-        int copied = 0;
-        for (Resource rc : res) {
-            if (!rc.isReadable()) continue;
-            String uri = rc.getURI().toString();
-            int idx = uri.indexOf(THEME_PREFIX);
-            if (idx < 0) continue;
-            String rel = uri.substring(idx + THEME_PREFIX.length());
-            if (rel.isBlank() || rel.endsWith("/")) continue;
-            Path dst = work.resolve(rel);
-            Files.createDirectories(dst.getParent());
-            try (InputStream in = rc.getInputStream()) {
-                Files.copy(in, dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                copied++;
-            }
-        }
-        if (copied == 0 || !Files.exists(work.resolve(THEME_HTML))) {
-            throw new ServiceException("导出主题资源缺失（export-themes/sujunyu-v1）", 500);
-        }
-    }
-
-    private void deleteQuietly(Path dir) {
-        try (var walk = Files.walk(dir)) {
-            walk.sorted(Comparator.reverseOrder()).forEach(pp -> {
-                try {
-                    Files.deleteIfExists(pp);
-                } catch (Exception ignore) {
-                }
-            });
-        } catch (Exception ignore) {
-        }
     }
 
     // ───────────────── 小工具 ─────────────────
