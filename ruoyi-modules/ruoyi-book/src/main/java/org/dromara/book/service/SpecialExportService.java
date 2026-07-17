@@ -228,10 +228,12 @@ public class SpecialExportService {
         String s = str(ov.get("stem"), null);
         if (s != null) return s;
         if (q != null) {
-            if (notBlank(q.getStemTextContent())) return cleanStem(q.getStemTextContent());
-            if (notBlank(q.getStemText())) return cleanStem(q.getStemText());
+            // blockJson text cells 优先：填空下划线（________）与内联 ![](url) 图只存在于 blockJson，
+            // stem_text 里填空位是全角空格、图被剥离——优先 stem_text 会印出"没有下划线的空白"。
             String fromBlock = stemFromBlock(q.getBlockJson());
             if (fromBlock != null) return cleanStem(fromBlock);
+            if (notBlank(q.getStemTextContent())) return cleanStem(q.getStemTextContent());
+            if (notBlank(q.getStemText())) return cleanStem(q.getStemText());
         }
         return "（题干缺失）";
     }
@@ -301,30 +303,17 @@ public class SpecialExportService {
                 }
                 if (rowHasOption) continue;   // 选项图走 resolveOptions/mdOf，不重复收
                 for (JsonNode cell : row.path("cells")) {
-                    String type = cell.path("type").asText();
-                    if ("image".equals(type)) {
+                    // 只收独立 image cells；text md 里的内联 ![](url) 由题干（blockJson 优先）
+                    // 经模板 inlineMd 原位渲染，这里再收会在题末重复出图。
+                    if ("image".equals(cell.path("type").asText())) {
                         String url = cell.path("url").asText("");
                         if (!url.isBlank() && !out.contains(url)) out.add(url);
-                    } else if ("text".equals(type)) {
-                        collectMdImages(cell.path("md").asText(""), out);
                     }
                 }
             }
         } catch (Exception ignore) {
         }
         return out;
-    }
-
-    private static final java.util.regex.Pattern MD_IMG =
-        java.util.regex.Pattern.compile("!\\[[^\\]]*\\]\\((https?://[^)\\s]+)\\)");
-
-    private void collectMdImages(String md, List<String> out) {
-        if (!notBlank(md)) return;
-        java.util.regex.Matcher m = MD_IMG.matcher(md);
-        while (m.find()) {
-            String url = m.group(1);
-            if (!out.contains(url)) out.add(url);
-        }
     }
 
     /** 从 blockJson 抽选项：cells type='option' → "A．内容"。 */
@@ -376,7 +365,10 @@ public class SpecialExportService {
                 for (JsonNode cell : row.path("cells")) {
                     if ("text".equals(cell.path("type").asText())) {
                         String md = cell.path("md").asText("");
-                        if (!md.isBlank()) sb.append(md);
+                        if (!md.isBlank()) {
+                            if (sb.length() > 0) sb.append('\n');
+                            sb.append(md);
+                        }
                     }
                 }
             }
