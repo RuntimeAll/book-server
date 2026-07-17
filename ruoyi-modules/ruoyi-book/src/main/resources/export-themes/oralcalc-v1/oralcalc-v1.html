@@ -2,88 +2,119 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>口算卷</title>
+<title>口算题卡</title>
 <link rel="stylesheet" href="katex/katex.min.css">
 <script src="katex/katex.min.js"></script>
 <script src="katex/contrib/auto-render.min.js"></script>
 <style>
-@page { size: A4; margin: 12mm 10mm; }
-* { box-sizing: border-box; }
-body { font-family: "SimSun","Songti SC",serif; font-size: 14pt; line-height: 1.9; color: #111; margin: 0; }
-.doc { max-width: 190mm; margin: 0 auto; }
-h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 19pt; margin: 2mm 0 1mm; }
-.sub { text-align: center; color: #555; font-size: 10.5pt; margin-bottom: 2mm; }
-.meta { display: flex; justify-content: center; gap: 10mm; font-size: 12pt; margin: 2mm 0 4mm; }
-.grp { font-family: "SimHei","Microsoft YaHei",sans-serif; color: #111; font-size: 13pt; margin: 4.5mm 0 1.5mm; page-break-after: avoid; }
-.grid { display: grid; column-gap: 6mm; row-gap: 4.5mm; }
-.item { white-space: nowrap; page-break-inside: avoid; }
-.ans { color: #c00000; font-weight: bold; margin-left: 1mm; }
-.foot { text-align: center; color: #999; font-size: 9pt; margin-top: 5mm; }
+/* ═══ 口算题卡·经典版（设计A定稿 2026-07-17）：圆角外框 + 居中标题双细线 + 下划线信息栏 + 灰题号网格 ═══ */
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 210mm; }
+body { font-family: "SimSun","Songti SC",serif; color: #1a1a1a; }
+
+.sheet { width: 210mm; min-height: 297mm; padding: 12mm 13mm 10mm; }
+.frame { border: 1.2pt solid #2b2b2b; border-radius: 3mm; padding: 8mm 9mm 6mm; min-height: 273mm; position: relative; }
+.sheet.noframe .frame { border: none; border-radius: 0; padding: 2mm 1mm; }
+
+h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif;
+     font-size: 22pt; letter-spacing: 1.5mm; padding-bottom: 3.5mm; }
+.rule { border-bottom: 0.8pt solid #2b2b2b; margin: 0 -3mm; }
+.rule2 { border-bottom: 0.3pt solid #2b2b2b; margin: 0.8mm -3mm 0; }
+
+.meta { display: flex; justify-content: space-between; font-size: 11.5pt; margin: 5mm 1mm 2mm; }
+.meta .line { display: inline-block; width: 22mm; border-bottom: 0.5pt solid #555; height: 4.5mm; }
+
+.grp { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 12.5pt; margin: 4mm 0 1mm; page-break-after: avoid; }
+
+.qwrap { margin-top: 4mm; }
+.grid { display: grid; margin-bottom: 3mm; }
+.item { display: flex; align-items: baseline; font-variant-numeric: tabular-nums; page-break-inside: avoid; }
+.item .no { font-size: 8.5pt; color: #999; width: 6.5mm; flex: none; font-family: Arial, sans-serif; }
+.item .ans { color: #c00000; font-weight: bold; margin-left: 1mm; }
+
+.foot { position: absolute; bottom: 4.5mm; left: 0; right: 0; text-align: center; font-size: 9pt; color: #888; }
 .katex { font-size: 1.04em; }
 </style>
 </head>
 <body>
-<div class="doc" id="doc"></div>
+<div class="sheet" id="sheet">
+  <div class="frame" id="frame"></div>
+</div>
 <script type="application/json" id="paper-data">__PAPER_DATA__</script>
 <script>
 (function () {
   var data = JSON.parse(document.getElementById('paper-data').textContent);
-  var doc = document.getElementById('doc');
   var isAnswer = data.paper === 'answer';
+  var layout = data.layout || {};
+  var numbered = layout.numbered !== false;                       // 默认带灰色小题号
+  var rowH = layout.rowHeightMm || 13.5;                          // 行高 mm
+  var fontPt = layout.fontSizePt || 14;                           // 算式字号 pt
+  var footer = layout.footer != null ? layout.footer : '每天 10 分钟 · 又快又准';
+  if (layout.frame === false) document.getElementById('sheet').className = 'sheet noframe';
 
-  function esc(s) { return s == null ? '' : String(s); }
-
-  var h = document.createElement('h1');
-  h.textContent = esc(data.title) + (isAnswer ? '（答案卷）' : '');
-  doc.appendChild(h);
-  var sub = document.createElement('div');
-  sub.className = 'sub';
-  sub.textContent = esc(data.date);
-  doc.appendChild(sub);
-  if (!isAnswer) {
-    var meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.textContent = '姓名：__________　　用时：__________　　做对：______ 题';
-    doc.appendChild(meta);
+  var frame = document.getElementById('frame');
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
   }
 
+  frame.appendChild(el('h1', null, (data.title || '口算训练') + (isAnswer ? '（答案卷）' : '')));
+  frame.appendChild(el('div', 'rule'));
+  frame.appendChild(el('div', 'rule2'));
+
+  // 信息栏：题目卷=日期/姓名/用时/做对；答案卷=只印日期（教师用）
+  var meta = el('div', 'meta');
+  function metaItem(label, tail) {
+    var s = document.createElement('span');
+    s.appendChild(document.createTextNode(label + '：'));
+    s.appendChild(el('span', 'line'));
+    if (tail) s.appendChild(document.createTextNode(tail));
+    return s;
+  }
+  if (isAnswer) {
+    var d = document.createElement('span');
+    d.textContent = data.date || '';
+    meta.appendChild(d);
+    meta.appendChild(el('span', null, '教师核对用'));
+  } else {
+    meta.appendChild(metaItem('日期'));
+    meta.appendChild(metaItem('姓名'));
+    meta.appendChild(metaItem('用时'));
+    meta.appendChild(metaItem('做对', '／' + (data.total || '')));
+  }
+  frame.appendChild(meta);
+
+  var wrap = el('div', 'qwrap');
+  var no = 0;
   (data.groups || []).forEach(function (g) {
-    if (g.label) {
-      var gh = document.createElement('div');
-      gh.className = 'grp';
-      gh.textContent = g.label;
-      doc.appendChild(gh);
-    }
-    var grid = document.createElement('div');
-    grid.className = 'grid';
-    grid.style.gridTemplateColumns = 'repeat(' + (g.cols || 4) + ', 1fr)';
+    if (g.label) wrap.appendChild(el('div', 'grp', g.label));
+    var grid = el('div', 'grid');
+    var cols = layout.cols || g.cols || 3;
+    grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
     (g.items || []).forEach(function (it) {
-      var d = document.createElement('div');
-      d.className = 'item';
-      var qs = document.createElement('span');
-      qs.textContent = it.q;
-      d.appendChild(qs);
-      if (isAnswer) {
-        var as = document.createElement('span');
-        as.className = 'ans';
-        as.textContent = it.a;
-        d.appendChild(as);
-      }
+      no++;
+      var d = el('div', 'item');
+      d.style.height = rowH + 'mm';
+      d.style.fontSize = fontPt + 'pt';
+      if (numbered) d.appendChild(el('span', 'no', no + '.'));
+      var q = document.createElement('span');
+      q.textContent = it.q;
+      d.appendChild(q);
+      if (isAnswer) d.appendChild(el('span', 'ans', it.a));
       grid.appendChild(d);
     });
-    doc.appendChild(grid);
+    wrap.appendChild(grid);
   });
+  frame.appendChild(wrap);
 
-  var foot = document.createElement('div');
-  foot.className = 'foot';
-  foot.textContent = '— 完 —';
-  doc.appendChild(foot);
+  if (footer) frame.appendChild(el('div', 'foot', footer));
 
   if (window.renderMathInElement) {
     renderMathInElement(document.body, {
-      delimiters: [
-        { left: '$', right: '$', display: false }
-      ],
+      delimiters: [{ left: '$', right: '$', display: false }],
       throwOnError: false
     });
   }

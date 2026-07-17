@@ -184,6 +184,9 @@ public class OralCalcService {
             data.put("title", title);
             data.put("date", date);
             data.put("paper", paper);
+            data.put("total", total);
+            // layout 版式配置透传（cols/numbered/rowHeightMm/fontSizePt/footer/frame），主题侧有缺省
+            if (body.get("layout") instanceof Map<?, ?> lm) data.put("layout", lm);
             data.put("groups", groupsOut);
             byte[] pdf = renderer.render(THEME, data, paper);
             OssClient oss = OssFactory.instance();
