@@ -133,6 +133,7 @@ public class OralCalcService {
 
         int total = 0;
         List<Map<String, Object>> groupsOut = new ArrayList<>();
+        Set<String> seenAll = new LinkedHashSet<>();   // 🔴 跨组去重：混合组不复用前面组已出的算式
         for (Object o : gl) {
             Map<String, Object> g = (Map<String, Object>) o;
             String typeCode = str(g.get("type"), "");
@@ -146,7 +147,7 @@ public class OralCalcService {
             if (total > MAX_TOTAL) {
                 throw new ServiceException("单卷总题数超上限 " + MAX_TOTAL, 400);
             }
-            List<String[]> items = generate(type.code(), count, rnd);
+            List<String[]> items = generate(type.code(), count, rnd, seenAll);
             Map<String, Object> go = new LinkedHashMap<>();
             go.put("label", withGroupLabel ? str(g.get("label"), type.name()) : "");
             go.put("cols", type.cols());
@@ -182,9 +183,8 @@ public class OralCalcService {
 
     // ───────────────── 生成器（每类型一段，全部确定性约束） ─────────────────
 
-    private List<String[]> generate(String code, int count, Random rnd) {
+    private List<String[]> generate(String code, int count, Random rnd, Set<String> seen) {
         List<String[]> out = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
         int tries = 0;
         while (out.size() < count && tries++ < count * MAX_TRY) {
             String[] qa = genOne(code, rnd);
