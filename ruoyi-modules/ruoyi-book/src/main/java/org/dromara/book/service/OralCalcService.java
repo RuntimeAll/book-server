@@ -162,11 +162,24 @@ public class OralCalcService {
             groupsOut.add(go);
         }
 
+        // papers：['question'] 只出题目卷（口算主场景，老师不需要答案卷）；缺省双卷。
+        List<String> papers = new ArrayList<>();
+        if (body.get("papers") instanceof List<?> pl) {
+            for (Object o : pl) {
+                String s = String.valueOf(o);
+                if ("question".equals(s) || "answer".equals(s)) papers.add(s);
+            }
+        }
+        if (papers.isEmpty()) {
+            papers.add("question");
+            papers.add("answer");
+        }
+
         String date = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy 年 M 月 d 日"));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("total", total);
         result.put("seed", String.valueOf(seed));
-        for (String paper : List.of("question", "answer")) {
+        for (String paper : papers) {
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("title", title);
             data.put("date", date);
