@@ -47,7 +47,7 @@ h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif;
   var data = JSON.parse(document.getElementById('paper-data').textContent);
   var isAnswer = data.paper === 'answer';
   var layout = data.layout || {};
-  var numbered = layout.numbered !== false;                       // 默认带灰色小题号
+  var numbered = layout.numbered === true;                        // 🔴 默认不带题号（2026-07-18 拍板），layout.numbered:true 才开
   var footer = layout.footer != null ? layout.footer : '每天 10 分钟 · 又快又准';
   if (layout.frame === false) document.getElementById('sheet').className = 'sheet noframe';
 
