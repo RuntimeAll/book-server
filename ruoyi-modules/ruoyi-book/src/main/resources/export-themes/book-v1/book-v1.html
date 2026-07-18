@@ -45,6 +45,8 @@ h3.subkp { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 12pt; 
 .q .fig.al-right { text-align: right; }
 /* 行内 md 图 ![](url)：2.5em 行内钳制与文字同行（对齐 FE .qbr-text :deep(img)），版式宽图兜底 max-width:100% */
 img.inline-img { max-width: 100%; max-height: 2.5em; vertical-align: middle; object-fit: contain; }
+/* 表格 cell 内的 md 图（媒体表：图排+作答格）：句中钳制不适用，放开到可辨识（对齐 FE td img 例外） */
+td img.inline-img, th img.inline-img { max-height: 26mm; }
 /* 答案区 */
 .ansbox { background: #fdf3f3; border-left: 3px solid #e0a0a0; padding: 1.5mm 3mm; margin: 1.5mm 0 3mm; page-break-inside: avoid; }
 .ansbox .lab { color: #c00000; font-weight: bold; font-family: "SimHei","Microsoft YaHei",sans-serif; }
