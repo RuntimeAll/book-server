@@ -131,6 +131,12 @@ public class OralCalcService {
             : System.nanoTime();
         Random rnd = new Random(seed);
 
+        // 全局栏数覆盖（layout.cols）：给了则整卷统一栏宽，各组网格上下对齐
+        Integer globalCols = null;
+        if (body.get("layout") instanceof Map<?, ?> lm0 && lm0.get("cols") != null) {
+            globalCols = Integer.parseInt(String.valueOf(lm0.get("cols")));
+        }
+
         int total = 0;
         List<Map<String, Object>> groupsOut = new ArrayList<>();
         Set<String> seenAll = new LinkedHashSet<>();   // 🔴 跨组去重：混合组不复用前面组已出的算式
@@ -143,6 +149,9 @@ public class OralCalcService {
             }
             int count = g.get("count") == null ? 12 : Integer.parseInt(String.valueOf(g.get("count")));
             if (count < 1) continue;
+            int cols = globalCols != null ? globalCols : type.cols();
+            // 🔴 每组题数自动向上凑整到栏数的整数倍：网格每行凑满，不留残行
+            count = ((count + cols - 1) / cols) * cols;
             total += count;
             if (total > MAX_TOTAL) {
                 throw new ServiceException("单卷总题数超上限 " + MAX_TOTAL, 400);
@@ -150,7 +159,7 @@ public class OralCalcService {
             List<String[]> items = generate(type.code(), count, rnd, seenAll);
             Map<String, Object> go = new LinkedHashMap<>();
             go.put("label", withGroupLabel ? str(g.get("label"), type.name()) : "");
-            go.put("cols", type.cols());
+            go.put("cols", cols);
             List<Map<String, String>> its = new ArrayList<>();
             for (String[] qa : items) {
                 Map<String, String> it = new LinkedHashMap<>();
@@ -208,7 +217,14 @@ public class OralCalcService {
             out.add(qa);
         }
         if (out.size() < count) {
-            log.warn("[oralcalc] 类型 {} 题量不足：要 {} 只生成 {}（数域太小去重耗尽）", code, count, out.size());
+            // 数域太小去重耗尽（如 5 以内加法全集有限）：放开去重补足——卷面每行必须凑满，
+            // 少量重复算式比残行可接受（口算本就反复练）。
+            log.warn("[oralcalc] 类型 {} 去重耗尽（{}/{}），放开去重补足", code, out.size(), count);
+            int guard = 0;
+            while (out.size() < count && guard++ < count * MAX_TRY) {
+                String[] qa = genOne(code, rnd);
+                if (qa != null) out.add(qa);
+            }
         }
         return out;
     }
