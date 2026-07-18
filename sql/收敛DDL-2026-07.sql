@@ -1586,3 +1586,8 @@ ALTER TABLE `biz_schedule_session` ADD COLUMN `subject` varchar(20) NULL COMMENT
 
 ALTER TABLE `biz_course_plan_lesson`
   ADD COLUMN `book_node_ids` json NULL COMMENT '本课绑定的书章节节点id数组JSON(biz_shelf_node.id;材料位,只UPDATE单列)' AFTER `special_ids`;
+
+-- 2026-07-17 书架公开可读（PRD 无卡·用户直令：小学数学 16 本书对全员开放）
+-- 读/导出/绑定放行 is_public=1；写路径仍限 owner（ShelfService.requireReadableBook / requireOwnedBook 分闸）
+ALTER TABLE biz_shelf_book ADD COLUMN is_public tinyint NOT NULL DEFAULT 0 COMMENT '公开可读:0私有 1全员可见(读/导出/绑定,写仍限owner)';
+-- 数据变更（prod 需手工同步）：小学数学 16 本书 UPDATE biz_shelf_book SET is_public=1 WHERE id IN (…16 个 bookId 见台账…);

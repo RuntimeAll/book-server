@@ -628,13 +628,14 @@ public class BookExportService {
 
     // ───────────────── 门禁与小工具 ─────────────────
 
-    /** 导出门禁：书存在（404）+ owner 或超管（403）。 */
+    /** 导出门禁：书存在（404）+ owner / is_public=1 / 超管（403）。 */
     private BizShelfBook requireExportableBook(Long bookId) {
         BizShelfBook b = bookMapper.selectById(bookId);
         if (b == null) throw new ServiceException("书不存在", 404);
         Long uid = LoginHelper.getUserId();
         if (uid == null) throw new ServiceException("未登录", 401);
-        if (b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
+        boolean pub = b.getIsPublic() != null && b.getIsPublic() == 1;
+        if (!pub && b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
             throw new ServiceException("无权导出该书", 403);
         }
         return b;
