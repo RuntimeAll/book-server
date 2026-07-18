@@ -11,18 +11,11 @@ import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.oss.core.OssClient;
 import org.dromara.common.oss.entity.UploadResult;
 import org.dromara.common.oss.factory.OssFactory;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Service;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,25 +44,10 @@ public class SpecialExportService {
     private final IQuestionService questionService;
     private final SpecialItemMapper itemMapper;
     private final ObjectMapper om;
+    private final ChromePdfRenderer renderer;
 
-    /** 主题目录（classpath），整目录含 sujunyu-v1.html + katex/ 字体，渲染前整份拷到临时目录。 */
-    private static final String THEME_PREFIX = "export-themes/sujunyu-v1/";
-    private static final String THEME_HTML = "sujunyu-v1.html";
-    private static final String DATA_TOKEN = "__PAPER_DATA__";
-
-    /** 探测的 Chrome/Edge 可执行文件（首个存在者胜）。 */
-    private static final String[] CHROME_CANDIDATES = {
-        "C:/Program Files/Google/Chrome/Application/chrome.exe",
-        "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-        System.getenv("LOCALAPPDATA") + "/Google/Chrome/Application/chrome.exe",
-        "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
-        "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium"
-    };
-
-    private static final long CHROME_TIMEOUT_MS = 60_000L;
+    /** 主题目录名（classpath export-themes/ 下），渲染细节在 {@link ChromePdfRenderer}。 */
+    private static final String THEME = "sujunyu-v1";
 
     // ───────────────── 导出主流程 ─────────────────
 
@@ -111,35 +89,22 @@ public class SpecialExportService {
             throw new ServiceException("专项为空，请先添加区块与题目再导出", 400);
         }
 
-        Path work;
-        try {
-            work = Files.createTempDirectory("special-export-");
-            copyTheme(work);
-        } catch (Exception e) {
-            log.error("[special-export] 准备主题失败", e);
-            throw new ServiceException("导出环境准备失败: " + e.getMessage(), 500);
-        }
-
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("specialId", String.valueOf(specialId));
-        try {
-            for (String paper : papers) {
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("title", title);
-                data.put("date", date);
-                data.put("paper", paper);
-                data.put("withAnalysis", withAnalysis);
-                data.put("withStars", withStars);
-                data.put("defaultGap", 24);
-                data.put("sections", sections);
-                byte[] pdf = renderPdf(work, data, paper);
-                OssClient oss = OssFactory.instance();
-                UploadResult up = oss.uploadSuffix(pdf, ".pdf", "application/pdf");
-                result.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
-                log.info("[special-export] {} 卷生成 size={}B url={}", paper, pdf.length, up.getUrl());
-            }
-        } finally {
-            deleteQuietly(work);
+        for (String paper : papers) {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("title", title);
+            data.put("date", date);
+            data.put("paper", paper);
+            data.put("withAnalysis", withAnalysis);
+            data.put("withStars", withStars);
+            data.put("defaultGap", 24);
+            data.put("sections", sections);
+            byte[] pdf = renderer.render(THEME, data, paper);
+            OssClient oss = OssFactory.instance();
+            UploadResult up = oss.uploadSuffix(pdf, ".pdf", "application/pdf");
+            result.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
+            log.info("[special-export] {} 卷生成 size={}B url={}", paper, pdf.length, up.getUrl());
         }
 
         // 导出即计数：used_count+1（无题则跳过）
@@ -200,8 +165,8 @@ public class SpecialExportService {
             qo.put("stem", resolveStem(ov, q));
             List<String> opts = resolveOptions(ov, q);
             if (!opts.isEmpty()) qo.put("options", opts);
-            String fig = resolveFigure(ov, q);
-            if (fig != null) qo.put("figure", fig);
+            List<String> figs = resolveFigures(ov, q);
+            if (!figs.isEmpty()) qo.put("figures", figs);
             Object gap = it.get("gap");
             if (gap != null) qo.put("gap", intOf(gap));
             String answer = resolveAnswer(ov, q);
@@ -228,12 +193,30 @@ public class SpecialExportService {
         String s = str(ov.get("stem"), null);
         if (s != null) return s;
         if (q != null) {
-            if (notBlank(q.getStemTextContent())) return q.getStemTextContent();
-            if (notBlank(q.getStemText())) return q.getStemText();
+            // blockJson text cells 优先：填空下划线（________）与内联 ![](url) 图只存在于 blockJson，
+            // stem_text 里填空位是全角空格、图被剥离——优先 stem_text 会印出"没有下划线的空白"。
             String fromBlock = stemFromBlock(q.getBlockJson());
-            if (fromBlock != null) return fromBlock;
+            if (fromBlock != null) return cleanStem(fromBlock);
+            if (notBlank(q.getStemTextContent())) return cleanStem(q.getStemTextContent());
+            if (notBlank(q.getStemText())) return cleanStem(q.getStemText());
         }
         return "（题干缺失）";
+    }
+
+    /**
+     * 卷面题干清理：专项自带连续题号，题库题干残留的原书题号（"25．"）与
+     * 图片选项题的裸标签行（"A．\tB．\tC．"，选项内容是图、文本只剩标签）都不该再上卷。
+     */
+    private String cleanStem(String stem) {
+        if (!notBlank(stem)) return stem;
+        String s = stem.replaceFirst("^\\s*\\d{1,3}[．.]\\s*", "");
+        StringBuilder sb = new StringBuilder();
+        for (String line : s.split("\r?\n")) {
+            if (line.matches("\\s*(?:[A-D][．.]\\s*)+")) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(line);
+        }
+        return sb.toString();
     }
 
     private String resolveAnswer(Map<String, Object> ov, QuestionDetailVo q) {
@@ -261,10 +244,41 @@ public class SpecialExportService {
         return null;
     }
 
-    private String resolveFigure(Map<String, Object> ov, QuestionDetailVo q) {
+    /**
+     * 收集题干配图（多图）：override.figure > stem_img > blockJson 非选项行的 image cells
+     * 与 text cells 内联 ![](url)。小学题库批次的图全在 blockJson image cells（stem_img=null），
+     * 旧实现只看 stem_img 导致整卷图丢——此处统一收齐，顺序保持 blockJson 行序。
+     */
+    private List<String> resolveFigures(Map<String, Object> ov, QuestionDetailVo q) {
+        List<String> out = new ArrayList<>();
         String s = str(ov.get("figure"), null);
-        if (s != null) return s;
-        return q != null && notBlank(q.getStemImg()) ? q.getStemImg() : null;
+        if (s != null) {
+            out.add(s);
+            return out;
+        }
+        if (q == null) return out;
+        if (notBlank(q.getStemImg())) out.add(q.getStemImg());
+        if (!notBlank(q.getBlockJson())) return out;
+        try {
+            JsonNode root = om.readTree(q.getBlockJson());
+            for (JsonNode row : root.path("rows")) {
+                boolean rowHasOption = false;
+                for (JsonNode cell : row.path("cells")) {
+                    if ("option".equals(cell.path("type").asText())) { rowHasOption = true; break; }
+                }
+                if (rowHasOption) continue;   // 选项图走 resolveOptions/mdOf，不重复收
+                for (JsonNode cell : row.path("cells")) {
+                    // 只收独立 image cells；text md 里的内联 ![](url) 由题干（blockJson 优先）
+                    // 经模板 inlineMd 原位渲染，这里再收会在题末重复出图。
+                    if ("image".equals(cell.path("type").asText())) {
+                        String url = cell.path("url").asText("");
+                        if (!url.isBlank() && !out.contains(url)) out.add(url);
+                    }
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return out;
     }
 
     /** 从 blockJson 抽选项：cells type='option' → "A．内容"。 */
@@ -316,7 +330,10 @@ public class SpecialExportService {
                 for (JsonNode cell : row.path("cells")) {
                     if ("text".equals(cell.path("type").asText())) {
                         String md = cell.path("md").asText("");
-                        if (!md.isBlank()) sb.append(md);
+                        if (!md.isBlank()) {
+                            if (sb.length() > 0) sb.append('\n');
+                            sb.append(md);
+                        }
                     }
                 }
             }
@@ -331,115 +348,17 @@ public class SpecialExportService {
         if (content == null || !content.isArray()) return "";
         StringBuilder sb = new StringBuilder();
         for (JsonNode c : content) {
+            // 图片选项（选项内容是一张图）转 ![](url)，由模板 inlineMd 渲成 <img>——
+            // 旧实现只拼 md 文本，图片选项被拼成空串（"A．"裸标签上卷）。
+            if ("image".equals(c.path("type").asText())) {
+                String url = c.path("url").asText("");
+                if (!url.isBlank()) sb.append("![](").append(url).append(")");
+                continue;
+            }
             String md = c.path("md").asText("");
             if (!md.isBlank()) sb.append(md);
         }
         return sb.toString().trim();
-    }
-
-    // ───────────────── 渲染（无头 Chrome） ─────────────────
-
-    private byte[] renderPdf(Path work, Map<String, Object> data, String paper) {
-        try {
-            String json = om.writeValueAsString(data);
-            // 防 </script> 提前闭合 <script type="application/json"> 注入块（Jackson 默认不转义 /）：
-            // 题目内容含字面 </script> 会截断 script 块致整卷 JSON.parse 失败→渲空卷，转义所有 </ 为 <\/。
-            json = json.replace("</", "<\\/");
-            String tpl = Files.readString(work.resolve(THEME_HTML), StandardCharsets.UTF_8);
-            // 单注入点替换（json 里的 $ 不能被当作正则替换组）
-            String html = tpl.replace(DATA_TOKEN, json);
-            Path htmlOut = work.resolve("paper-" + paper + ".html");
-            Files.writeString(htmlOut, html, StandardCharsets.UTF_8);
-            Path pdfOut = work.resolve("paper-" + paper + ".pdf");
-
-            String chrome = resolveChrome();
-            List<String> cmd = new ArrayList<>();
-            cmd.add(chrome);
-            cmd.add("--headless=new");
-            cmd.add("--disable-gpu");
-            cmd.add("--no-sandbox");
-            cmd.add("--no-pdf-header-footer");
-            cmd.add("--virtual-time-budget=8000");
-            cmd.add("--run-all-compositor-stages-before-draw");
-            cmd.add("--print-to-pdf=" + pdfOut.toAbsolutePath());
-            cmd.add(htmlOut.toAbsolutePath().toUri().toString());
-
-            // 🔴 stdout 重定向到文件，而非进程内 readAllBytes() 阻塞读：
-            //    原实现 in.readAllBytes() 排在 waitFor(60s) 之前，Chrome 迟迟不退出时该读永不返回，
-            //    60s 守卫永远到不了 → 死代码（实测单题可跑满 200s+ 钉死 XNIO worker，并发→线程池耗尽）。
-            //    文件重定向让读不再阻塞主线程，waitFor(60s) 真正生效。
-            Path logFile = work.resolve("chrome-" + paper + ".log");
-            Process p = new ProcessBuilder(cmd)
-                .redirectErrorStream(true)
-                .redirectOutput(logFile.toFile())
-                .start();
-            boolean done = p.waitFor(CHROME_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
-            if (!done) {
-                p.destroyForcibly();
-                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS); // 等待回收，避免残留 Chrome 进程
-                throw new ServiceException("PDF 渲染超时（超 " + (CHROME_TIMEOUT_MS / 1000) + "s）", 500);
-            }
-            if (!Files.exists(pdfOut) || Files.size(pdfOut) == 0) {
-                String logtxt = Files.exists(logFile) ? Files.readString(logFile, StandardCharsets.UTF_8) : "";
-                log.error("[special-export] chrome 无产物 exit={} log={}", p.exitValue(), logtxt);
-                throw new ServiceException("PDF 渲染失败（无产物）", 500);
-            }
-            return Files.readAllBytes(pdfOut);
-        } catch (ServiceException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("[special-export] 渲染异常 paper={}", paper, e);
-            throw new ServiceException("PDF 渲染异常: " + e.getMessage(), 500);
-        }
-    }
-
-    private String resolveChrome() {
-        String env = System.getenv("CHROME_BIN");
-        if (notBlank(env) && Files.exists(Path.of(env))) return env;
-        for (String c : CHROME_CANDIDATES) {
-            if (c == null) continue;
-            try {
-                if (Files.exists(Path.of(c))) return c;
-            } catch (Exception ignore) {
-            }
-        }
-        throw new ServiceException("未找到 Chrome/Edge，设 CHROME_BIN 环境变量指定", 500);
-    }
-
-    /** 把 classpath:export-themes/sujunyu-v1/** 整目录拷进 work（保留相对路径）。 */
-    private void copyTheme(Path work) throws Exception {
-        PathMatchingResourcePatternResolver r = new PathMatchingResourcePatternResolver();
-        Resource[] res = r.getResources("classpath*:" + THEME_PREFIX + "**");
-        int copied = 0;
-        for (Resource rc : res) {
-            if (!rc.isReadable()) continue;
-            String uri = rc.getURI().toString();
-            int idx = uri.indexOf(THEME_PREFIX);
-            if (idx < 0) continue;
-            String rel = uri.substring(idx + THEME_PREFIX.length());
-            if (rel.isBlank() || rel.endsWith("/")) continue;
-            Path dst = work.resolve(rel);
-            Files.createDirectories(dst.getParent());
-            try (InputStream in = rc.getInputStream()) {
-                Files.copy(in, dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                copied++;
-            }
-        }
-        if (copied == 0 || !Files.exists(work.resolve(THEME_HTML))) {
-            throw new ServiceException("导出主题资源缺失（export-themes/sujunyu-v1）", 500);
-        }
-    }
-
-    private void deleteQuietly(Path dir) {
-        try (var walk = Files.walk(dir)) {
-            walk.sorted(Comparator.reverseOrder()).forEach(pp -> {
-                try {
-                    Files.deleteIfExists(pp);
-                } catch (Exception ignore) {
-                }
-            });
-        } catch (Exception ignore) {
-        }
     }
 
     // ───────────────── 小工具 ─────────────────

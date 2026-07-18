@@ -9,12 +9,12 @@
 <style>
 @page { size: A4; margin: 14mm 12mm; }
 * { box-sizing: border-box; }
-body { font-family: "SimSun","Songti SC",serif; font-size: 12pt; line-height: 1.75; color: #111; margin: 0; }
+body { font-family: "SimSun","Songti SC",serif; font-size: 14pt; line-height: 1.75; color: #111; margin: 0; }
 .doc { max-width: 186mm; margin: 0 auto; }
 h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 19pt; margin: 4mm 0 1mm; }
 .sub { text-align: center; color: #555; font-size: 10.5pt; margin-bottom: 5mm; }
 /* 蓝色区块头 */
-.sec { font-family: "SimHei","Microsoft YaHei",sans-serif; color: #1268b3; font-size: 13.5pt; margin: 7mm 0 2.5mm; page-break-after: avoid; }
+.sec { font-family: "SimHei","Microsoft YaHei",sans-serif; color: #1268b3; font-size: 15pt; margin: 7mm 0 2.5mm; page-break-after: avoid; }
 .sec .icon { margin-right: 2mm; }
 /* 金色难度档 */
 .tier { font-family: "SimHei","Microsoft YaHei",sans-serif; font-size: 12pt; color: #b8860b; border-bottom: 1px dashed #d8b860; padding-bottom: 1mm; margin: 5mm 0 2.5mm; page-break-after: avoid; }
@@ -24,6 +24,8 @@ h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; fon
 .q .opts { margin-top: 1mm; display: flex; gap: 8mm; flex-wrap: wrap; }
 .q .fig { margin: 2mm 0; text-align: center; }
 .q .fig img { max-width: 100%; max-height: 70mm; object-fit: contain; }
+.q .fig img + img { margin-left: 3mm; }
+.q .mdimg { max-width: 55mm; max-height: 30mm; object-fit: contain; vertical-align: middle; }
 /* 答题留空块（题目卷） */
 .gap { }
 /* 答案红框（答案卷） */
@@ -34,7 +36,7 @@ h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; fon
 /* KaTeX 微调：与宋体正文行内对齐 */
 .katex { font-size: 1.02em; }
 /* markdown 表格（题干/解析里的数据表，避免裸管道印上卷面） */
-.q table.mdtbl { border-collapse: collapse; margin: 2mm 0; font-size: 11pt; }
+.q table.mdtbl { border-collapse: collapse; margin: 2mm 0; font-size: 12.5pt; }
 .q table.mdtbl th, .q table.mdtbl td { border: 0.4pt solid #555; padding: 1mm 3mm; text-align: center; }
 .q table.mdtbl th { background: #eef3f8; font-family: "SimHei","Microsoft YaHei",sans-serif; font-weight: normal; }
 </style>
@@ -65,9 +67,18 @@ h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; fon
     return (s == null ? '' : String(s))
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
-  // 行内 markdown：先 HTML 转义，再套 **加粗**（数学 $...$ 分隔符原样保留给 KaTeX）
+  // 行内 markdown：先抽 ![](url) 图片占位（避免被转义成文字），HTML 转义后套 **加粗**、回填 <img>
+  //（数学 $...$ 分隔符原样保留给 KaTeX）。图片选项/题干内联图都靠这里上卷。
   function inlineMd(s) {
-    return escHtml(s).replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+    var imgs = [];
+    var raw = (s == null ? '' : String(s)).replace(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g, function (m, url) {
+      imgs.push(url);
+      return '\uE000IMG' + (imgs.length - 1) + '\uE000';
+    });
+    var html = escHtml(raw).replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+    return html.replace(/\uE000IMG(\d+)\uE000/g, function (m, i) {
+      return '<img class="mdimg" src="' + imgs[+i] + '">';
+    });
   }
   function splitRow(line) {
     var s = line.trim();
@@ -140,10 +151,12 @@ h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif; fon
       q.options.forEach(function (o) { var sp = document.createElement('span'); sp.innerHTML = md2html(o); opts.appendChild(sp); });
       wrap.appendChild(opts);
     }
-    // 配图
-    if (q.figure) {
+    // 配图（figures 数组为主，兼容旧单值 figure）
+    var figList = (q.figures && q.figures.length) ? q.figures : (q.figure ? [q.figure] : []);
+    if (figList.length) {
       var fig = document.createElement('div'); fig.className = 'fig';
-      var img = document.createElement('img'); img.src = q.figure; fig.appendChild(img); wrap.appendChild(fig);
+      figList.forEach(function (u) { var img = document.createElement('img'); img.src = u; fig.appendChild(img); });
+      wrap.appendChild(fig);
     }
     if (isAnswer) {
       // 答案卷：红框
