@@ -102,8 +102,12 @@ h1 { text-align: center; font-family: "SimHei","Microsoft YaHei",sans-serif;
 
   var wrap = el('div', 'qwrap');
   var no = 0;
+  // 🔴 卷面规范(2026-07-19)：组标只印「一、二」序号标识，不写练习内容名（学生自明）
+  var ORD = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+  var grpNo = 0;
   (data.groups || []).forEach(function (g) {
-    if (g.label) wrap.appendChild(el('div', 'grp', g.label));
+    if (g.label) wrap.appendChild(el('div', 'grp', (ORD[grpNo] || (grpNo + 1)) + '、'));
+    if (g.label) grpNo++;
     var grid = el('div', 'grid');
     var cols = layout.cols || g.cols || 3;
     grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
