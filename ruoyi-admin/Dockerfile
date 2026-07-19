@@ -9,6 +9,13 @@ RUN mkdir -p /ruoyi/server/logs \
     /ruoyi/server/temp \
     /ruoyi/skywalking/agent
 
+# chromium：ChromePdfRenderer/BookExportService 的 PDF 渲染引擎（探测 /usr/bin/chromium）。
+# 中文字体不入镜像——prod 挂载 /opt/book-ai/fonts → /usr/share/fonts/chinese（simhei.ttf，
+# openhtmltopdf 与 chromium 共用；.ttc 不可用见 ScheduleRenderUtil）。
+RUN dnf install -y epel-release && \
+    dnf install -y chromium && \
+    dnf clean all && rm -rf /var/cache/dnf
+
 WORKDIR /ruoyi/server
 
 ENV SERVER_PORT=8080 SNAIL_PORT=28080 LANG=C.UTF-8 LC_ALL=C.UTF-8 JAVA_OPTS=""
