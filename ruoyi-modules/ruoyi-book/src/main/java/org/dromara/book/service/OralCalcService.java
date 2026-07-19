@@ -67,6 +67,7 @@ public class OralCalcService {
         new CalcType("paren",      "带小括号的混合运算",      2, 2, 3),
         // ── 三年级 ──
         new CalcType("add3d",      "三位数加减法",           3, 1, 3),
+        new CalcType("addsub3d",   "三位数加减混合",         3, 1, 2),
         new CalcType("mul1doral",  "整十整百数乘一位数口算",  3, 1, 4),
         new CalcType("mul1d",      "多位数乘一位数",         3, 1, 3),
         new CalcType("div1doral",  "整十整百数除以一位数口算", 3, 2, 4),
@@ -384,6 +385,19 @@ public class OralCalcService {
                 }
                 int a = ri(rnd, 250, 999), b = ri(rnd, 110, a - 50);
                 yield qa(a + "－" + b + "＝", String.valueOf(a - b));
+            }
+            case "addsub3d" -> {
+                int form = rnd.nextInt(3);
+                if (form == 0) {
+                    int a = ri(rnd, 120, 700), b = ri(rnd, 110, 999 - a), c = ri(rnd, 110, a + b - 60);
+                    yield qa(a + "＋" + b + "－" + c + "＝", String.valueOf(a + b - c));
+                }
+                if (form == 1) {
+                    int a = ri(rnd, 300, 999), b = ri(rnd, 110, a - 100), c = ri(rnd, 110, 999 - (a - b));
+                    yield qa(a + "－" + b + "＋" + c + "＝", String.valueOf(a - b + c));
+                }
+                int a = ri(rnd, 400, 999), b = ri(rnd, 110, a - 220), c = ri(rnd, 100, a - b - 60);
+                yield qa(a + "－" + b + "－" + c + "＝", String.valueOf(a - b - c));
             }
             case "mul1doral" -> {
                 int a = ri(rnd, 2, 9) * (rnd.nextBoolean() ? 10 : 100), b = ri(rnd, 2, 9);
