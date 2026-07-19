@@ -161,6 +161,10 @@ public class OralCalcService {
             Map<String, Object> go = new LinkedHashMap<>();
             go.put("label", withGroupLabel ? str(g.get("label"), type.name()) : "");
             go.put("cols", cols);
+            // 呈现形态：oral=口算一行式(缺省) / vertical=竖式留白 / tuoshi=脱式留白(卷面去＝)
+            String mode = str(g.get("mode"), "oral");
+            if (!"oral".equals(mode) && !"vertical".equals(mode) && !"tuoshi".equals(mode)) mode = "oral";
+            go.put("mode", mode);
             List<Map<String, String>> its = new ArrayList<>();
             for (String[] qa : items) {
                 Map<String, String> it = new LinkedHashMap<>();
