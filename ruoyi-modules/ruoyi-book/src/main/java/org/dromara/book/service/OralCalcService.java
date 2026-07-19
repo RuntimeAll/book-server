@@ -112,6 +112,7 @@ public class OralCalcService {
             m.put("name", t.name());
             m.put("grade", t.grade());
             m.put("term", t.term());
+            m.put("cols", t.cols());   // 每行题数：前端预告「凑行」后的实际题量用
             out.add(m);
         }
         return out;
@@ -128,6 +129,9 @@ public class OralCalcService {
         }
         String title = str(body.get("title"), "口算训练");
         boolean withGroupLabel = body.get("withGroupLabel") == null || truthy(body.get("withGroupLabel"));
+        // 凑行补足：题数向上凑整到栏数倍数（每行凑满）。缺省开（MCP/agent 路径沿用 2026-07-18 拍板），
+        // 自选出题页默认显式传 false=按填的题数原样生成（2026-07-19 用户拍板：补足做成可选不做默认）。
+        boolean fillRows = body.get("fillRows") == null || truthy(body.get("fillRows"));
         long seed = body.get("seed") != null ? Long.parseLong(String.valueOf(body.get("seed")))
             : System.nanoTime();
         Random rnd = new Random(seed);
@@ -151,8 +155,8 @@ public class OralCalcService {
             int count = g.get("count") == null ? 12 : Integer.parseInt(String.valueOf(g.get("count")));
             if (count < 1) continue;
             int cols = globalCols != null ? globalCols : type.cols();
-            // 🔴 每组题数自动向上凑整到栏数的整数倍：网格每行凑满，不留残行
-            count = ((count + cols - 1) / cols) * cols;
+            // 凑行补足（可选）：每组题数向上凑整到栏数的整数倍，网格每行凑满不留残行
+            if (fillRows) count = ((count + cols - 1) / cols) * cols;
             total += count;
             if (total > MAX_TOTAL) {
                 throw new ServiceException("单卷总题数超上限 " + MAX_TOTAL, 400);
