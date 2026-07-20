@@ -142,9 +142,13 @@ public class AuthController {
      */
     @PostMapping("/botLogin")
     public R<Map<String, Object>> botLogin(@RequestHeader(value = "X-Bot-Secret", required = false) String secret,
-                                           @RequestBody Map<String, String> body) {
+                                           @RequestBody(required = false) Map<String, String> body) {
         // 1. 服务密钥鉴权：未配置 BOT_SECRET → 接口禁用（防裸奔）；比对失败 → 均返回 403 信封（HTTP 200 + code 403）
-        if (StringUtils.isBlank(botSecret) || !StringUtils.equals(botSecret, secret)) {
+        //    🔴 恒时比对（MessageDigest.isEqual）防计时侧信道；body required=false 保证密钥校验永远先于参数绑定失败
+        if (StringUtils.isBlank(botSecret) || secret == null
+            || !java.security.MessageDigest.isEqual(
+                botSecret.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                secret.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
             return R.fail(403, "botLogin forbidden");
         }
         // 2. openid 必填（缺失 → 400 级业务失败，对齐 PRD-007 §10）

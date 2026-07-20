@@ -1599,8 +1599,10 @@ ALTER TABLE biz_shelf_book ADD COLUMN is_public tinyint NOT NULL DEFAULT 0 COMME
 -- 配套非 DDL 项（部署勿漏）：BE env 需注入 BOT_SECRET（compose environment 显式透传，见卡内部署须知.md）。
 -- ============================================================
 
+-- 🔴 UNIQUE（verifier D1 加固 2026-07-20）：DB 层杜绝一 open_id 绑多账号（双绑会让 selectVoOne 抛异常且语义混乱）。
+-- dev 已按唯一索引 apply（先普通索引后 DROP+ADD UNIQUE 转换）；prod 直接按下面唯一版执行。
 ALTER TABLE sys_user ADD COLUMN openid VARCHAR(64) NULL COMMENT '飞书 open_id（PRD-007 机器人免密身份映射）',
-  ADD INDEX idx_sys_user_openid (openid);
+  ADD UNIQUE INDEX idx_sys_user_openid (openid);
 
 -- 数据变更（绑定=授权，管理员操作；prod 按首批名单执行）：
 -- UPDATE sys_user SET openid='ou_xxx' WHERE user_name='某老师账号';
