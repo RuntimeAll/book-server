@@ -43,6 +43,7 @@ import org.dromara.web.domain.vo.TenantListVo;
 import org.dromara.web.service.IAuthStrategy;
 import org.dromara.web.service.SysLoginService;
 import org.dromara.web.service.SysRegisterService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -75,6 +76,20 @@ public class AuthController {
     private final ISysSocialService socialUserService;
     private final ISysClientService clientService;
     private final ScheduledExecutorService scheduledExecutorService;
+
+    /**
+     * 飞书机器人服务密钥（PRD-007）——仅由 env BOT_SECRET 经 yml 占位符注入，禁止写死。
+     * 🔴 为空视为 /auth/botLogin 接口禁用（一律 403），防止未配置裸奔。
+     */
+    @Value("${security.bot-secret:}")
+    private String botSecret;
+
+    /**
+     * 飞书机器人免密登录缺省客户端 id（PRD-007）——body 未传 clientId 时使用；
+     * 默认取 RuoYi 内置激活客户端（sys_client 种子行 clientId=pc）。
+     */
+    @Value("${security.bot-default-client-id:e5cd7e4891bf95d1d19206ce24a7b32e}")
+    private String botDefaultClientId;
 
 
     /**
@@ -113,6 +128,47 @@ public class AuthController {
             SseMessageUtils.publishMessage(dto);
         }, 5, TimeUnit.SECONDS);
         return R.ok(loginVo);
+    }
+
+    /**
+     * 飞书机器人免密登录（PRD-007 方案A）
+     * <p>凭服务密钥（请求头 X-Bot-Secret）+ 飞书 openid，换取该 teacher 的 access_token，供 bot 逐消息切身份。
+     * 仅机器人后端持有密钥；未配置 BOT_SECRET 时接口一律 403（防裸奔）。不改动 /auth/login 既有语义。</p>
+     * <p>类级 {@code @SaIgnore} 已保证本端点未登录可达（与 /auth/login 同一放行方式），无需额外白名单。</p>
+     *
+     * @param secret 服务密钥请求头 X-Bot-Secret（与 env BOT_SECRET 比对，失败返回 code=403 信封）
+     * @param body   { "openid": "ou_xxx", "clientId": "可选" }
+     * @return { "access_token": "...", "user_id": &lt;teacherId&gt; }
+     */
+    @PostMapping("/botLogin")
+    public R<Map<String, Object>> botLogin(@RequestHeader(value = "X-Bot-Secret", required = false) String secret,
+                                           @RequestBody Map<String, String> body) {
+        // 1. 服务密钥鉴权：未配置 BOT_SECRET → 接口禁用（防裸奔）；比对失败 → 均返回 403 信封（HTTP 200 + code 403）
+        if (StringUtils.isBlank(botSecret) || !StringUtils.equals(botSecret, secret)) {
+            return R.fail(403, "botLogin forbidden");
+        }
+        // 2. openid 必填（缺失 → 400 级业务失败，对齐 PRD-007 §10）
+        String openid = body == null ? null : body.get("openid");
+        if (StringUtils.isBlank(openid)) {
+            return R.fail(400, "openid 不能为空");
+        }
+        // 3. 解析并校验客户端（缺省用默认激活 client，对齐 /login 的 client 校验）
+        String clientId = StringUtils.isNotBlank(body.get("clientId")) ? body.get("clientId") : botDefaultClientId;
+        SysClientVo client = clientService.queryByClientId(clientId);
+        if (ObjectUtil.isNull(client)) {
+            log.info("【auth·botLogin】客户端id: {} 不存在.", clientId);
+            return R.fail("客户端不存在: " + clientId);
+        } else if (!SystemConstants.NORMAL.equals(client.getStatus())) {
+            return R.fail("客户端已停用: " + clientId);
+        }
+        // 4. 免密签发（租户固定 000000；未绑定/停用 → ServiceException 业务失败）
+        LoginVo loginVo = loginService.botLogin(openid, client);
+        Long userId = LoginHelper.getUserId();
+        log.info("【auth·botLogin】 openid={}, clientId={}, userId={}", openid, clientId, userId);
+        Map<String, Object> data = new HashMap<>();
+        data.put("access_token", loginVo.getAccessToken());
+        data.put("user_id", userId);
+        return R.ok(data);
     }
 
     /**

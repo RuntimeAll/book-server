@@ -2,11 +2,13 @@ package org.dromara.web.service;
 
 import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.stp.StpUtil;
+import cn.dev33.satoken.stp.parameter.SaLoginParameter;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.lang.Opt;
 import cn.hutool.core.util.ObjectUtil;
 import com.baomidou.lock.annotation.Lock4j;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import me.zhyd.oauth.model.AuthUser;
@@ -32,6 +34,7 @@ import org.dromara.system.domain.bo.SysSocialBo;
 import org.dromara.system.domain.vo.*;
 import org.dromara.system.mapper.SysUserMapper;
 import org.dromara.system.service.*;
+import org.dromara.web.domain.vo.LoginVo;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -169,6 +172,51 @@ public class SysLoginService {
         loginUser.setRoles(BeanUtil.copyToList(roles, RoleDTO.class));
         loginUser.setPosts(BeanUtil.copyToList(posts, PostDTO.class));
         return loginUser;
+    }
+
+    /**
+     * 飞书机器人免密登录（PRD-007 方案A）
+     * <p>凭 openid 查该 teacher 账号并签发其登录态 token。token 装配段对齐 PasswordAuthStrategy#login：
+     * loadUser（含停用校验）→ buildLoginUser → SaLoginParameter（client 的 timeout/deviceType/CLIENT_KEY extra）
+     * → LoginHelper.login → StpUtil.getTokenValue()。租户固定 000000，与密码登录一致用 TenantHelper.dynamic 包裹。</p>
+     * <p>未绑定 / 已停用一律抛 ServiceException（业务失败，HTTP 200 信封 + code 500），不改动 /auth/login 语义。</p>
+     *
+     * @param openid 飞书 open_id
+     * @param client 已在调用方校验为激活状态的客户端
+     * @return 登录凭证（access_token / expire_in / client_id）
+     */
+    public LoginVo botLogin(String openid, SysClientVo client) {
+        LoginUser loginUser = TenantHelper.dynamic(TenantConstants.DEFAULT_TENANT_ID, () -> {
+            SysUserVo user = userMapper.selectVoOne(
+                new LambdaQueryWrapper<SysUser>().eq(SysUser::getOpenid, openid));
+            if (ObjectUtil.isNull(user)) {
+                // openid 未绑定任何 teacher 账号 → 业务失败（msg 含「未绑定」）
+                log.info("botLogin openid：{} 未绑定 teacher.", openid);
+                throw new ServiceException("openid 未绑定 teacher 账号，请联系管理员");
+            }
+            if (SystemConstants.DISABLE.equals(user.getStatus())) {
+                // openid 绑定的账号已停用 → 拒绝签发
+                log.info("botLogin openid：{} 绑定用户 {} 已停用.", openid, user.getUserName());
+                throw new ServiceException("openid 绑定的账号已停用，无法登录");
+            }
+            return buildLoginUser(user);
+        });
+        loginUser.setClientKey(client.getClientKey());
+        loginUser.setDeviceType(client.getDeviceType());
+        SaLoginParameter model = new SaLoginParameter();
+        model.setDeviceType(client.getDeviceType());
+        // 自定义分配 token 授权时间，不设置默认走全局 yml 配置（与 PasswordAuthStrategy 一致）
+        model.setTimeout(client.getTimeout());
+        model.setActiveTimeout(client.getActiveTimeout());
+        model.setExtra(LoginHelper.CLIENT_KEY, client.getClientId());
+        // 生成 token
+        LoginHelper.login(loginUser, model);
+
+        LoginVo loginVo = new LoginVo();
+        loginVo.setAccessToken(StpUtil.getTokenValue());
+        loginVo.setExpireIn(StpUtil.getTokenTimeout());
+        loginVo.setClientId(client.getClientId());
+        return loginVo;
     }
 
     /**

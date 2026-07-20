@@ -71,6 +71,11 @@ public class SysUserVo implements Serializable {
     private String phonenumber;
 
     /**
+     * 飞书 open_id（PRD-007 机器人免密登录映射列）
+     */
+    private String openid;
+
+    /**
      * 用户性别（0男 1女 2未知）
      */
     private String sex;
