@@ -1604,6 +1604,11 @@ ALTER TABLE biz_shelf_book ADD COLUMN is_public tinyint NOT NULL DEFAULT 0 COMME
 ALTER TABLE `biz_shelf_item`
   ADD COLUMN `source_page` int NULL COMMENT '源书页码(PRD-006 反查回填;NULL=待定位)' AFTER `explain_json`;
 
+-- 2026-07-21 增量（PRD-006 增强·评审效率）：题级审核置信度——初始化=结构风险规则打分
+--   (被记过问题 40 / 含图选项或媒体表 65 / 含图或表 75 / 纯文本 95 基线 85)，已 apply :3307。
+ALTER TABLE `biz_shelf_item`
+  ADD COLUMN `confidence` tinyint NULL COMMENT '审核置信度0-100:>=90可速过/60-89常规/<60重点审(NULL=未评)' AFTER `source_page`;
+
 DROP TABLE IF EXISTS `biz_review_page`;
 CREATE TABLE `biz_review_page` (
   `id` bigint NOT NULL COMMENT '主键(雪花)',

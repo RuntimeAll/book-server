@@ -48,6 +48,9 @@ public class BizShelfItem implements Serializable {
     /** 源书页码（PRD-006 反查回填；NULL=待定位） */
     private Integer sourcePage;
 
+    /** 审核置信度 0-100（PRD-006 增强 2026-07-21）：>=90 可速过 / 60-89 常规 / <60 重点审；NULL=未评 */
+    private Integer confidence;
+
     /** 认证计数：导出上课一次 +1（PRD-003 D6 回写） */
     private Integer usedCount;
 
