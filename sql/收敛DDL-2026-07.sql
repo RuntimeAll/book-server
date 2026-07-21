@@ -1634,3 +1634,18 @@ CREATE TABLE `biz_review_issue` (
   KEY `idx_book` (`book_id`),
   KEY `idx_book_type_status` (`book_id`,`issue_type`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='PRD-006 录题问题登记表(跨书沉淀,转录改进原料)';
+
+-- ============================================================
+-- PRD-007 飞书机器人多身份接入（B 位 2026-07-20）
+-- sys_user 加 openid 映射列：飞书 open_id → teacher(user_id)，/auth/botLogin 免密签发用。
+-- dev :3307 已于 2026-07-20 直接 apply（四线共库一次生效）；🔴 prod RDS(ai_lesson_prep) 部署时需手工同步。
+-- 配套非 DDL 项（部署勿漏）：BE env 需注入 BOT_SECRET（compose environment 显式透传，见卡内部署须知.md）。
+-- ============================================================
+
+-- 🔴 UNIQUE（verifier D1 加固 2026-07-20）：DB 层杜绝一 open_id 绑多账号（双绑会让 selectVoOne 抛异常且语义混乱）。
+-- dev 已按唯一索引 apply（先普通索引后 DROP+ADD UNIQUE 转换）；prod 直接按下面唯一版执行。
+ALTER TABLE sys_user ADD COLUMN openid VARCHAR(64) NULL COMMENT '飞书 open_id（PRD-007 机器人免密身份映射）',
+  ADD UNIQUE INDEX idx_sys_user_openid (openid);
+
+-- 数据变更（绑定=授权，管理员操作；prod 按首批名单执行）：
+-- UPDATE sys_user SET openid='ou_xxx' WHERE user_name='某老师账号';

@@ -78,6 +78,11 @@ public class SysUser extends TenantEntity {
     private String school;
 
     /**
+     * 飞书 open_id（PRD-007 — 机器人免密登录映射列，sys_user.openid；open_id → teacher 账号速查）
+     */
+    private String openid;
+
+    /**
      * 密码
      */
     @TableField(

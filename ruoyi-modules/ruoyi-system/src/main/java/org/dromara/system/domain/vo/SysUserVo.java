@@ -71,6 +71,14 @@ public class SysUserVo implements Serializable {
     private String phonenumber;
 
     /**
+     * 飞书 open_id（PRD-007 机器人免密登录映射列）。
+     * 🔴 @JsonIgnore：不随 /system/user/** 等接口 JSON 外泄（防全员 open_id↔账号映射被拉走，
+     * 缩小密钥泄露时的定向签发攻击面）；仅服务端 botLogin 查询用。
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String openid;
+
+    /**
      * 用户性别（0男 1女 2未知）
      */
     private String sex;
