@@ -45,6 +45,9 @@ public class BizShelfItem implements Serializable {
     /** kind=explain 时的讲解内容（书自持，D2） */
     private String explainJson;
 
+    /** 源书页码（PRD-006 反查回填；NULL=待定位） */
+    private Integer sourcePage;
+
     /** 认证计数：导出上课一次 +1（PRD-003 D6 回写） */
     private Integer usedCount;
 
