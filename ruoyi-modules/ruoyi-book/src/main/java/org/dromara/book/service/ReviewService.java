@@ -10,11 +10,13 @@ import org.dromara.book.domain.entity.BizQuestionBlock;
 import org.dromara.book.domain.entity.BizReviewIssue;
 import org.dromara.book.domain.entity.BizReviewPage;
 import org.dromara.book.domain.entity.BizShelfItem;
+import org.dromara.book.domain.entity.BizShelfNode;
 import org.dromara.book.mapper.BizQuestionBlockMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizReviewIssueMapper;
 import org.dromara.book.mapper.BizReviewPageMapper;
 import org.dromara.book.mapper.BizShelfItemMapper;
+import org.dromara.book.mapper.BizShelfNodeMapper;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.core.utils.StringUtils;
 import org.dromara.common.json.utils.JsonUtils;
@@ -55,6 +57,7 @@ public class ReviewService {
     private final BizShelfItemMapper shelfItemMapper;
     private final BizQuestionMapper questionMapper;
     private final BizQuestionBlockMapper questionBlockMapper;
+    private final BizShelfNodeMapper shelfNodeMapper;
 
     /** 问题登记默认状态。 */
     private static final String ISSUE_STATUS_DEFAULT = "待处理";
@@ -199,6 +202,26 @@ public class ReviewService {
             .eq(BizShelfItem::getSourcePage, page)
             .orderByAsc(BizShelfItem::getSeq)
             .orderByAsc(BizShelfItem::getId));
+
+        // 🔴 两级排序：先节点(考点) seq、再节内 item seq——不同考点的 item seq 各自从 1 起，
+        // 全局按 item.seq 排会把多个考点的题交叉穿插（自查批量暴露的整簇错序根因）。
+        List<Long> nodeIds = items.stream()
+            .map(BizShelfItem::getNodeId)
+            .filter(n -> n != null)
+            .distinct()
+            .collect(Collectors.toList());
+        if (nodeIds.size() > 1) {
+            Map<Long, Integer> nodeSeq = new LinkedHashMap<>();
+            for (BizShelfNode n : shelfNodeMapper.selectList(new LambdaQueryWrapper<BizShelfNode>()
+                .select(BizShelfNode::getId, BizShelfNode::getSeq)
+                .in(BizShelfNode::getId, nodeIds))) {
+                nodeSeq.put(n.getId(), n.getSeq() == null ? 0 : n.getSeq());
+            }
+            items.sort(java.util.Comparator
+                .comparingInt((BizShelfItem it) -> nodeSeq.getOrDefault(it.getNodeId(), 0))
+                .thenComparingInt(it -> it.getSeq() == null ? 0 : it.getSeq())
+                .thenComparingLong(BizShelfItem::getId));
+        }
 
         // 批量取题干 + blockJson
         List<Long> qids = items.stream()
