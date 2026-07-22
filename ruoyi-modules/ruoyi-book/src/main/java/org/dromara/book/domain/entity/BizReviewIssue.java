@@ -46,6 +46,9 @@ public class BizReviewIssue implements Serializable {
     /** 待处理 / 已改 / 搁置 */
     private String status;
 
+    /** 来源：human=人工审核提出（金标准，准度最高）/ agent=agent 自查（线索级）。 */
+    private String source;
+
     /** 登记人 sys_user.id */
     private Long createBy;
 

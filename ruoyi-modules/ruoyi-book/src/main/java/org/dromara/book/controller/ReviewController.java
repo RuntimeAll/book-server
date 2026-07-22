@@ -73,13 +73,37 @@ public class ReviewController {
         return R.ok(reviewService.createIssue(bookId, questionId, sourcePage, issueType, description));
     }
 
-    /** 问题列表（bookId 必填，type/status 可选）。 */
+    /** 问题列表（bookId 必填，type/status/source 可选；source: human=人工 / agent=自查）。 */
     @SaCheckLogin
     @GetMapping("/issues")
     public R<List<Map<String, Object>>> issues(@RequestParam Long bookId,
                                                @RequestParam(required = false) String type,
-                                               @RequestParam(required = false) String status) {
-        return R.ok(reviewService.listIssues(bookId, type, status));
+                                               @RequestParam(required = false) String status,
+                                               @RequestParam(required = false) String source) {
+        return R.ok(reviewService.listIssues(bookId, type, status, source));
+    }
+
+    /** 页级置信度地图（速审跳页）：{totalPages, pages:[{page,items,minConf,tier,reviewed,issues}]}。 */
+    @SaCheckLogin
+    @GetMapping("/page-map")
+    public R<Map<String, Object>> pageMap(@RequestParam Long bookId) {
+        return R.ok(reviewService.pageMap(bookId));
+    }
+
+    /** 批量页级确认（高置信页一键通过）。body: {@code {bookId, pages:[..]}}。 */
+    @SaCheckLogin
+    @PutMapping("/confirm-pages")
+    public R<Map<String, Object>> confirmPages(@RequestBody Map<String, Object> body) {
+        Long bookId = idOf(get(body, "bookId"));
+        List<Integer> pages = new java.util.ArrayList<>();
+        Object raw = get(body, "pages");
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                Integer p = intOf(o);
+                if (p != null) pages.add(p);
+            }
+        }
+        return R.ok(reviewService.confirmPages(bookId, pages));
     }
 
     /** 更新问题状态。body: {@code {status}}。 */

@@ -1632,6 +1632,7 @@ CREATE TABLE `biz_review_issue` (
   `issue_type` varchar(32) DEFAULT NULL COMMENT '问题类型',
   `description` text COMMENT '问题描述',
   `status` varchar(16) NOT NULL DEFAULT '待处理' COMMENT '待处理/已改/搁置',
+  `source` varchar(8) NOT NULL DEFAULT 'human' COMMENT '来源: human=人工审核(金标准)/agent=agent自查(2026-07-23 增列)',
   `create_by` bigint DEFAULT NULL COMMENT '登记人 sys_user.id',
   `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
   `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1639,6 +1640,11 @@ CREATE TABLE `biz_review_issue` (
   KEY `idx_book` (`book_id`),
   KEY `idx_book_type_status` (`book_id`,`issue_type`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='PRD-006 录题问题登记表(跨书沉淀,转录改进原料)';
+
+-- 增量（2026-07-23，dev :3307 已 apply；prod 部署时若表已存在按此补列）：
+-- ALTER TABLE biz_review_issue ADD COLUMN source VARCHAR(8) NOT NULL DEFAULT 'human'
+--   COMMENT '来源: human=人工审核(金标准) / agent=agent自查';
+-- UPDATE biz_review_issue SET source='agent' WHERE id>=2080000000000000000;  -- agent 自查固定 id 段回填
 
 -- ============================================================
 -- PRD-007 飞书机器人多身份接入（B 位 2026-07-20）

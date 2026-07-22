@@ -325,6 +325,8 @@ public class ReviewService {
         row.setIssueType(issueType);
         row.setDescription(description);
         row.setStatus(ISSUE_STATUS_DEFAULT);
+        // FE 审核页提交的一律人工来源（金标准）；agent 自查走批量脚本固定 id 段 + source='agent'
+        row.setSource("human");
         row.setCreateBy(LoginHelper.getUserId());
         row.setCreateTime(now);
         row.setUpdateTime(now);
@@ -334,13 +336,14 @@ public class ReviewService {
         return r;
     }
 
-    /** 问题列表（bookId 必填，type/status 可选筛选），按 create_time 倒序。 */
-    public List<Map<String, Object>> listIssues(Long bookId, String type, String status) {
+    /** 问题列表（bookId 必填，type/status/source 可选筛选），按 create_time 倒序。 */
+    public List<Map<String, Object>> listIssues(Long bookId, String type, String status, String source) {
         requireBookId(bookId);
         List<BizReviewIssue> rows = reviewIssueMapper.selectList(new LambdaQueryWrapper<BizReviewIssue>()
             .eq(BizReviewIssue::getBookId, bookId)
             .eq(StringUtils.isNotBlank(type), BizReviewIssue::getIssueType, type)
             .eq(StringUtils.isNotBlank(status), BizReviewIssue::getStatus, status)
+            .eq(StringUtils.isNotBlank(source), BizReviewIssue::getSource, source)
             .orderByDesc(BizReviewIssue::getCreateTime)
             .orderByDesc(BizReviewIssue::getId));
         List<Map<String, Object>> out = new ArrayList<>(rows.size());
@@ -353,6 +356,7 @@ public class ReviewService {
             m.put("issueType", it.getIssueType());
             m.put("description", it.getDescription());
             m.put("status", it.getStatus());
+            m.put("source", it.getSource() == null ? "human" : it.getSource());
             m.put("createBy", it.getCreateBy() == null ? null : String.valueOf(it.getCreateBy()));
             m.put("createTime", it.getCreateTime());
             out.add(m);
@@ -378,6 +382,89 @@ public class ReviewService {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("id", String.valueOf(id));
         r.put("status", status);
+        return r;
+    }
+
+    // ───────────────── 页级置信度地图（速审跳页） ─────────────────
+
+    /**
+     * 全书页级地图：每页 {page, items, minConf, tier, reviewed, issues}。
+     * tier 由页内题项 confidence 聚合：hi=全部>=90（可闭眼速过）/ lo=任一<60（重点审）/ mid=其余 / null=无评分。
+     * FE 据此实现「跳过高置信页」：hi 且无问题且未审 → 批量通过不逐页看。
+     */
+    public Map<String, Object> pageMap(Long bookId) {
+        requireBookId(bookId);
+        List<BizShelfItem> items = shelfItemMapper.selectList(new LambdaQueryWrapper<BizShelfItem>()
+            .select(BizShelfItem::getSourcePage, BizShelfItem::getConfidence)
+            .eq(BizShelfItem::getBookId, bookId)
+            .isNotNull(BizShelfItem::getSourcePage));
+        Map<Integer, int[]> agg = new java.util.TreeMap<>(); // page -> [count, minConf(-1=无), allScored(1/0)]
+        for (BizShelfItem it : items) {
+            int[] a = agg.computeIfAbsent(it.getSourcePage(), k -> new int[]{0, -1, 1});
+            a[0]++;
+            if (it.getConfidence() == null) {
+                a[2] = 0;
+            } else if (a[1] < 0 || it.getConfidence() < a[1]) {
+                a[1] = it.getConfidence();
+            }
+        }
+        Map<Integer, Integer> issueCnt = new LinkedHashMap<>();
+        for (BizReviewIssue is : reviewIssueMapper.selectList(new LambdaQueryWrapper<BizReviewIssue>()
+            .select(BizReviewIssue::getSourcePage, BizReviewIssue::getStatus)
+            .eq(BizReviewIssue::getBookId, bookId)
+            .isNotNull(BizReviewIssue::getSourcePage)
+            .in(BizReviewIssue::getStatus, "待处理", "待确认"))) {
+            issueCnt.merge(is.getSourcePage(), 1, Integer::sum);
+        }
+        java.util.Set<Integer> reviewedPages = reviewPageMapper.selectList(new LambdaQueryWrapper<BizReviewPage>()
+                .select(BizReviewPage::getPageNo)
+                .eq(BizReviewPage::getBookId, bookId)
+                .eq(BizReviewPage::getReviewed, 1)).stream()
+            .map(BizReviewPage::getPageNo)
+            .collect(Collectors.toSet());
+
+        List<Map<String, Object>> pages = new ArrayList<>(agg.size());
+        for (Map.Entry<Integer, int[]> e : agg.entrySet()) {
+            int[] a = e.getValue();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("page", e.getKey());
+            m.put("items", a[0]);
+            Integer minConf = a[1] < 0 ? null : a[1];
+            m.put("minConf", minConf);
+            String tier = null;
+            if (a[2] == 1 && minConf != null) {
+                tier = minConf >= 90 ? "hi" : minConf >= 60 ? "mid" : "lo";
+            } else if (minConf != null) {
+                tier = minConf < 60 ? "lo" : "mid"; // 有未评分项不给 hi（保守）
+            }
+            m.put("tier", tier);
+            m.put("reviewed", reviewedPages.contains(e.getKey()));
+            m.put("issues", issueCnt.getOrDefault(e.getKey(), 0));
+            pages.add(m);
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        Integer total = pdfPageCount(bookId);
+        r.put("totalPages", total == null ? (agg.isEmpty() ? 0 : ((java.util.TreeMap<Integer, int[]>) agg).lastKey()) : total);
+        r.put("pages", pages);
+        return r;
+    }
+
+    /** 批量页级确认（速审：高置信页一键通过）。返回 {confirmed}。 */
+    public Map<String, Object> confirmPages(Long bookId, List<Integer> pages) {
+        requireBookId(bookId);
+        int n = 0;
+        if (pages != null) {
+            for (Integer p : pages) {
+                if (p != null && p >= 1) {
+                    confirmPage(bookId, p);
+                    n++;
+                }
+            }
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("confirmed", n);
         return r;
     }
 
