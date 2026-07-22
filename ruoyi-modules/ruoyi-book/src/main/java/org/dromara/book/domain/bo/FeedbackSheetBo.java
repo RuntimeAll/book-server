@@ -22,6 +22,12 @@ public class FeedbackSheetBo {
     /** 学生 id（雪花，Jackson 由 string 兼容绑定）。 */
     private Long targetId;
 
+    /** 反馈批次键（PRD-010 独立批次，不绑课程计划；如"多多五上暑假数学"）。可空=散单。 */
+    private String batchKey;
+
+    /** 批次内课次号（依次递增）。可空。 */
+    private Integer lessonSeq;
+
     /** 反馈单标题。 */
     private String title;
 
