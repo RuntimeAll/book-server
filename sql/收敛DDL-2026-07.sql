@@ -1654,3 +1654,18 @@ ALTER TABLE sys_user ADD COLUMN openid VARCHAR(64) NULL COMMENT '飞书 open_id�
 
 -- 数据变更（绑定=授权，管理员操作；prod 按首批名单执行）：
 -- UPDATE sys_user SET openid='ou_xxx' WHERE user_name='某老师账号';
+
+-- ============================================================
+-- PRD-010 反馈批次模型（B 位 2026-07-22）
+-- biz_feedback_sheet 加独立批次两列：批次不绑课程计划（用户拍板"两个独立，不要强行关联"）。
+-- 用户工作流=批次累积一次性全发：批次内课次递增，导出=批次全量拼一张长图（/teacher/feedback/batch/export-png）。
+-- dev :3307 已于 2026-07-22 直接 apply（四线共库一次生效）；🔴 prod RDS(ai_lesson_prep) 部署 BE 前需手工同步。
+-- ============================================================
+
+ALTER TABLE biz_feedback_sheet
+  ADD COLUMN batch_key varchar(64) NULL COMMENT '反馈批次键(PRD-010 独立批次,不绑课程计划;如"多多五上暑假数学")' AFTER target_id,
+  ADD COLUMN lesson_seq int NULL COMMENT '批次内课次号(依次递增)' AFTER batch_key,
+  ADD INDEX idx_fb_target_batch (target_id, batch_key, lesson_seq);
+
+-- 数据变更（prod 需手工同步）：王老师(15079648968)存量 8 单回填批次——
+-- 乐乐×4 → batch_key='乐乐七上暑假数学' lesson_seq=1..4；多多×3 → '多多五上暑假数学' 1..3；可可×1 → '可可五上暑假数学' 1。

@@ -37,6 +37,12 @@ public class BizFeedbackSheet extends BaseEntity {
     /** 学生 id（biz_student.id / biz_teach_target.id）。 */
     private Long targetId;
 
+    /** 反馈批次键（PRD-010 独立批次，不绑课程计划；如"多多五上暑假数学"）。NULL=散单。 */
+    private String batchKey;
+
+    /** 批次内课次号（依次递增）。NULL=散单。 */
+    private Integer lessonSeq;
+
     /** 反馈单标题（如：乐乐七上暑假数学第一节课上课内容）。 */
     private String title;
 

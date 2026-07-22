@@ -53,12 +53,13 @@ public class FeedbackSheetController {
         return R.ok();
     }
 
-    /** 列表（owner，可选 targetId / keyword）→ {rows,total}。 */
+    /** 列表（owner，可选 targetId / keyword / batchKey）→ {rows,total}。 */
     @SaCheckLogin
     @GetMapping("/sheet/page")
     public R<Map<String, Object>> page(@RequestParam(required = false) Long targetId,
-                                       @RequestParam(required = false) String keyword) {
-        return R.ok(feedbackService.page(targetId, keyword));
+                                       @RequestParam(required = false) String keyword,
+                                       @RequestParam(required = false) String batchKey) {
+        return R.ok(feedbackService.page(targetId, keyword, batchKey));
     }
 
     /** 详情（含 rows）。 */
@@ -81,5 +82,16 @@ public class FeedbackSheetController {
     @PostMapping("/sheet/{id}/export-png")
     public R<Map<String, Object>> exportPng(@PathVariable Long id) {
         return R.ok(feedbackService.exportPng(id));
+    }
+
+    /**
+     * 批次全量导出家长版长图（PRD-010）：该学生一个批次 1~N 节全部反馈单按课次拼一张 PNG。
+     * batchKey 缺省 = 该生最新批次（发送单位=批次全量，用户实发形态）。
+     */
+    @SaCheckLogin
+    @PostMapping("/batch/export-png")
+    public R<Map<String, Object>> exportBatchPng(@RequestParam Long targetId,
+                                                 @RequestParam(required = false) String batchKey) {
+        return R.ok(feedbackService.exportBatchPng(targetId, batchKey));
     }
 }

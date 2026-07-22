@@ -55,6 +55,9 @@ public class FeedbackSheetService {
             e = new BizFeedbackSheet();
         }
         e.setTargetId(bo.getTargetId());
+        // PRD-010 批次字段（可空=散单；update 走 NOT_NULL 策略，不传保持原值）
+        e.setBatchKey(bo.getBatchKey());
+        e.setLessonSeq(bo.getLessonSeq());
         e.setTitle(bo.getTitle());
         e.setLessonDate(parseDate(bo.getLessonDate()));
         e.setRowsJson(bo.getRows() == null ? "[]" : JsonUtils.toJsonString(bo.getRows()));
@@ -66,12 +69,13 @@ public class FeedbackSheetService {
         return e.getId();
     }
 
-    /** 列表（FE PageResult = {rows,total}）。owner 过滤 + 可选 targetId / keyword。 */
-    public Map<String, Object> page(Long targetId, String keyword) {
+    /** 列表（FE PageResult = {rows,total}）。owner 过滤 + 可选 targetId / keyword / batchKey（PRD-010）。 */
+    public Map<String, Object> page(Long targetId, String keyword, String batchKey) {
         Long uid = LoginHelper.getUserId();
         LambdaQueryWrapper<BizFeedbackSheet> w = new LambdaQueryWrapper<BizFeedbackSheet>()
             .eq(BizFeedbackSheet::getCreateBy, uid)
             .eq(targetId != null, BizFeedbackSheet::getTargetId, targetId)
+            .eq(batchKey != null && !batchKey.isBlank(), BizFeedbackSheet::getBatchKey, batchKey)
             .like(keyword != null && !keyword.isBlank(), BizFeedbackSheet::getTitle, keyword)
             .orderByDesc(BizFeedbackSheet::getId);
         List<Map<String, Object>> out = new ArrayList<>();
@@ -108,18 +112,74 @@ public class FeedbackSheetService {
         // 🔴 BUG-014 收边（PRD-004 修复轮）：旧式 130+rows*40 高估致底部 ~36% 白条。
         //   改按**实际内容**估高：标题条+表头+内边距 ≈ 88px；每行按最长列（学习内容≈13字/行、
         //   不足点≈11字/行）估换行数 * 24px + 6px 行距，长文本自动多算一行不裁切、短行不留白。
+        int height = 88 + estimateContentH(rows);
+        String file = renderUtil.renderToPng(html, "feedback_" + id, 640, height);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("file", file);
+        m.put("url", "/teacher/schedule/artifact?path=" + file);
+        return m;
+    }
+
+    /**
+     * 批次全量导出（PRD-010）：该学生一个批次 1~N 节全部反馈单，按课次序拼一张长 PNG
+     * （用户实发形态：每节一条黄标题横条 + 五列表，垂直堆叠，一次性发家长）。
+     *
+     * @param targetId 学生 id（必填）
+     * @param batchKey 批次键；空 = 该生**最新批次**（max create_time 的非空 batch_key，D4 无状态列约定）
+     */
+    public Map<String, Object> exportBatchPng(Long targetId, String batchKey) {
+        Long uid = LoginHelper.getUserId();
+        if (targetId == null) {
+            throw new ServiceException("请选择学生（targetId 必填）", 400);
+        }
+        if (batchKey == null || batchKey.isBlank()) {
+            BizFeedbackSheet latest = sheetMapper.selectList(new LambdaQueryWrapper<BizFeedbackSheet>()
+                .eq(BizFeedbackSheet::getCreateBy, uid)
+                .eq(BizFeedbackSheet::getTargetId, targetId)
+                .isNotNull(BizFeedbackSheet::getBatchKey)
+                .orderByDesc(BizFeedbackSheet::getCreateTime)
+                .orderByDesc(BizFeedbackSheet::getId)
+                .last("LIMIT 1")).stream().findFirst().orElse(null);
+            if (latest == null) {
+                throw new ServiceException("该学生还没有任何批次反馈单", 400);
+            }
+            batchKey = latest.getBatchKey();
+        }
+        List<BizFeedbackSheet> sheets = sheetMapper.selectList(new LambdaQueryWrapper<BizFeedbackSheet>()
+            .eq(BizFeedbackSheet::getCreateBy, uid)
+            .eq(BizFeedbackSheet::getTargetId, targetId)
+            .eq(BizFeedbackSheet::getBatchKey, batchKey)
+            .orderByAsc(BizFeedbackSheet::getLessonSeq)
+            .orderByAsc(BizFeedbackSheet::getId));
+        if (sheets.isEmpty()) {
+            throw new ServiceException("批次「" + batchKey + "」下没有反馈单", 400);
+        }
+        StringBuilder body = new StringBuilder();
+        int height = 14; // 顶部留白（.wrap padding-top）
+        for (BizFeedbackSheet e : sheets) {
+            List<Map<String, Object>> rows = parseRows(e.getRowsJson());
+            body.append(sectionHtml(e.getTitle(), rows));
+            height += 88 + estimateContentH(rows) + 16; // 每段自身高 + 段间距
+        }
+        String html = wrapDoc(body.toString());
+        String file = renderUtil.renderToPng(html, "feedback_batch_" + targetId, 640, height);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("file", file);
+        m.put("url", "/teacher/schedule/artifact?path=" + file);
+        m.put("batchKey", batchKey);
+        m.put("sheetCount", sheets.size());
+        return m;
+    }
+
+    /** 内容高度估算（BUG-014 收边算法，单张/批次共用）。 */
+    private int estimateContentH(List<Map<String, Object>> rows) {
         int contentH = 0;
         for (Map<String, Object> row : (rows.isEmpty() ? List.of(Map.<String, Object>of()) : rows)) {
             int cLines = wrapLines(str(row.get("content")), 13);
             int wLines = wrapLines(str(row.get("weakness")), 11);
             contentH += Math.max(cLines, wLines) * 24 + 6;
         }
-        int height = 88 + contentH;
-        String file = renderUtil.renderToPng(html, "feedback_" + id, 640, height);
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("file", file);
-        m.put("url", "/teacher/schedule/artifact?path=" + file);
-        return m;
+        return contentH;
     }
 
     // ─────────────────────────── 家长版 PNG HTML（P8） ───────────────────────────
@@ -131,11 +191,17 @@ public class FeedbackSheetService {
      */
     @SuppressWarnings("unchecked")
     private String buildHtml(String title, List<Map<String, Object>> rows) {
+        return wrapDoc(sectionHtml(title, rows));
+    }
+
+    /** 文档外壳（样式 + wrap 容器）。单张/批次导出共用，样式与 PRD-004 定版零漂移。 */
+    private String wrapDoc(String bodySections) {
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><style>");
         sb.append("*{box-sizing:border-box;margin:0;padding:0}");
         sb.append("body{font-family:'cjk','cjkhei';color:#333;background:#fff;width:640px;font-size:12.5px}");
         sb.append(".wrap{padding:14px 16px 16px}");
+        sb.append(".sec{margin-bottom:16px}");
         sb.append(".bar{background:#ffd94d;color:#3a3000;text-align:center;font-family:'cjkhei';")
             .append("font-weight:bold;font-size:15px;padding:9px 8px;border-radius:4px 4px 0 0}");
         sb.append("table{border-collapse:collapse;width:100%;table-layout:fixed}");
@@ -149,6 +215,15 @@ public class FeedbackSheetService {
         sb.append("td.c{text-align:center}");
         sb.append("tr.alt td{background:#fafbfc}");
         sb.append("</style></head><body><div class=\"wrap\">");
+        sb.append(bodySections);
+        sb.append("</div></body></html>");
+        return sb.toString();
+    }
+
+    /** 单节课的段落（黄标题条 + 五列表）。批次导出=N 段垂直堆叠。 */
+    private String sectionHtml(String title, List<Map<String, Object>> rows) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("<div class=\"sec\">");
         sb.append("<div class=\"bar\">").append(esc(title == null ? "上课反馈" : title)).append("</div>");
         sb.append("<table>");
         sb.append("<tr>")
@@ -174,7 +249,7 @@ public class FeedbackSheetService {
         if (rows.isEmpty()) {
             sb.append("<tr><td class=\"c\" colspan=\"5\" style=\"color:#999;padding:14px\">（暂无内容）</td></tr>");
         }
-        sb.append("</table></div></body></html>");
+        sb.append("</table></div>");
         return sb.toString();
     }
 
@@ -194,6 +269,8 @@ public class FeedbackSheetService {
         m.put("id", String.valueOf(e.getId()));
         m.put("targetId", e.getTargetId() == null ? null : String.valueOf(e.getTargetId()));
         m.put("targetName", targetName(e.getTargetId()));
+        m.put("batchKey", e.getBatchKey());
+        m.put("lessonSeq", e.getLessonSeq());
         m.put("title", e.getTitle());
         m.put("lessonDate", e.getLessonDate() == null ? null : e.getLessonDate().toString());
         m.put("createTime", e.getCreateTime());
