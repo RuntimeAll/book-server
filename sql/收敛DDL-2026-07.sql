@@ -1593,6 +1593,54 @@ ALTER TABLE biz_shelf_book ADD COLUMN is_public tinyint NOT NULL DEFAULT 0 COMME
 -- 数据变更（prod 需手工同步）：小学数学 16 本书 UPDATE biz_shelf_book SET is_public=1 WHERE id IN (…16 个 bookId 见台账…);
 
 -- ============================================================
+-- PRD-006 录题比对审核（按页人工审核确认 + 问题登记）批1  A 位 2026-07-20
+-- 拍板：录入验收转「人工按页比对源书原版、逐页确认」。给每题补 source_page 元数据
+--   （脚本从源 PDF 文本反查题干定位页码，单调填充；explain 块归到其后第一道题的页）。
+--   页级审核状态 biz_review_page（书×源页，页级确认）；问题登记 biz_review_issue（跨书沉淀）。
+-- 已于 2026-07-20 直接 apply 到 :3307 ai_lesson_prep（四线共库，一次生效全线）。
+-- 数据：一上/一下/四上/四下 4 本 biz_shelf_item.source_page 已回填（覆盖 100%，脚本反查+单调填充）。
+-- ============================================================
+
+ALTER TABLE `biz_shelf_item`
+  ADD COLUMN `source_page` int NULL COMMENT '源书页码(PRD-006 反查回填;NULL=待定位)' AFTER `explain_json`;
+
+-- 2026-07-21 增量（PRD-006 增强·评审效率）：题级审核置信度——初始化=结构风险规则打分
+--   (被记过问题 40 / 含图选项或媒体表 65 / 含图或表 75 / 纯文本 95 基线 85)，已 apply :3307。
+ALTER TABLE `biz_shelf_item`
+  ADD COLUMN `confidence` tinyint NULL COMMENT '审核置信度0-100:>=90可速过/60-89常规/<60重点审(NULL=未评)' AFTER `source_page`;
+
+DROP TABLE IF EXISTS `biz_review_page`;
+CREATE TABLE `biz_review_page` (
+  `id` bigint NOT NULL COMMENT '主键(雪花)',
+  `book_id` bigint NOT NULL COMMENT '书 biz_shelf_book.id',
+  `page_no` int NOT NULL COMMENT '源书页码',
+  `reviewed` tinyint NOT NULL DEFAULT 0 COMMENT '0未审 1已确认',
+  `reviewed_by` bigint DEFAULT NULL COMMENT '确认人 sys_user.id',
+  `reviewed_time` datetime DEFAULT NULL COMMENT '确认时间',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_book_page` (`book_id`,`page_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='PRD-006 页级审核状态(书×源页,页级确认)';
+
+DROP TABLE IF EXISTS `biz_review_issue`;
+CREATE TABLE `biz_review_issue` (
+  `id` bigint NOT NULL COMMENT '主键(雪花)',
+  `book_id` bigint NOT NULL COMMENT '书 biz_shelf_book.id',
+  `question_id` bigint DEFAULT NULL COMMENT '题 biz_question.id(可空:整页问题)',
+  `source_page` int DEFAULT NULL COMMENT '源书页码',
+  `issue_type` varchar(32) DEFAULT NULL COMMENT '问题类型',
+  `description` text COMMENT '问题描述',
+  `status` varchar(16) NOT NULL DEFAULT '待处理' COMMENT '待处理/已改/搁置',
+  `create_by` bigint DEFAULT NULL COMMENT '登记人 sys_user.id',
+  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
+  `update_time` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_book` (`book_id`),
+  KEY `idx_book_type_status` (`book_id`,`issue_type`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='PRD-006 录题问题登记表(跨书沉淀,转录改进原料)';
+
+-- ============================================================
 -- PRD-007 飞书机器人多身份接入（B 位 2026-07-20）
 -- sys_user 加 openid 映射列：飞书 open_id → teacher(user_id)，/auth/botLogin 免密签发用。
 -- dev :3307 已于 2026-07-20 直接 apply（四线共库一次生效）；🔴 prod RDS(ai_lesson_prep) 部署时需手工同步。

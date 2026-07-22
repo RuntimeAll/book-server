@@ -550,12 +550,12 @@ public class ShelfService {
         }
     }
 
-    /** 归属校验：书必须存在且属当前登录老师，否则 404（水平越权兜底）。 */
+    /** 归属校验：书必须存在且属当前登录老师（超管维护旁路，同 requireReadableBook 语义），否则 404/403（水平越权兜底）。 */
     private BizShelfBook requireOwnedBook(Long bookId) {
         BizShelfBook b = bookMapper.selectById(bookId);
         if (b == null) throw new ServiceException("书不存在", 404);
         Long uid = LoginHelper.getUserId();
-        if (uid != null && b.getOwnerId() != null && !uid.equals(b.getOwnerId())) {
+        if (uid != null && b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
             throw new ServiceException("无权访问该书", 403);
         }
         return b;
