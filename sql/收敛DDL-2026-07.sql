@@ -1675,3 +1675,15 @@ ALTER TABLE biz_feedback_sheet
 
 -- 数据变更（prod 需手工同步）：王老师(15079648968)存量 8 单回填批次——
 -- 乐乐×4 → batch_key='乐乐七上暑假数学' lesson_seq=1..4；多多×3 → '多多五上暑假数学' 1..3；可可×1 → '可可五上暑假数学' 1。
+
+-- ============================================================
+-- PRD-011 快捷中枢·录题作业归档（B 位 2026-07-27）
+-- 「进行中」永不退场问题：加归档时间列——NULL=仍在进行中列表，非空=已处理进历史（中枢「历史」tab，倒序≤50）。
+-- 归档来源：手动点「处理完成」(POST /teacher/ingest/job/{id}/handled) 或 审核页全部题处理完自动归档；
+-- 另有硬删 DELETE /teacher/ingest/job/{id}（删作业+题项，已入库 biz_question 不动）。
+-- dev :3307 已于 2026-07-27 直接 apply（四线共库一次生效）；🔴 prod RDS(ai_lesson_prep) 部署 BE 前需手工同步。
+-- ============================================================
+
+ALTER TABLE biz_ingest_job
+  ADD COLUMN handled_time datetime NULL COMMENT '处理完成(归档)时间(PRD-011)；NULL=未归档仍在进行中列表' AFTER committed_count,
+  ADD INDEX idx_ingest_job_handled (teacher_id, handled_time);

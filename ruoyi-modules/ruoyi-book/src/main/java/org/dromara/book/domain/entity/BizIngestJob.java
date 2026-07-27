@@ -104,6 +104,14 @@ public class BizIngestJob implements Serializable {
     @TableField("dropped_json")
     private String droppedJson;
 
+    /**
+     * 处理完成（归档）时间（PRD-011）。NULL = 未归档，仍在「进行中」列表；
+     * 非 NULL = 已归档，只在「已处理」列表出现。全部 item 落定（pending==0）时自动写入，
+     * 也可由 POST /job/{jobId}/handled 手动标记。
+     */
+    @TableField("handled_time")
+    private Date handledTime;
+
     @TableField("create_dept")
     private Long createDept;
 
