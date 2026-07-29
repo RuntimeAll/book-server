@@ -408,10 +408,44 @@ public class IngestJobWorker {
                 }
             }
             log.info("[ingest-worker] direct 入库完成 jobId={} committed={}", jobId, committed);
+            // 🔴 PRD-011 verifier #3：direct 作业不进审核页，入库完即全终态——就地自动归档，
+            //   否则这类作业永远堆在「进行中」只能手动销账（与 Controller.autoArchiveIfAllSettled 同判定：
+            //   item 总数>0 且 pending==0 且未归档）。归档失败不影响入库结果，仅记日志。
+            try {
+                autoArchiveDirect(jobId);
+            } catch (Exception ae) {
+                log.warn("[ingest-worker] direct 自动归档失败 jobId={} err={}", jobId, ae.getMessage());
+            }
         } catch (Exception e) {
             // direct 入库失败不回退作业状态（DONE 保留，已拆 item 在），仅记日志
             log.error("[ingest-worker] direct 入库异常 jobId={} err={}", jobId, e.getMessage(), e);
         }
+    }
+
+    /**
+     * direct 作业自动归档（PRD-011）：item 总数>0 且无 pending 且未归档 → 写 handled_time。
+     * 与 IngestJobController.autoArchiveIfAllSettled 同判定；direct 路径独立实现避免层间反向依赖。
+     */
+    private void autoArchiveDirect(Long jobId) {
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            BizIngestJob fresh = jobMapper.selectById(jobId);
+            if (fresh == null || fresh.getHandledTime() != null) {
+                return null;
+            }
+            Long total = itemMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<BizIngestJobItem>()
+                .eq(BizIngestJobItem::getJobId, jobId));
+            Long pending = itemMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<BizIngestJobItem>()
+                .eq(BizIngestJobItem::getJobId, jobId)
+                .eq(BizIngestJobItem::getItemStatus, BizIngestJobItem.STATUS_PENDING));
+            if (total != null && total > 0 && pending != null && pending == 0) {
+                BizIngestJob upd = new BizIngestJob();
+                upd.setId(jobId);
+                upd.setHandledTime(new java.util.Date());
+                jobMapper.updateById(upd);
+                log.info("[ingest-worker] direct 作业自动归档 jobId={}", jobId);
+            }
+            return null;
+        }));
     }
 
     /**

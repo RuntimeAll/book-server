@@ -258,17 +258,34 @@ public class IngestJobController {
     }
 
     /**
-     * 2) GET /teacher/ingest/jobs?mine=1 — 当前老师作业列表（时间倒序）。供多功能球轮询。
+     * 2) GET /teacher/ingest/jobs?mine=1&amp;scope=active|handled — 当前老师作业列表（时间倒序）。供多功能球轮询。
      *
+     * <p>PRD-011 归档分流：
+     * <ul>
+     *   <li>{@code scope} 缺省 / "active" / 其他任意值 → 只返 <b>未归档</b>（handled_time IS NULL），
+     *       创建时间倒序。现行不传参的调用方（多功能球轮询）自动只看进行中，向后兼容。</li>
+     *   <li>{@code scope=handled} → 只返 <b>已归档</b>（handled_time IS NOT NULL），按归档时间倒序，LIMIT 50。</li>
+     * </ul>
      */
     @SaCheckLogin
     @GetMapping("/jobs")
-    public List<IngestJobVo> listMine(@RequestParam(value = "mine", required = false) String mine) {
+    public List<IngestJobVo> listMine(@RequestParam(value = "mine", required = false) String mine,
+                                      @RequestParam(value = "scope", required = false) String scope) {
         Long teacherId = LoginHelper.getUserId();
-        List<BizIngestJob> jobs = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
-            jobMapper.selectList(new LambdaQueryWrapper<BizIngestJob>()
-                .eq(BizIngestJob::getTeacherId, teacherId)
-                .orderByDesc(BizIngestJob::getCreateTime))));
+        boolean handledScope = "handled".equalsIgnoreCase(StringUtils.trimToEmpty(scope));
+        List<BizIngestJob> jobs = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            LambdaQueryWrapper<BizIngestJob> w = new LambdaQueryWrapper<BizIngestJob>()
+                .eq(BizIngestJob::getTeacherId, teacherId);
+            if (handledScope) {
+                w.isNotNull(BizIngestJob::getHandledTime)
+                    .orderByDesc(BizIngestJob::getHandledTime)
+                    .last("LIMIT 50");
+            } else {
+                w.isNull(BizIngestJob::getHandledTime)
+                    .orderByDesc(BizIngestJob::getCreateTime);
+            }
+            return jobMapper.selectList(w);
+        }));
         List<IngestJobVo> out = new ArrayList<>(jobs.size());
         for (BizIngestJob j : jobs) {
             IngestJobVo vo = new IngestJobVo();
@@ -279,6 +296,7 @@ public class IngestJobController {
             vo.setSourceFileName(j.getSourceFileName());
             vo.setErrorMsg(j.getErrorMsg());
             vo.setCreateTime(j.getCreateTime());
+            vo.setHandledTime(j.getHandledTime());
             out.add(vo);
         }
         return out;
@@ -367,6 +385,8 @@ public class IngestJobController {
                 committed++;
             }
         }
+        // PRD-011：全部 item 落定则自动归档（进行中列表自动出清）
+        autoArchiveIfAllSettled(job);
         Map<String, Object> r = new HashMap<>();
         r.put("committed", committed);
         return r;
@@ -379,7 +399,7 @@ public class IngestJobController {
     @DeleteMapping("/job/{jobId}/item/{itemId}")
     public Map<String, Object> dropItem(@PathVariable("jobId") Long jobId,
                                         @PathVariable("itemId") Long itemId) {
-        requireOwnedJob(jobId);
+        BizIngestJob job = requireOwnedJob(jobId);
         BizIngestJobItem item = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() ->
             itemMapper.selectById(itemId)));
         if (item == null || !jobId.equals(item.getJobId())) {
@@ -393,6 +413,8 @@ public class IngestJobController {
             itemMapper.updateById(upd);
             return null;
         }));
+        // PRD-011：弃掉最后一个待审项后也算落定 → 自动归档
+        autoArchiveIfAllSettled(job);
         Map<String, Object> r = new HashMap<>();
         r.put("dropped", true);
         return r;
@@ -442,6 +464,92 @@ public class IngestJobController {
         Map<String, Object> r = new HashMap<>();
         r.put("updated", true);
         return r;
+    }
+
+    /**
+     * 7) POST /teacher/ingest/job/{jobId}/handled — 手动标记「已处理」（归档，PRD-011）。
+     *
+     * <p>写 {@code handled_time = now()}，该作业从「进行中」列表移入「已处理」列表。
+     * 幂等：已归档再点不报错、不刷新时间，直接返 {@code {handled:true}}。校验归属。
+     */
+    @SaCheckLogin
+    @PostMapping("/job/{jobId}/handled")
+    public Map<String, Object> markHandled(@PathVariable("jobId") Long jobId) {
+        BizIngestJob job = requireOwnedJob(jobId);
+        if (job.getHandledTime() == null) {
+            TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+                BizIngestJob upd = new BizIngestJob();
+                upd.setId(jobId);
+                upd.setHandledTime(new Date());
+                upd.setUpdateTime(new Date());
+                jobMapper.updateById(upd);
+                return null;
+            }));
+        }
+        Map<String, Object> r = new HashMap<>();
+        r.put("handled", true);
+        return r;
+    }
+
+    /**
+     * 8) DELETE /teacher/ingest/job/{jobId} — 硬删作业（PRD-011）。
+     *
+     * <p>先删 biz_ingest_job_item（by jobId）再删 job 行。🔴 已入库的 biz_question 一概不动
+     * （删的只是「录题作业」这个中间过程记录，题库正式题与本操作无关）。校验归属。
+     */
+    @SaCheckLogin
+    @DeleteMapping("/job/{jobId}")
+    public Map<String, Object> deleteJob(@PathVariable("jobId") Long jobId) {
+        requireOwnedJob(jobId);
+        int deletedItems = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            int n = itemMapper.delete(new LambdaQueryWrapper<BizIngestJobItem>()
+                .eq(BizIngestJobItem::getJobId, jobId));
+            jobMapper.deleteById(jobId);
+            return n;
+        }));
+        Map<String, Object> r = new HashMap<>();
+        r.put("deleted", true);
+        r.put("deletedItems", deletedItems);
+        return r;
+    }
+
+    // ==================== 自动归档 ====================
+
+    /**
+     * 自动归档（PRD-011）：该作业下 item 全部落定（无 pending）则写 handled_time。
+     *
+     * <p>判定只看 item，不看 job.status（不动 status 语义）：<b>item 总数 &gt; 0 且 pending == 0</b> 才归档。
+     * 空作业（一条 item 都没拆出，如 FAILED / N=0）不误归档，留在进行中列表由老师自己看到并手动处理。
+     * 已归档的幂等跳过。任何异常不外抛（归档是附带动作，不能拖垮主流程）。
+     */
+    private void autoArchiveIfAllSettled(BizIngestJob job) {
+        if (job == null || job.getId() == null || job.getHandledTime() != null) {
+            return;
+        }
+        Long jobId = job.getId();
+        try {
+            long[] cnt = TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+                long total = itemMapper.selectCount(new LambdaQueryWrapper<BizIngestJobItem>()
+                    .eq(BizIngestJobItem::getJobId, jobId));
+                long pending = itemMapper.selectCount(new LambdaQueryWrapper<BizIngestJobItem>()
+                    .eq(BizIngestJobItem::getJobId, jobId)
+                    .eq(BizIngestJobItem::getItemStatus, BizIngestJobItem.STATUS_PENDING));
+                return new long[]{total, pending};
+            }));
+            if (cnt[0] > 0 && cnt[1] == 0) {
+                TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+                    BizIngestJob upd = new BizIngestJob();
+                    upd.setId(jobId);
+                    upd.setHandledTime(new Date());
+                    upd.setUpdateTime(new Date());
+                    jobMapper.updateById(upd);
+                    return null;
+                }));
+                job.setHandledTime(new Date());
+            }
+        } catch (Exception ignore) {
+            // 归档失败不影响 commit/drop 主结果
+        }
     }
 
     // ==================== 归属校验 ====================

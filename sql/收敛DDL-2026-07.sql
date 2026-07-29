@@ -1677,8 +1677,21 @@ ALTER TABLE biz_feedback_sheet
 -- 乐乐×4 → batch_key='乐乐七上暑假数学' lesson_seq=1..4；多多×3 → '多多五上暑假数学' 1..3；可可×1 → '可可五上暑假数学' 1。
 
 -- ============================================================
+-- PRD-011 快捷中枢·录题作业归档（B 位 2026-07-27）
+-- 「进行中」永不退场问题：加归档时间列——NULL=仍在进行中列表，非空=已处理进历史（中枢「历史」tab，倒序≤50）。
+-- 归档来源：手动点「处理完成」(POST /teacher/ingest/job/{id}/handled) 或 审核页全部题处理完自动归档；
+-- 另有硬删 DELETE /teacher/ingest/job/{id}（删作业+题项，已入库 biz_question 不动）。
+-- dev :3307 已于 2026-07-27 直接 apply（四线共库一次生效）；🔴 prod RDS(ai_lesson_prep) 部署 BE 前需手工同步。
+-- ============================================================
+
+ALTER TABLE biz_ingest_job
+  ADD COLUMN handled_time datetime NULL COMMENT '处理完成(归档)时间(PRD-011)；NULL=未归档仍在进行中列表' AFTER committed_count,
+  ADD INDEX idx_ingest_job_handled (teacher_id, handled_time);
+
+-- ============================================================
 -- 2026-07-30 增量（PRD-012 D2 / PRD-013 D5）：书架 item 结构化内容列——
 --   打卡书=模块 JSON（口算/竖式/脱式，出题器现产）/ 讲义=Tiptap，按 book_type 分流消费。
---   题库题绝不落此列（引用 question_id + biz_question_block 渲染）。已 apply :3307。
+--   题库题绝不落此列（引用 question_id + biz_question_block 渲染）。已 apply :3307；
+--   🔴 prod RDS 部署 BE 前必须先手工同步（BizShelfItem 实体已带字段，缺列=书架域整体 500）。
 ALTER TABLE `biz_shelf_item`
   ADD COLUMN `content_json` json NULL COMMENT '结构化内容(打卡=模块JSON/讲义=Tiptap,按book_type分流;PRD-012 D2/PRD-013 D5)' AFTER `explain_json`;

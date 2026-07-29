@@ -26,4 +26,6 @@ public class IngestJobVo implements Serializable {
     private String sourceFileName;
     private String errorMsg;
     private Date createTime;
+    /** 处理完成（归档）时间（PRD-011）：NULL=未归档仍在进行中列表 */
+    private Date handledTime;
 }

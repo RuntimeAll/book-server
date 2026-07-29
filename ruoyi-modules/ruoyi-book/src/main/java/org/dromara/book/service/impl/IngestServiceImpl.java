@@ -24,6 +24,7 @@ import org.dromara.book.domain.entity.BizSubjectContent;
 import org.dromara.book.domain.entity.BizTextContent;
 import org.dromara.book.domain.entity.ImageAsset;
 import org.dromara.book.mapper.BizBookMapper;
+import org.dromara.book.mapper.BizFreeTagWriteMapper;
 import org.dromara.book.mapper.BizBookQuestionMapper;
 import org.dromara.book.mapper.BizBookSubjectMapper;
 import org.dromara.book.mapper.BizQuestionAiMapper;
@@ -90,6 +91,7 @@ public class IngestServiceImpl implements IIngestService {
     private final BizQuestionMapper bizQuestionMapper;
     private final BizTextContentMapper bizTextContentMapper;
     private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
+    private final BizFreeTagWriteMapper bizFreeTagWriteMapper;
     private final BizQuestionImageMapper bizQuestionImageMapper;
     private final BizQuestionAiMapper bizQuestionAiMapper;
     private final BizQuestionBlockMapper bizQuestionBlockMapper;
@@ -408,8 +410,12 @@ public class IngestServiceImpl implements IIngestService {
             q.setSourceType(bo.getSourceType());
             q.setSourceRaw(bo.getSourceRaw());
             q.setMotherSource(bo.getMotherSource());
-            q.setImportSource(StringUtils.isBlank(bo.getImportSource()) ? "main" : bo.getImportSource());
-            q.setImportBatchId(bo.getImportBatchId());
+            // 🔴 去重复用（!created）时不覆盖 import_source/import_batch_id —— 保留首录批次，
+            // 否则按原批次 search 找回会漏题、追溯链断（2026-07-29 daily_punch 首测实踩）。
+            if (created) {
+                q.setImportSource(StringUtils.isBlank(bo.getImportSource()) ? "main" : bo.getImportSource());
+                q.setImportBatchId(bo.getImportBatchId());
+            }
             q.setVersion(1010);
             // PRD-A-002: status 入参化（缺省兜底 '1' 不破 C-204 老调用方；录题传 '0' 落草稿）
             q.setStatus(StringUtils.isBlank(bo.getStatus()) ? "1" : bo.getStatus());
@@ -460,6 +466,29 @@ public class IngestServiceImpl implements IIngestService {
                     k.setSource(StringUtils.isBlank(kr.getSource()) ? "U" : kr.getSource());
                     k.setIsPrimary(kr.getIsPrimary() != null ? kr.getIsPrimary() : 0);
                     bizQuestionKnowledgeMapper.insert(k);
+                }
+            }
+
+            // biz_free_tag 字典 + biz_question_free_tag 关联（三件套之一；null/空=不动，非空=先清后挂幂等）
+            if (bo.getFreeTags() != null && !bo.getFreeTags().isEmpty()) {
+                bizFreeTagWriteMapper.deleteRelByQuestion(qid);
+                Set<String> seenTag = new HashSet<>();
+                int pos = 0;
+                for (String tag : bo.getFreeTags()) {
+                    String name = tag == null ? null : tag.trim();
+                    if (StringUtils.isBlank(name) || !seenTag.add(name)) {
+                        continue;
+                    }
+                    Long tagId = bizFreeTagWriteMapper.selectIdByName(name);
+                    if (tagId == null) {
+                        bizFreeTagWriteMapper.insertFreeTag(name);
+                        tagId = bizFreeTagWriteMapper.selectIdByName(name);
+                    } else {
+                        bizFreeTagWriteMapper.incrementUseCount(tagId);
+                    }
+                    if (tagId != null) {
+                        bizFreeTagWriteMapper.insertRel(qid, tagId, pos++);
+                    }
                 }
             }
 

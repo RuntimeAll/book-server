@@ -93,6 +93,12 @@ public class IngestQuestionBo implements Serializable {
      */
     private String status;
 
+    /**
+     * 自由标签 → biz_free_tag 字典 + biz_question_free_tag 关联（三件套之一，检索锚）。
+     * 缺省 null/空 = 不动标签（不破老调用方）；非空 = 先清本题关联再按序重挂（幂等）。
+     */
+    private List<String> freeTags;
+
     @Data
     public static class KnowledgeRef implements Serializable {
         @Serial
