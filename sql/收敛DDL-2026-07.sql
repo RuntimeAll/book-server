@@ -1675,3 +1675,10 @@ ALTER TABLE biz_feedback_sheet
 
 -- 数据变更（prod 需手工同步）：王老师(15079648968)存量 8 单回填批次——
 -- 乐乐×4 → batch_key='乐乐七上暑假数学' lesson_seq=1..4；多多×3 → '多多五上暑假数学' 1..3；可可×1 → '可可五上暑假数学' 1。
+
+-- ============================================================
+-- 2026-07-30 增量（PRD-012 D2 / PRD-013 D5）：书架 item 结构化内容列——
+--   打卡书=模块 JSON（口算/竖式/脱式，出题器现产）/ 讲义=Tiptap，按 book_type 分流消费。
+--   题库题绝不落此列（引用 question_id + biz_question_block 渲染）。已 apply :3307。
+ALTER TABLE `biz_shelf_item`
+  ADD COLUMN `content_json` json NULL COMMENT '结构化内容(打卡=模块JSON/讲义=Tiptap,按book_type分流;PRD-012 D2/PRD-013 D5)' AFTER `explain_json`;

@@ -86,6 +86,10 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
+  /* 题库 md 尾部常带原书作答留白（"\n \n \n \n"），渲成连串空行会撑爆 A4 —— 渲染前剥掉 */
+  function trimMd(s) {
+    return String(s == null ? '' : s).replace(/(?:\n\s*)+$/, '');
+  }
 
   /* ── 页眉：主标题（accent 段标红）+ 小标题 ── */
   var head = el('div', 'head');
@@ -192,7 +196,7 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
             if (c.type === 'text') {
               var d = el('div');
               d.innerHTML = (first ? '<span class="no">' + (qi + 1) + '．</span>' : '')
-                          + esc(c.md).replace(/\n/g, '<br>');
+                          + esc(trimMd(c.md)).replace(/\n/g, '<br>');
               first = false;
               wrap.appendChild(d);
             } else if (c.type === 'image' && c.url) {

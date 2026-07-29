@@ -284,7 +284,8 @@ public class OralCalcService {
 
     /** 支持难度档的类型（三年级计算谱系先落地）；其余类型忽略 level、走原随机逻辑。 */
     private static final Set<String> LEVELED =
-        Set.of("mul2d2d", "mul1d", "div1d", "dec1", "add3d", "mul2dtens", "mixops3");
+        Set.of("mul2d2d", "mul1d", "div1d", "dec1", "add3d", "mul2dtens", "mixops3",
+               "mul1doral", "div1doral");
 
     private String[] genOne(String code, Random rnd, String level) {
         // 🔴 支持档位的类型：genLeveled 返回 null = 本次摇的不满足档位约束，交给 generate 重摇，
@@ -305,6 +306,21 @@ public class OralCalcService {
     private String[] genLeveled(String code, Random rnd, String level) {
         boolean adv = "advanced".equals(level);
         switch (code) {
+            case "mul1doral" -> {
+                // 🔴 basic=原随机（整十整百乘一位）；提高堵"20×2/70×3 送分"（2026-07-30 目检）：
+                //   两位数乘一位数口算（非整十）+ 必须进位（个位积≥10）——三上口算真实提高档。
+                if (!adv) return genOne(code, rnd);
+                int a = ri(rnd, 12, 99), b = ri(rnd, 3, 9);
+                if (a % 10 == 0 || (a % 10) * b < 10 || a * b > 999) return null;
+                return qa(a + "×" + b + "＝", String.valueOf(a * b));
+            }
+            case "div1doral" -> {
+                // basic=原随机（整十整百商）；提高：两位数÷一位数整除口算（商非整十，如 78÷6＝13）。
+                if (!adv) return genOne(code, rnd);
+                int b = ri(rnd, 3, 9), q = ri(rnd, 12, 19);
+                if (q % 10 == 0 || b * q > 99) return null;
+                return qa((b * q) + "÷" + b + "＝", String.valueOf(q));
+            }
             case "mul2d2d" -> {
                 // 基础=各位数字 1-3（各位积 <10，竖式不进位）
                 // 提高（2026-07-30 放宽）：各位 4-9 数域太窄，一卷里反复出 75×76/77×75 雷同；
