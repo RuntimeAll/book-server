@@ -71,6 +71,46 @@ public class ChromePdfRenderer {
         }
     }
 
+    /**
+     * 只注入不渲染：返回主题入口 HTML 注入 data 后的字符串（FE iframe 预览用，与 {@link #render} 同源）。
+     *
+     * <p>🔴 所见即所得的构造保证（PRD-013 D3/G9）：预览与导出**同一主题、同一注入函数**，
+     * 差别只在出口——本方法出 HTML 串，{@link #render} 把同一串喂无头 Chrome 出 PDF。
+     *
+     * <p>不落临时目录（不拷主题静态资源），故要求主题**单文件自包含**（punch-v1 已把水印内嵌
+     * base64；带 katex/图片相对路径的主题不适用本出口）。
+     *
+     * @param themeDir classpath 主题目录名，入口 HTML 须同名（&lt;themeDir&gt;.html）
+     * @param data     注入 __PAPER_DATA__ 的数据对象
+     */
+    public String renderHtml(String themeDir, Map<String, Object> data) {
+        String tpl;
+        try {
+            PathMatchingResourcePatternResolver r = new PathMatchingResourcePatternResolver();
+            Resource rc = r.getResource("classpath:export-themes/" + themeDir + "/" + themeDir + ".html");
+            if (!rc.exists() || !rc.isReadable()) {
+                throw new ServiceException("导出主题资源缺失（export-themes/" + themeDir + "）", 500);
+            }
+            try (InputStream in = rc.getInputStream()) {
+                tpl = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
+        } catch (ServiceException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[pdf-render] 读取主题失败 theme={}", themeDir, e);
+            throw new ServiceException("主题读取失败: " + e.getMessage(), 500);
+        }
+        try {
+            String json = om.writeValueAsString(data);
+            // 与 renderInWork 同一转义：防 </script> 提前闭合注入块（Jackson 默认不转义 /）
+            json = json.replace("</", "<\\/");
+            return tpl.replace(DATA_TOKEN, json);
+        } catch (Exception e) {
+            log.error("[pdf-render] 数据注入失败 theme={}", themeDir, e);
+            throw new ServiceException("预览数据注入失败: " + e.getMessage(), 500);
+        }
+    }
+
     private byte[] renderInWork(Path work, String themeHtml, Map<String, Object> data, String tag) {
         try {
             String json = om.writeValueAsString(data);

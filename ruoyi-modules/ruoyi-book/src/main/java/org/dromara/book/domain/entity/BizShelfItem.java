@@ -45,6 +45,14 @@ public class BizShelfItem implements Serializable {
     /** kind=explain 时的讲解内容（书自持，D2） */
     private String explainJson;
 
+    /**
+     * 结构化内容（PRD-012 D2 / PRD-013 D5）：打卡书 kind=module 的模块 JSON
+     * {@code {type:oral|vertical|stepwise,title,items:[{q,a}]}} / 讲义型 Tiptap，按 book_type 分流消费。
+     *
+     * <p>🔴 题库题绝不落此列——题走 kind=question + question_id 引用 + biz_question_block 渲染（题面单一源）。
+     */
+    private String contentJson;
+
     /** 源书页码（PRD-006 反查回填；NULL=待定位） */
     private Integer sourcePage;
 

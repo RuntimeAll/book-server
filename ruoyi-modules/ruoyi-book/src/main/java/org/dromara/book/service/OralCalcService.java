@@ -74,6 +74,7 @@ public class OralCalcService {
         new CalcType("div1d",      "除数是一位数的除法",      3, 2, 3),
         new CalcType("mul2dtens",  "两位数乘整十数口算",      3, 2, 4),
         new CalcType("mul2d2d",    "两位数乘两位数",         3, 2, 3),
+        new CalcType("mixops3",    "三步混合运算",           3, 2, 4),
         new CalcType("fracsame",   "同分母分数加减",         3, 1, 3),
         new CalcType("dec1",       "一位小数加减",           3, 2, 4),
         // ── 四年级 ──
@@ -282,7 +283,8 @@ public class OralCalcService {
     }
 
     /** 支持难度档的类型（三年级计算谱系先落地）；其余类型忽略 level、走原随机逻辑。 */
-    private static final Set<String> LEVELED = Set.of("mul2d2d", "mul1d", "div1d", "dec1", "add3d");
+    private static final Set<String> LEVELED =
+        Set.of("mul2d2d", "mul1d", "div1d", "dec1", "add3d", "mul2dtens", "mixops3");
 
     private String[] genOne(String code, Random rnd, String level) {
         // 🔴 支持档位的类型：genLeveled 返回 null = 本次摇的不满足档位约束，交给 generate 重摇，
@@ -304,11 +306,30 @@ public class OralCalcService {
         boolean adv = "advanced".equals(level);
         switch (code) {
             case "mul2d2d" -> {
-                // 基础=各位数字 1-3（各位积 <10，竖式不进位）；提高=各位 4-9（连续进位）
-                int lo = adv ? 4 : 1, hi = adv ? 9 : 3;
-                int a = ri(rnd, lo, hi) * 10 + ri(rnd, lo, hi);
-                int b = ri(rnd, lo, hi) * 10 + ri(rnd, lo, hi);
+                // 基础=各位数字 1-3（各位积 <10，竖式不进位）
+                // 提高（2026-07-30 放宽）：各位 4-9 数域太窄，一卷里反复出 75×76/77×75 雷同；
+                //   改为各位 3-9 + 个位积进位（(a%10)*(b%10)≥10）+ a≠b —— 数域变大，进位保证不丢。
+                if (!adv) {
+                    int a0 = ri(rnd, 1, 3) * 10 + ri(rnd, 1, 3);
+                    int b0 = ri(rnd, 1, 3) * 10 + ri(rnd, 1, 3);
+                    return qa(a0 + "×" + b0 + "＝", String.valueOf(a0 * b0));
+                }
+                int a = ri(rnd, 3, 9) * 10 + ri(rnd, 3, 9);
+                int b = ri(rnd, 3, 9) * 10 + ri(rnd, 3, 9);
+                if (a == b || (a % 10) * (b % 10) < 10) return null;
                 return qa(a + "×" + b + "＝", String.valueOf(a * b));
+            }
+            case "mul2dtens" -> {
+                // 🔴 basic = 原随机逻辑（零回归，G 回归线）；提高堵"61×10 送分"：
+                //   乘数排除 10（20-90 整十），被乘数个位非 0（必须真进位算两步）。
+                if (!adv) return genOne(code, rnd);
+                int a = ri(rnd, 12, 99), b = ri(rnd, 2, 9) * 10;
+                if (a % 10 == 0) return null;
+                return qa(a + "×" + b + "＝", String.valueOf(a * b));
+            }
+            case "mixops3" -> {
+                // 基础=两步（数域 100 内）；提高=三步跨级（含括号/两级运算）
+                return genMixops3(rnd, adv);
             }
             case "mul1d" -> {
                 if (!adv) {
@@ -386,6 +407,91 @@ public class OralCalcService {
             }
             default -> {
                 return null;
+            }
+        }
+    }
+
+    /**
+     * 三步混合运算（mixops3，三下两级运算落点）。
+     *
+     * <p>硬约束（全部程序保证，不靠碰运气）：<b>全整数</b>／<b>每步除法必整除</b>／
+     * <b>中间结果恒正</b>／<b>终值 ≤ 1000</b>／<b>除数一位数</b>（{@code A÷(B×C)} 形态里 B×C ≤ 9）。
+     * 构造式生成（先定商再乘回被除数），不满足边界时返回 null 交 {@link #generate} 重摇。
+     *
+     * @param three true=三步跨级形态（提高档/无档缺省）；false=两步形态（基础档，数域 100 内）
+     */
+    private String[] genMixops3(Random rnd, boolean three) {
+        if (!three) {
+            // ── 基础：两步，结果 ≤100 ──
+            switch (rnd.nextInt(5)) {
+                case 0 -> {                                     // A－B÷C
+                    int c = ri(rnd, 2, 9), q = ri(rnd, 2, 9), b = c * q;
+                    int a = ri(rnd, q + 1, 99);
+                    return qa(a + "－" + b + "÷" + c + "＝", String.valueOf(a - q));
+                }
+                case 1 -> {                                     // (A＋B)÷C
+                    int c = ri(rnd, 2, 9), s = c * ri(rnd, 2, 99 / c);
+                    if (s < 10) return null;
+                    int a = ri(rnd, 5, s - 5);
+                    if (a < 5 || s - a < 5) return null;
+                    return qa("(" + a + "＋" + (s - a) + ")÷" + c + "＝", String.valueOf(s / c));
+                }
+                case 2 -> {                                     // A×B－C
+                    int a = ri(rnd, 2, 9), b = ri(rnd, 2, 9), p = a * b;
+                    if (p < 6) return null;
+                    int c = ri(rnd, 2, p - 1);
+                    return qa(a + "×" + b + "－" + c + "＝", String.valueOf(p - c));
+                }
+                case 3 -> {                                     // A×B＋C
+                    int a = ri(rnd, 2, 9), b = ri(rnd, 2, 9), p = a * b;
+                    if (p > 90) return null;
+                    int c = ri(rnd, 2, 100 - p);
+                    return qa(a + "×" + b + "＋" + c + "＝", String.valueOf(p + c));
+                }
+                default -> {                                    // A÷B＋C
+                    int b = ri(rnd, 2, 9), q = ri(rnd, 2, 9), c = ri(rnd, 2, 90);
+                    if (q + c > 100) return null;
+                    return qa((b * q) + "÷" + b + "＋" + c + "＝", String.valueOf(q + c));
+                }
+            }
+        }
+        // ── 提高：三步跨级（五种形态） ──
+        switch (rnd.nextInt(5)) {
+            case 0 -> {                                         // A－B÷C×D
+                int c = ri(rnd, 2, 9), q = ri(rnd, 2, 9), b = c * q, d = ri(rnd, 2, 9);
+                int p = q * d;
+                if (p >= 990) return null;
+                int a = ri(rnd, p + 1, 999);
+                return qa(a + "－" + b + "÷" + c + "×" + d + "＝", String.valueOf(a - p));
+            }
+            case 1 -> {                                         // (A＋B)÷C×D
+                int c = ri(rnd, 2, 9), q = ri(rnd, 2, 20), s = c * q, d = ri(rnd, 2, 9);
+                if (s < 12 || q * d > 1000) return null;
+                int a = ri(rnd, 5, s - 5);
+                if (a < 5 || s - a < 5) return null;
+                return qa("(" + a + "＋" + (s - a) + ")÷" + c + "×" + d + "＝", String.valueOf(q * d));
+            }
+            case 2 -> {                                         // A×(B÷C－D)
+                int c = ri(rnd, 2, 9), q = ri(rnd, 3, 12), b = c * q;
+                int d = ri(rnd, 1, q - 1), a = ri(rnd, 2, 9);
+                if (q - d < 1 || a * (q - d) > 1000) return null;
+                return qa(a + "×(" + b + "÷" + c + "－" + d + ")＝", String.valueOf(a * (q - d)));
+            }
+            case 3 -> {                                         // A÷(B×C)＋D（🔴 括号内积 ≤9）
+                int b = ri(rnd, 2, 4), c = ri(rnd, 2, 9 / b);
+                int m = b * c;
+                if (m < 4) return null;
+                int q = ri(rnd, 3, 99), d = ri(rnd, 2, 99);
+                if (q + d > 1000) return null;
+                return qa((m * q) + "÷(" + b + "×" + c + ")＋" + d + "＝", String.valueOf(q + d));
+            }
+            default -> {                                        // A－(B＋C)÷D
+                int d = ri(rnd, 2, 9), q = ri(rnd, 2, 20), s = d * q;
+                if (s < 12) return null;
+                int b = ri(rnd, 5, s - 5);
+                if (b < 5 || s - b < 5) return null;
+                int a = ri(rnd, q + 1, 999);
+                return qa(a + "－(" + b + "＋" + (s - b) + ")÷" + d + "＝", String.valueOf(a - q));
             }
         }
     }
@@ -618,6 +724,8 @@ public class OralCalcService {
                 int a = ri(rnd, 12, 98), b = ri(rnd, 12, 98);
                 yield qa(a + "×" + b + "＝", String.valueOf(a * b));
             }
+            // 无档缺省 = 三步跨级形态（类型名即三步；两步形态走 level=basic）
+            case "mixops3" -> genMixops3(rnd, true);
             case "fracsame" -> {
                 int m = ri(rnd, 3, 10);
                 if (rnd.nextBoolean()) {

@@ -344,6 +344,9 @@ xss:
     # 🔴 PRD-003 专项编排：pick/题目 override 副本(题干/答案/解析含数学 < >)、专项标题/节点名均可含数学，
     # XssFilter 静默剥 <...> 会腐蚀数学不等式/JSON。全域排除；渲染侧 DOMPurify 兜底。
     - /teacher/special/**
+    # 🔴 PRD-013 每日打卡：upsertDay 的 modules(计算题面/答案)、goals、审核 issues 描述均可含数学 < >，
+    # XssFilter 静默剥 <...> 会腐蚀算式/损坏 content_json。全域排除；渲染侧 esc/DOMPurify 兜底。
+    - /teacher/punch/**
 
 --- # 分布式锁 lock4j 全局配置
 lock4j:
