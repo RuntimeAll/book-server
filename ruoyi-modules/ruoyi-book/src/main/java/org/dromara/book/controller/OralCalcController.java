@@ -20,9 +20,11 @@ import java.util.Map;
  * /teacher/ 前缀响应转 misikt envelope {code:1,message,response}。
  *
  * <p>路由：
- *   GET  /teacher/oralcalc/types   类型全表 [{code,name,grade,term}]
- *   POST /teacher/oralcalc/export  出卷 {title?, seed?, withGroupLabel?, groups:[{type,count,label?}]}
- *                                  → {questionUrl, answerUrl, total, seed}
+ *   GET  /teacher/oralcalc/types     类型全表 [{code,name,grade,term}]
+ *   POST /teacher/oralcalc/export    出卷 {title?, seed?, withGroupLabel?, groups:[{type,count,label?,level?}]}
+ *                                    → {questionUrl, answerUrl, total, seed}
+ *   POST /teacher/oralcalc/generate  只出题目数据不渲染 PDF（agent 塞自有版面用）
+ *                                    → {total, seed, groups:[{label,cols,mode,items:[{q,a}]}]}
  */
 @RestController
 @RequestMapping("/teacher/oralcalc")
@@ -41,5 +43,12 @@ public class OralCalcController {
     @PostMapping("/export")
     public R<Map<String, Object>> export(@RequestBody Map<String, Object> body) {
         return R.ok(oralCalcService.export(body));
+    }
+
+    /** 只出题目数据不渲染 PDF —— agent 拿 {q,a} 塞进自有版面（每日一练等）。 */
+    @SaCheckLogin
+    @PostMapping("/generate")
+    public R<Map<String, Object>> generate(@RequestBody Map<String, Object> body) {
+        return R.ok(oralCalcService.generateItems(body));
     }
 }

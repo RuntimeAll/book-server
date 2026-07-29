@@ -119,21 +119,45 @@ public class OralCalcService {
     }
 
     /**
-     * 出卷：{title?, seed?, withGroupLabel?, groups:[{type, count, label?}]} → 双卷 PDF。
+     * 只出题目数据、不渲染 PDF —— agent 拿 {q,a} 塞进自有版面（每日一练等）。
+     *
+     * <p>入参与 {@link #export} 完全一致，返回 {total, seed, groups:[{label,cols,mode,items:[{q,a}]}]}。
      */
-    @SuppressWarnings("unchecked")
+    public Map<String, Object> generateItems(Map<String, Object> body) {
+        Built b = build(body);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("total", b.total());
+        r.put("seed", String.valueOf(b.seed()));
+        r.put("groups", b.groups());
+        return r;
+    }
+
+    /** build 产物：题目数据 + 元信息（export 与 generateItems 共用）。 */
+    private record Built(int total, long seed, List<Map<String, Object>> groups) {}
+
+    /**
+     * 出卷：{title?, seed?, withGroupLabel?, groups:[{type, count, label?, level?}]} → 双卷 PDF。
+     */
     public Map<String, Object> export(Map<String, Object> body) {
+        Built built = build(body);
+        int total = built.total();
+        List<Map<String, Object>> groupsOut = built.groups();
+        String title = str(body.get("title"), "口算训练");
+        return renderPapers(body, title, total, built.seed(), groupsOut);
+    }
+
+    /** 组题：验参 → 逐组生成 → 跨组去重（不碰渲染，供两个入口共用）。 */
+    @SuppressWarnings("unchecked")
+    private Built build(Map<String, Object> body) {
         Object rawGroups = body.get("groups");
         if (!(rawGroups instanceof List<?> gl) || gl.isEmpty()) {
             throw new ServiceException("groups 不能为空：[{type, count}]", 400);
         }
-        String title = str(body.get("title"), "口算训练");
         boolean withGroupLabel = body.get("withGroupLabel") == null || truthy(body.get("withGroupLabel"));
         // 凑行补足：题数向上凑整到栏数倍数（每行凑满）。缺省开（MCP/agent 路径沿用 2026-07-18 拍板），
         // 自选出题页默认显式传 false=按填的题数原样生成（2026-07-19 用户拍板：补足做成可选不做默认）。
         boolean fillRows = body.get("fillRows") == null || truthy(body.get("fillRows"));
-        long seed = body.get("seed") != null ? Long.parseLong(String.valueOf(body.get("seed")))
-            : System.nanoTime();
+        long seed = parseSeed(body.get("seed"));
         Random rnd = new Random(seed);
 
         // 全局栏数覆盖（layout.cols）：给了则整卷统一栏宽，各组网格上下对齐
@@ -161,7 +185,9 @@ public class OralCalcService {
             if (total > MAX_TOTAL) {
                 throw new ServiceException("单卷总题数超上限 " + MAX_TOTAL, 400);
             }
-            List<String[]> items = generate(type.code(), count, rnd, seenAll);
+            // 难度档：basic 基础 / advanced 提高；空 = 原有随机行为（零回归）
+            String level = str(g.get("level"), "");
+            List<String[]> items = generate(type.code(), count, rnd, seenAll, level);
             Map<String, Object> go = new LinkedHashMap<>();
             go.put("label", withGroupLabel ? str(g.get("label"), type.name()) : "");
             go.put("cols", cols);
@@ -179,7 +205,12 @@ public class OralCalcService {
             go.put("items", its);
             groupsOut.add(go);
         }
+        return new Built(total, seed, groupsOut);
+    }
 
+    /** 渲染双卷 PDF → OSS（只被 export 用）。 */
+    private Map<String, Object> renderPapers(Map<String, Object> body, String title, int total, long seed,
+                                             List<Map<String, Object>> groupsOut) {
         // papers：['question'] 只出题目卷（口算主场景，老师不需要答案卷）；缺省双卷。
         List<String> papers = new ArrayList<>();
         if (body.get("papers") instanceof List<?> pl) {
@@ -217,11 +248,23 @@ public class OralCalcService {
 
     // ───────────────── 生成器（每类型一段，全部确定性约束） ─────────────────
 
-    private List<String[]> generate(String code, int count, Random rnd, Set<String> seen) {
+    /** seed 容错：数字直用；任意字符串取 hashCode（同串同卷可复现）；空 = 随机。非数字不再裸 500。 */
+    private static long parseSeed(Object raw) {
+        if (raw == null) return System.nanoTime();
+        String s = String.valueOf(raw).trim();
+        if (s.isEmpty()) return System.nanoTime();
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            return s.hashCode();
+        }
+    }
+
+    private List<String[]> generate(String code, int count, Random rnd, Set<String> seen, String level) {
         List<String[]> out = new ArrayList<>();
         int tries = 0;
         while (out.size() < count && tries++ < count * MAX_TRY) {
-            String[] qa = genOne(code, rnd);
+            String[] qa = genOne(code, rnd, level);
             if (qa == null || !seen.add(qa[0])) continue;
             out.add(qa);
         }
@@ -231,11 +274,154 @@ public class OralCalcService {
             log.warn("[oralcalc] 类型 {} 去重耗尽（{}/{}），放开去重补足", code, out.size(), count);
             int guard = 0;
             while (out.size() < count && guard++ < count * MAX_TRY) {
-                String[] qa = genOne(code, rnd);
+                String[] qa = genOne(code, rnd, level);
                 if (qa != null) out.add(qa);
             }
         }
         return out;
+    }
+
+    /** 支持难度档的类型（三年级计算谱系先落地）；其余类型忽略 level、走原随机逻辑。 */
+    private static final Set<String> LEVELED = Set.of("mul2d2d", "mul1d", "div1d", "dec1", "add3d");
+
+    private String[] genOne(String code, Random rnd, String level) {
+        // 🔴 支持档位的类型：genLeveled 返回 null = 本次摇的不满足档位约束，交给 generate 重摇，
+        //    **绝不回落原随机逻辑** —— 回落会漏出不符合档位的题（如基础档出现首位不够除的除法）。
+        if (!level.isEmpty() && LEVELED.contains(code)) {
+            return genLeveled(code, rnd, level);
+        }
+        return genOne(code, rnd);
+    }
+
+    /**
+     * 难度档生成器：{@code basic} 基础 / {@code advanced} 提高。
+     *
+     * <p>难度靠**客观开关**控制，不靠估计：进位次数 / 因数是否含 0 / 首位是否够除 / 是否退位。
+     * 只覆盖三年级计算谱系（每日一练双版本的落点）；其余类型返回 null → 回落原随机逻辑。
+     * 生成不满足档位约束时返回 null，由 {@link #generate} 的重试循环重摇。
+     */
+    private String[] genLeveled(String code, Random rnd, String level) {
+        boolean adv = "advanced".equals(level);
+        switch (code) {
+            case "mul2d2d" -> {
+                // 基础=各位数字 1-3（各位积 <10，竖式不进位）；提高=各位 4-9（连续进位）
+                int lo = adv ? 4 : 1, hi = adv ? 9 : 3;
+                int a = ri(rnd, lo, hi) * 10 + ri(rnd, lo, hi);
+                int b = ri(rnd, lo, hi) * 10 + ri(rnd, lo, hi);
+                return qa(a + "×" + b + "＝", String.valueOf(a * b));
+            }
+            case "mul1d" -> {
+                if (!adv) {
+                    int a = ri(rnd, 1, 3) * 100 + ri(rnd, 0, 3) * 10 + ri(rnd, 1, 3);
+                    int b = ri(rnd, 2, 3);
+                    return qa(a + "×" + b + "＝", String.valueOf(a * b));
+                }
+                if (rnd.nextBoolean()) {                       // 因数中间有 0
+                    int a = ri(rnd, 1, 9) * 100 + ri(rnd, 1, 9), b = ri(rnd, 4, 9);
+                    return qa(a + "×" + b + "＝", String.valueOf(a * b));
+                }
+                int a = ri(rnd, 6, 9) * 100 + ri(rnd, 6, 9) * 10 + ri(rnd, 6, 9);
+                int b = ri(rnd, 6, 9);                         // 连续进位
+                return qa(a + "×" + b + "＝", String.valueOf(a * b));
+            }
+            case "div1d" -> {
+                int b = ri(rnd, 2, 9);
+                if (!adv) {
+                    // 基础 = 两位数÷一位数、整除、首位够除（商两位数）——笔算除法起步形态。
+                    // 🔴 按位数构造而非碰运气：q 上界锁 99/b，保证被除数是两位数，首位必 ≥ b。
+                    int maxQ = 99 / b;
+                    if (maxQ < 11) return null;
+                    int q = ri(rnd, 11, maxQ);
+                    int d = b * q;
+                    return firstDigit(d) < b ? null : qa(d + "÷" + b + "＝", String.valueOf(q));
+                }
+                int q = ri(rnd, 11, 99);
+                if (rnd.nextBoolean()) {                       // 首位不够除（商比被除数少一位）
+                    int d = b * q;
+                    return firstDigit(d) >= b ? null : qa(d + "÷" + b + "＝", String.valueOf(q));
+                }
+                int r = ri(rnd, 1, b - 1);                     // 有余数
+                return qa((b * q + r) + "÷" + b + "＝", q + "……" + r);
+            }
+            case "dec1" -> {
+                // 以「十分之一」为整数单位算，规避浮点误差；dec1() 负责回显小数
+                if (!adv) {
+                    if (rnd.nextBoolean()) {                    // 不进位加
+                        int a = ri(rnd, 11, 80), b = ri(rnd, 11, 80);
+                        return (a % 10 + b % 10 >= 10 || a + b > 999) ? null
+                            : qa(dec1(a) + "＋" + dec1(b) + "＝", dec1(a + b));
+                    }
+                    int a = ri(rnd, 21, 99), b = ri(rnd, 11, a - 10);   // 不退位减
+                    return a % 10 < b % 10 ? null : qa(dec1(a) + "－" + dec1(b) + "＝", dec1(a - b));
+                }
+                int form = rnd.nextInt(3);
+                if (form == 0) {                               // 进位加
+                    int a = ri(rnd, 11, 90), b = ri(rnd, 11, 90);
+                    return a % 10 + b % 10 < 10 ? null : qa(dec1(a) + "＋" + dec1(b) + "＝", dec1(a + b));
+                }
+                if (form == 1) {                               // 退位减
+                    int a = ri(rnd, 21, 99), b = ri(rnd, 11, a - 5);
+                    return a % 10 >= b % 10 ? null : qa(dec1(a) + "－" + dec1(b) + "＝", dec1(a - b));
+                }
+                int a = ri(rnd, 3, 9) * 10, b = ri(rnd, 11, a - 10);    // 整数减小数（9－4.7）
+                return b % 10 == 0 ? null : qa((a / 10) + "－" + dec1(b) + "＝", dec1(a - b));
+            }
+            case "add3d" -> {
+                if (!adv) {
+                    if (rnd.nextBoolean()) {                    // 不进位加
+                        int a = d3(rnd, 1, 4), b = d3(rnd, 1, 4);
+                        return carryAdd(a, b) > 0 ? null : qa(a + "＋" + b + "＝", String.valueOf(a + b));
+                    }
+                    int a = d3(rnd, 5, 9), b = d3(rnd, 1, 4);  // 不退位减
+                    return (a <= b || borrowSub(a, b) > 0) ? null
+                        : qa(a + "－" + b + "＝", String.valueOf(a - b));
+                }
+                if (rnd.nextBoolean()) {                       // 连续进位加
+                    int a = ri(rnd, 150, 780), b = ri(rnd, 150, 999 - a);
+                    return (b < 150 || carryAdd(a, b) < 2) ? null
+                        : qa(a + "＋" + b + "＝", String.valueOf(a + b));
+                }
+                int a = ri(rnd, 300, 999), b = ri(rnd, 110, a - 50);   // 连续退位减
+                return borrowSub(a, b) < 2 ? null : qa(a + "－" + b + "＝", String.valueOf(a - b));
+            }
+            default -> {
+                return null;
+            }
+        }
+    }
+
+    /** 三位数：各位数字都取 [lo,hi]（百位至少 1）。 */
+    private int d3(Random rnd, int lo, int hi) {
+        return ri(rnd, Math.max(lo, 1), hi) * 100 + ri(rnd, lo, hi) * 10 + ri(rnd, lo, hi);
+    }
+
+    private static int firstDigit(int n) {
+        while (n >= 10) n /= 10;
+        return n;
+    }
+
+    /** 竖式加法的进位次数。 */
+    private static int carryAdd(int a, int b) {
+        int cnt = 0, carry = 0;
+        while (a > 0 || b > 0) {
+            carry = (a % 10 + b % 10 + carry) >= 10 ? 1 : 0;
+            cnt += carry;
+            a /= 10;
+            b /= 10;
+        }
+        return cnt;
+    }
+
+    /** 竖式减法的退位次数（a≥b）。 */
+    private static int borrowSub(int a, int b) {
+        int cnt = 0, borrow = 0;
+        while (b > 0 || borrow > 0) {
+            borrow = (a % 10 - b % 10 - borrow) < 0 ? 1 : 0;
+            cnt += borrow;
+            a /= 10;
+            b /= 10;
+        }
+        return cnt;
     }
 
     private String[] genOne(String code, Random rnd) {
