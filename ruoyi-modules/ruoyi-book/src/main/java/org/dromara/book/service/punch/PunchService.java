@@ -130,8 +130,8 @@ public class PunchService {
         //    否则"查看源代码"即得全卷答案；解析卷才带。剥的是注入数据副本，DB 原样。
         if (!isAnswer) {
             for (Map<String, Object> m : modules) {
-                Object items = m.get("items");
-                if (items instanceof List<?> il) {
+                Object modItems = m.get("items");
+                if (modItems instanceof List<?> il) {
                     for (Object o : il) {
                         if (o instanceof Map<?, ?> im) {
                             ((Map<String, Object>) im).remove("a");
@@ -139,8 +139,8 @@ public class PunchService {
                         }
                     }
                 }
-                Object blocks = m.get("blocks");
-                if (blocks instanceof List<?> bl) {
+                Object rotBlocks = m.get("blocks");
+                if (rotBlocks instanceof List<?> bl) {
                     for (Object o : bl) {
                         if (o instanceof Map<?, ?> bm) {
                             ((Map<String, Object>) bm).remove("answer");
