@@ -62,13 +62,19 @@ public class PunchController {
         return R.ok(punchService.getDay(reqId(bookId, "bookId"), reqInt(day, "day")));
     }
 
-    /** 纸面预览 HTML 串（FE iframe srcdoc/blob 用；与 exportDay 同 theme+data）。 */
+    /**
+     * 纸面预览 HTML（FE iframe srcdoc/blob 用；与 exportDay 同 theme+data）。
+     *
+     * <p>🔴 返回 {@code {html:"..."}} 包一层 —— {@code R.ok(String)} 会命中 msg 重载
+     * （HTML 掉进 envelope 的 message、response 为空），Java 重载坑，勿改回裸 String。
+     */
     @SaCheckLogin
     @GetMapping("/preview")
-    public R<String> preview(@RequestParam String bookId,
-                             @RequestParam String day,
-                             @RequestParam(required = false) String paper) {
-        return R.ok(punchService.previewHtml(reqId(bookId, "bookId"), reqInt(day, "day"), paper));
+    public R<Map<String, Object>> preview(@RequestParam String bookId,
+                                          @RequestParam String day,
+                                          @RequestParam(required = false) String paper) {
+        String html = punchService.previewHtml(reqId(bookId, "bookId"), reqInt(day, "day"), paper);
+        return R.ok(Map.of("html", html));
     }
 
     @SaCheckLogin
