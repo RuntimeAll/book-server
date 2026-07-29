@@ -125,7 +125,31 @@ public class PunchService {
         }
 
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("paper", "answer".equals(paper) ? "answer" : "question");
+        boolean isAnswer = "answer".equals(paper);
+        // 🔴 G5 数据层剥离（verifier B1）：题目卷注入的 __PAPER_DATA__ 不携带任何答案字段——
+        //    否则"查看源代码"即得全卷答案；解析卷才带。剥的是注入数据副本，DB 原样。
+        if (!isAnswer) {
+            for (Map<String, Object> m : modules) {
+                Object items = m.get("items");
+                if (items instanceof List<?> il) {
+                    for (Object o : il) {
+                        if (o instanceof Map<?, ?> im) {
+                            ((Map<String, Object>) im).remove("a");
+                            ((Map<String, Object>) im).remove("steps");
+                        }
+                    }
+                }
+                Object blocks = m.get("blocks");
+                if (blocks instanceof List<?> bl) {
+                    for (Object o : bl) {
+                        if (o instanceof Map<?, ?> bm) {
+                            ((Map<String, Object>) bm).remove("answer");
+                        }
+                    }
+                }
+            }
+        }
+        data.put("paper", isAnswer ? "answer" : "question");
         data.put("title", book.getTitle());
         data.put("accent", str(style.get("accent"), DEFAULT_ACCENT));
         data.put("subtitle", str(style.get("subtitle"), ""));

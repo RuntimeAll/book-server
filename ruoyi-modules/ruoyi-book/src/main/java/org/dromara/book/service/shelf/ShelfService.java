@@ -100,7 +100,9 @@ public class ShelfService {
             // 除非调用方显式按 special 类型查，否则一律剔除，避免专项泄漏进书架列表（集成回归 FINDING-1）。
             .ne(!"special".equals(bookType), BizShelfBook::getBookType, "special")
             .eq(subjectId != null && !subjectId.isBlank(), BizShelfBook::getSubjectId, subjectId)
-            .eq(status != null && !status.isBlank(), BizShelfBook::getStatus, status)
+            // 🔴 status 缺省=只列正常书（'0'）——归档书（'1'）不进书架列表（verifier B6：
+            //    G-TEST 归档书曾照常列出）；要看归档显式传 status='1'。
+            .eq(BizShelfBook::getStatus, (status != null && !status.isBlank()) ? status : "0")
             .orderByDesc(BizShelfBook::getId);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (BizShelfBook b : bookMapper.selectList(w)) {

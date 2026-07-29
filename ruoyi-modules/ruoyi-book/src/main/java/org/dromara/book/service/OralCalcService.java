@@ -475,6 +475,7 @@ public class OralCalcService {
         switch (rnd.nextInt(5)) {
             case 0 -> {                                         // A－B÷C×D
                 int c = ri(rnd, 2, 9), q = ri(rnd, 2, 9), b = c * q, d = ri(rnd, 2, 9);
+                if (c == d) return null;                        // 🔴 ÷C×D 同数相消=退化一步（verifier S5）
                 int p = q * d;
                 if (p >= 990) return null;
                 int a = ri(rnd, p + 1, 999);
@@ -482,6 +483,7 @@ public class OralCalcService {
             }
             case 1 -> {                                         // (A＋B)÷C×D
                 int c = ri(rnd, 2, 9), q = ri(rnd, 2, 20), s = c * q, d = ri(rnd, 2, 9);
+                if (c == d) return null;                        // 同上：÷C×D 相消防退化
                 if (s < 12 || q * d > 1000) return null;
                 int a = ri(rnd, 5, s - 5);
                 if (a < 5 || s - a < 5) return null;
