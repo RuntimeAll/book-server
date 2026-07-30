@@ -237,6 +237,57 @@ public class PunchService {
     }
 
     /**
+     * 整书导出（2026-07-30 用户点单）：全部天逐天渲染后 PDFBox 合并成册 → OSS。
+     * 每种卷出一份全册 PDF（题目全册 / 解析全册），替代 FE 逐天串行出 20 个散链接。
+     * 同步长任务（每天一次 Chrome 渲染，10 天双卷约 40-80s）——FE 侧超时须放宽。
+     *
+     * @param papers 要出的卷（question/answer），空 = 双卷
+     * @return {questionUrl?, answerUrl?, days}
+     */
+    public Map<String, Object> exportBook(Long bookId, List<String> papers) {
+        List<String> want = new ArrayList<>();
+        if (papers != null) {
+            for (Object o : papers) {
+                String s = String.valueOf(o);
+                if ("question".equals(s) || "answer".equals(s)) want.add(s);
+            }
+        }
+        if (want.isEmpty()) {
+            want.add("question");
+            want.add("answer");
+        }
+        List<Integer> days = new ArrayList<>();
+        for (Map<String, Object> d : listDays(bookId)) {
+            days.add((Integer) d.get("day"));
+        }
+        if (days.isEmpty()) throw new ServiceException("本书还没有内容", 400);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("days", days.size());
+        for (String paper : want) {
+            org.apache.pdfbox.multipdf.PDFMergerUtility merger = new org.apache.pdfbox.multipdf.PDFMergerUtility();
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            merger.setDestinationStream(bos);
+            for (int day : days) {
+                byte[] pdf = renderer.render(THEME, assembleDay(bookId, (int) day, paper), "punch-book-d" + day + "-" + paper);
+                merger.addSource(new java.io.ByteArrayInputStream(trimBlankTailPages(pdf)));
+            }
+            try {
+                merger.mergeDocuments(org.apache.pdfbox.io.MemoryUsageSetting.setupMainMemoryOnly());
+            } catch (java.io.IOException e) {
+                log.error("[punch] 整书合并失败 bookId={} paper={}", bookId, paper, e);
+                throw new ServiceException("整书 PDF 合并失败: " + e.getMessage(), 500);
+            }
+            OssClient oss = OssFactory.instance();
+            UploadResult up = oss.uploadSuffix(bos.toByteArray(), ".pdf", "application/pdf");
+            r.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
+            log.info("[punch] 整书导出 bookId={} paper={} days={} size={}B", bookId, paper, days.size(), bos.size());
+        }
+        return r;
+    }
+
+    /**
      * 裁掉尾部空白页：版面留白微溢出 297mm 时 Chrome 会多出一页。punch-v1 页脚是
      * {@code position:fixed}（每页重复），故溢出页上仍有「第 N 天/玉米练习册」文本——
      * 空白判定=剥去页脚词后无任何文本。只从末页向前裁，至少保留 1 页；失败按原样返回不阻塞导出。

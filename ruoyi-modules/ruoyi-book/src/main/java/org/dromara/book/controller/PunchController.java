@@ -86,6 +86,18 @@ public class PunchController {
             strList(body.get("papers"))));
     }
 
+    /**
+     * 整书导出（2026-07-30）：全部天合并成册，每种卷一份全册 PDF。
+     * 同步长任务（10 天双卷约 40-80s），FE 调用侧超时放宽到 5 分钟。
+     */
+    @SaCheckLogin
+    @PostMapping("/exportBook")
+    public R<Map<String, Object>> exportBook(@RequestBody Map<String, Object> body) {
+        return R.ok(punchService.exportBook(
+            reqId(body.get("bookId"), "bookId"),
+            strList(body.get("papers"))));
+    }
+
     @SaCheckLogin
     @PostMapping("/upsertDay")
     public R<Map<String, Object>> upsertDay(@RequestBody Map<String, Object> body) {
