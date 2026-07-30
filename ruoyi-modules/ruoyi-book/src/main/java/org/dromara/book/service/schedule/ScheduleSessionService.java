@@ -221,7 +221,9 @@ public class ScheduleSessionService {
                 s.setTargetType(bo.getTargetType());
                 s.setTargetId(bo.getTargetId());
                 s.setPlanId(bo.getPlanId());
-                s.setSessionDate(LocalDate.parse(it.getDate()));
+                // 🔴 与 validateItems 的 parseDateOr400 口径统一（PRD-015 顺手修）：校验期 trim 过、
+                //   插入期不 trim → " 2026-08-01" 这类带空白入参校验通过却在此抛 DateTimeParseException 裸 500。
+                s.setSessionDate(LocalDate.parse(it.getDate().trim()));
                 s.setStartTime(it.getStart());
                 s.setEndTime(it.getEnd());
                 String type = it.getSessionType() == null ? "1" : it.getSessionType();
@@ -425,7 +427,8 @@ public class ScheduleSessionService {
     /** 通用改：改期(改时间不触发顺延)/note/rebind(改绑只改本场，plan_id 随课次同步 = R1b S4)。 */
     public void update(Long id, SessionUpdateBo bo) {
         BizScheduleSession s = require(id);
-        if (bo.getDate() != null) s.setSessionDate(LocalDate.parse(bo.getDate()));
+        // trim 口径同批量排课（PRD-015 顺手修）
+        if (bo.getDate() != null) s.setSessionDate(LocalDate.parse(bo.getDate().trim()));
         if (bo.getStart() != null) s.setStartTime(bo.getStart());
         if (bo.getEnd() != null) s.setEndTime(bo.getEnd());
         if (bo.getNote() != null) s.setNote(bo.getNote());

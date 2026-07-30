@@ -250,7 +250,7 @@ public class ScheduleTargetService {
                 m.put("parentPhone", s.getParentPhone());
                 m.put("color", s.getColor());
                 m.put("archived", s.getArchived());
-                fillAggregates(m, "0", s.getId(), today);
+                fillAggregates(m, "0", s.getId(), today, s.getSubject());
                 out.add(m);
             }
         }
@@ -271,7 +271,7 @@ public class ScheduleTargetService {
                 long stuCount = classStudentMapper.selectCount(
                     new LambdaQueryWrapper<BizClassStudent>().eq(BizClassStudent::getClassId, c.getId()));
                 m.put("studentCount", stuCount);
-                fillAggregates(m, "1", c.getId(), today);
+                fillAggregates(m, "1", c.getId(), today, c.getSubject());
                 out.add(m);
             }
         }
@@ -333,7 +333,8 @@ public class ScheduleTargetService {
         m.put("textbook", EduTermUtil.textbookLabel(textbookEdition, gradeNo, gradeYear, today));
     }
 
-    private void fillAggregates(Map<String, Object> m, String targetType, Long targetId, LocalDate today) {
+    private void fillAggregates(Map<String, Object> m, String targetType, Long targetId, LocalDate today,
+                                String primarySubject) {
         List<BizScheduleSession> ss = sessionMapper.selectList(new LambdaQueryWrapper<BizScheduleSession>()
             .eq(BizScheduleSession::getTargetType, targetType)
             .eq(BizScheduleSession::getTargetId, targetId));
@@ -344,19 +345,21 @@ public class ScheduleTargetService {
         m.put("doneCount", done);
         m.put("leaveCount", leave);
 
-        // 绑定计划 + 进度（取有绑定的首个 plan_id）
-        Long planId = ss.stream().map(BizScheduleSession::getPlanId).filter(java.util.Objects::nonNull)
-            .findFirst().orElse(null);
-        if (planId != null) {
-            BizCoursePlan plan = planMapper.selectById(planId);
-            long total = lessonMapper.selectCount(
-                new LambdaQueryWrapper<BizCoursePlanLesson>().eq(BizCoursePlanLesson::getPlanId, planId));
-            long progressDone = ss.stream()
-                .filter(x -> planId.equals(x.getPlanId()) && "1".equals(x.getSessionStatus())).count();
-            m.put("planId", String.valueOf(planId));
-            m.put("planName", plan == null ? null : plan.getName());
-            m.put("progressDone", progressDone);
-            m.put("progressTotal", total);
+        // ── PRD-015：按学科返回**多计划绑定**（一生多科多计划，读侧不串科）──
+        // 原实现只取 findFirst 的单个 plan_id，学生同时上数学+科学时另一科的计划与进度被吞掉。
+        // planBindings = additive 字段；planId/planName/progressDone/progressTotal 四个旧字段保留
+        // （取主科绑定，无主科则第一条），不破坏现网卡片渲染。
+        List<Map<String, Object>> bindings = buildPlanBindings(ss, primarySubject);
+        m.put("planBindings", bindings);
+        Map<String, Object> main = bindings.stream()
+            .filter(b -> primarySubject != null && primarySubject.equals(b.get("subject")))
+            .findFirst()
+            .orElse(bindings.isEmpty() ? null : bindings.get(0));
+        if (main != null) {
+            m.put("planId", main.get("planId"));
+            m.put("planName", main.get("planName"));
+            m.put("progressDone", main.get("progressDone"));
+            m.put("progressTotal", main.get("progressTotal"));
         } else {
             m.put("planId", null);
             m.put("planName", null);
@@ -382,6 +385,47 @@ public class ScheduleTargetService {
         } else {
             m.put("nextSession", null);
         }
+    }
+
+    /**
+     * PRD-015 多计划绑定聚合：该对象场次里出现过的每个 plan_id 各一条
+     * {subject, planId, planName, progressDone, progressTotal}，按 学科码 → planId 稳定排序。
+     *
+     * <p>学科取值优先级：计划自身 subject → 该计划下场次的 subject（排课层可覆写）→ 对象主科。
+     */
+    private List<Map<String, Object>> buildPlanBindings(List<BizScheduleSession> ss, String primarySubject) {
+        List<Long> planIds = ss.stream()
+            .map(BizScheduleSession::getPlanId)
+            .filter(java.util.Objects::nonNull)
+            .distinct()
+            .toList();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Long pid : planIds) {
+            BizCoursePlan plan = planMapper.selectById(pid);
+            String subject = plan == null ? null : plan.getSubject();
+            if (subject == null || subject.isBlank()) {
+                subject = ss.stream()
+                    .filter(x -> pid.equals(x.getPlanId()) && x.getSubject() != null && !x.getSubject().isBlank())
+                    .map(BizScheduleSession::getSubject).findFirst().orElse(primarySubject);
+            }
+            long total = lessonMapper.selectCount(
+                new LambdaQueryWrapper<BizCoursePlanLesson>().eq(BizCoursePlanLesson::getPlanId, pid));
+            long progressDone = ss.stream()
+                .filter(x -> pid.equals(x.getPlanId()) && "1".equals(x.getSessionStatus())).count();
+            Map<String, Object> b = new LinkedHashMap<>();
+            b.put("subject", subject);
+            b.put("subjectLabel", EduTermUtil.subjectLabel(subject));
+            b.put("planId", String.valueOf(pid));
+            b.put("planName", plan == null ? null : plan.getName());
+            b.put("progressDone", progressDone);
+            b.put("progressTotal", total);
+            out.add(b);
+        }
+        out.sort(Comparator
+            .comparing((Map<String, Object> b) -> (String) b.get("subject"),
+                Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(b -> String.valueOf(b.get("planId"))));
+        return out;
     }
 
     private String sessionTitle(BizScheduleSession s) {
