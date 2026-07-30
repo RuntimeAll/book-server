@@ -37,10 +37,22 @@ public class BizFeedbackSheet extends BaseEntity {
     /** 学生 id（biz_student.id / biz_teach_target.id）。 */
     private Long targetId;
 
+    /**
+     * 绑定场次（PRD-015 D6 主绑定）：反馈单挂 biz_schedule_session.id，计划/课次/日期由场次自然带出。
+     * NULL = 遗留单（PRD-010 batch_key 体系）或手工散单。
+     */
+    private Long sessionId;
+
+    /** 冗余计划 id（PRD-015 D6，供「按计划查/导出」；随 sessionId 一起写）。NULL=遗留单。 */
+    private Long planId;
+
     /** 反馈批次键（PRD-010 独立批次，不绑课程计划；如"多多五上暑假数学"）。NULL=散单。 */
     private String batchKey;
 
-    /** 批次内课次号（依次递增）。NULL=散单。 */
+    /**
+     * 序号（依次递增）。语义随卡演进：PRD-010 = 批次内课次号；
+     * PRD-015 D7 = <b>计划内反馈序号</b>（服务端自动 = 该 plan 下现有反馈 max+1）。NULL=散单。
+     */
     private Integer lessonSeq;
 
     /** 反馈单标题（如：乐乐七上暑假数学第一节课上课内容）。 */

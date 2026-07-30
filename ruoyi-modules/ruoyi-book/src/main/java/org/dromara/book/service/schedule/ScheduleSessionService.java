@@ -57,6 +57,11 @@ public class ScheduleSessionService {
     private final BizQuestionMapper questionMapper;
     private final BizPrepPackMapper prepPackMapper;
     private final PaperSlotService paperSlotService;
+    /**
+     * PRD-015 AC6 冲正钩子：请假/取消已结算场次时返还课时课费。
+     * 🔴 单向依赖（本类 → SettlementService），反向绝不加，否则构造注入成环。
+     */
+    private final SettlementService settlementService;
 
     /**
      * R1b S3 反向回填：场次新绑定/换绑到已有备课包的课次时，session.prep_status（日历色点缓存）
@@ -256,16 +261,26 @@ public class ScheduleSessionService {
     // ─────────────────────── 顺延（leave/cancel） ───────────────────────
 
     /**
-     * 请假/取消 + 触发顺延（契约§五-2）。newStatus='2' 请假 / '3' 取消。
-     * R1b BUG-003 防重入闸：仅「已排」('0') 场次可操作——已取消/已上场次重复触发会把顺延链再跑一遍腐蚀数据。
+     * 请假/取消 + 触发顺延（契约§五-2）+ <b>结算冲正</b>（PRD-015 AC6）。newStatus='2' 请假 / '3' 取消。
+     *
+     * <p>R1b BUG-003 防重入闸：仅「已排」('0') 场次可操作——已取消/已上场次重复触发会把顺延链再跑一遍腐蚀数据。
+     * 🔴 PRD-015 放行一类：<b>已结算</b>（session_status='1' 且 settle_status='1'）的场次可改请假/取消，
+     * 此时同事务内走冲正（返还该场实扣课时课费 + settle_status='2' + 空反馈壳删除）。
+     * 冲完 session_status 变 '2'/'3'、settle_status 变 '2' → 再点一次被本闸挡住，绝不双冲（G4 反性自检）。
+     *
+     * <p>🔴 顺延改绑（下方 lessonQueue 段）与归档联动取消<b>不产生任何流水</b>：钱只在显式结算/显式冲正动。
      */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> leaveOrCancel(Long sessionId, String newStatus) {
         BizScheduleSession event = sessionMapper.selectById(sessionId);
         if (event == null) throw new ServiceException("场次不存在");
-        if (!"0".equals(event.getSessionStatus())) {
-            throw new ServiceException("仅「已排」场次可请假/取消");
+        boolean settled = "1".equals(event.getSessionStatus()) && "1".equals(event.getSettleStatus());
+        if (!"0".equals(event.getSessionStatus()) && !settled) {
+            throw new ServiceException("仅「已排」或「已结算」场次可请假/取消");
         }
+        // PRD-015 冲正钩子：置 settle_status='2' 并插 '3' 流水（未结算场次返 null，零副作用）
+        Map<String, Object> reversal = settlementService.reverseIfSettled(event,
+            "2".equals(newStatus) ? "请假冲正" : "取消冲正");
         event.setSessionStatus(newStatus);
         sessionMapper.updateById(event);
 
@@ -324,6 +339,8 @@ public class ScheduleSessionService {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("deferred", deferred);
         r.put("overflow", overflow);
+        // PRD-015 additive：冲正明细 {hours, amount, deletedShells, keptShells}；未结算场次为 null
+        r.put("reversal", reversal);
         return r;
     }
 
@@ -589,6 +606,10 @@ public class ScheduleSessionService {
             : paperSlotService.deriveStatusFromMaterials(lesson == null ? null : lesson.getSpecialIds(),
                 lesson == null ? null : lesson.getBookNodeIds()));
         m.put("lessonLocked", s.getLessonLocked());
+        // PRD-015：结算态徽标（'0' 未结 / '1' 已结 / '2' 已冲正；旧数据 NULL 视为未结）
+        m.put("settleStatus", s.getSettleStatus() == null ? "0" : s.getSettleStatus());
+        // 已结场次带上实扣快照，FE 冲正确认文案「将返还 X 课时 / ¥Y」直接吃（未结不查库）
+        m.put("settled", "1".equals(s.getSettleStatus()) ? settlementService.settledSnapshot(s.getId()) : null);
         String subj = resolveSubject(s);
         m.put("subject", subj);
         m.put("subjectLabel", EduTermUtil.subjectLabel(subj));

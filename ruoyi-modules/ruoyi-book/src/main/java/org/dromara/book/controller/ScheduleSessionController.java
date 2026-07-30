@@ -6,8 +6,10 @@ import org.dromara.book.domain.bo.ConflictCheckBo;
 import org.dromara.book.domain.bo.SessionBatchBo;
 import org.dromara.book.domain.bo.SessionReviewBo;
 import org.dromara.book.domain.bo.SessionUpdateBo;
+import org.dromara.book.domain.bo.SettleBo;
 import org.dromara.book.service.schedule.ScheduleSessionService;
 import org.dromara.book.service.schedule.SessionReviewService;
+import org.dromara.book.service.schedule.SettlementService;
 import org.dromara.book.util.ScheduleRenderUtil;
 import jakarta.servlet.http.HttpServletResponse;
 import org.dromara.common.core.domain.R;
@@ -39,6 +41,7 @@ public class ScheduleSessionController {
 
     private final ScheduleSessionService sessionService;
     private final SessionReviewService reviewService;
+    private final SettlementService settlementService;
     private final ScheduleRenderUtil renderUtil;
 
     // ─────────────────────── 排课 ───────────────────────
@@ -130,6 +133,28 @@ public class ScheduleSessionController {
     @GetMapping("/session/{id}/review")
     public R<Map<String, Object>> getReview(@PathVariable Long id) {
         return R.ok(reviewService.get(id));
+    }
+
+    // ─────────────────────── 结算（PRD-015 D4/D5） ───────────────────────
+
+    /**
+     * 待结算清单（AC5 / V11）：结束时间已过 + 已排 + 未结的本人场次。
+     * 🔴 只提醒不自动扣（D4）——本端点纯读，扣费只在 POST /settle。
+     */
+    @SaCheckLogin
+    @GetMapping("/settle/pending")
+    public R<List<Map<String, Object>>> settlePending() {
+        return R.ok(settlementService.pending());
+    }
+
+    /**
+     * 一键结算（AC5）：{items:[{sessionId,hours?,timeNote?}], genFeedback}。
+     * 逐场独立事务 → {settled, feedbackSheetIds, skipped:[{sessionId,reason}]}。
+     */
+    @SaCheckLogin
+    @PostMapping("/settle")
+    public R<Map<String, Object>> settle(@RequestBody SettleBo bo) {
+        return R.ok(settlementService.settle(bo));
     }
 
     // ─────────────────────── 统计 / 待备 ───────────────────────

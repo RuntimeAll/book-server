@@ -56,6 +56,14 @@ public class BizScheduleSession extends BaseEntity {
     /** 状态：'0' 已排 / '1' 已上 / '2' 请假 / '3' 取消 */
     private String sessionStatus;
 
+    /**
+     * 结算态（PRD-015 D4）：'0' 未结 / '1' 已结 / '2' 已冲正。
+     *
+     * <p>🔴 只由结算链写：一键结算置 '1'，请假/取消冲正置 '2'（见 SettlementService）；
+     * 排课/改期/归档联动取消一律不动本列（不自动扣费，D4 只提醒语义）。
+     */
+    private String settleStatus;
+
     /** 场次备课态：'0' 未备 / '1' 备课中 / '2' 已备好 */
     private String prepStatus;
 
