@@ -46,11 +46,15 @@ public class CoursePlanService {
     private final BizClassMapper classMapper;
     private final ScheduleRenderUtil renderUtil;
     private final PaperSlotService paperSlotService;
+    /** PRD-015：学科归属校验（学生×学科账户 = 学科绑定的物理载体，D3）。 */
+    private final TuitionAccountService accountService;
 
     @Transactional(rollbackFor = Exception.class)
     public Long upsertPlan(CoursePlanBo bo) {
         BizCoursePlan p = bo.getId() == null ? new BizCoursePlan() : planMapper.selectById(bo.getId());
         if (p == null) throw new ServiceException("计划不存在");
+        // PRD-015 学科归属校验用：记录改动前的学科（不变则不重复校验，老计划照旧可编辑）
+        String oldSubject = p.getSubject();
         if (bo.getName() != null) p.setName(bo.getName());
         if (bo.getTargetType() != null) p.setTargetType(bo.getTargetType());
         if (bo.getTargetId() != null) p.setTargetId(bo.getTargetId());
@@ -75,11 +79,29 @@ public class CoursePlanService {
                 throw new ServiceException("建计划必须指定归属对象 targetId（S1）", 400);
             }
             requireTarget(p.getTargetType(), p.getTargetId());
+            requireSubjectAccount(p, oldSubject);
             planMapper.insert(p);
         } else {
+            requireSubjectAccount(p, oldSubject);
             planMapper.updateById(p);
         }
         return p.getId();
+    }
+
+    /**
+     * PRD-015 学科归属校验（D3「开户即绑定学科」）：学生对象的计划，其学科必须已开通课时账户。
+     *
+     * <p>只在<b>学科真的变了</b>（建计划 / 改学科）时校验——不变则放行，存量老计划照旧可编辑。
+     * 🔴 班级（target_type='1'）跳过：班课收费模型未拍，账户仅学生对象（PRD-015 §9 边界）。
+     */
+    private void requireSubjectAccount(BizCoursePlan p, String oldSubject) {
+        if ("1".equals(p.getTargetType())) return;
+        String subject = p.getSubject();
+        if (subject == null || subject.isBlank()) return;
+        if (subject.equals(oldSubject)) return;
+        if (!accountService.hasAccount(p.getTargetId(), subject)) {
+            throw new ServiceException("先为学生开通" + EduTermUtil.subjectLabel(subject) + "账户", 400);
+        }
     }
 
     /** S1：归属对象存在性校验。 */
