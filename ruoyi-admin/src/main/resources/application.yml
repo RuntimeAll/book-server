@@ -73,10 +73,12 @@ spring:
   # 文件上传
   servlet:
     multipart:
-      # 单个文件大小（PRD-A-002 B2：路B 整卷 PDF 录题，真实试卷常 >10MB，提到 30MB 对齐 IngestJobController.MAX_FILE_SIZE）
-      max-file-size: 30MB
+      # 单个文件大小（PRD-A-002 B2：路B 整卷 PDF 录题，真实试卷常 >10MB，曾提到 30MB 对齐 IngestJobController.MAX_FILE_SIZE；
+      # 2026-07-30 再提到 100MB 对齐 ShelfPdfImportService.MAX_FILE_SIZE=PDF 直录整本待解析书。
+      # 🔴 各上传端点仍各自持有更严的业务上限（录题作业 30MB / 举一反三图 10MB），本项只是容器层天花板）
+      max-file-size: 100MB
       # 设置总上传的文件大小
-      max-request-size: 30MB
+      max-request-size: 100MB
   mvc:
     # 设置静态资源路径 防止所有请求都去查静态资源
     static-path-pattern: /static/**

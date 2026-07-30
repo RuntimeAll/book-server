@@ -7,8 +7,10 @@ import org.dromara.book.domain.bo.ShelfImportBo;
 import org.dromara.book.domain.bo.ShelfItemBo;
 import org.dromara.book.domain.bo.ShelfNodeBo;
 import org.dromara.book.service.shelf.BookExportService;
+import org.dromara.book.service.shelf.ShelfPdfImportService;
 import org.dromara.book.service.shelf.ShelfService;
 import org.dromara.common.core.domain.R;
+import org.dromara.common.core.exception.ServiceException;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,6 +40,7 @@ public class ShelfController {
 
     private final ShelfService shelfService;
     private final BookExportService bookExportService;
+    private final ShelfPdfImportService shelfPdfImportService;
 
     // ───────────────── 书 ─────────────────
 
@@ -83,6 +87,41 @@ public class ShelfController {
     public R<Void> deleteBook(@PathVariable Long id) {
         shelfService.deleteBook(id);
         return R.ok();
+    }
+
+    /**
+     * 绑定书的网盘链接（整表覆盖保存，零 DDL 落 style_meta_json.netdisks）。
+     * body: {@code {netdisks:[{provider,url,code?,note?}]}}，provider ∈ baidu/quark/aliyun/other，
+     * 空数组=清空，上限 10 条。🔴 只覆盖 netdisks 键，style_meta 其余键原样保留。
+     * 返回 {bookId, netdisks}；书详情/列表的 styleMeta 里天然带出。
+     */
+    @SaCheckLogin
+    @PostMapping("/book/{id}/netdisks")
+    public R<Map<String, Object>> saveNetdisks(@PathVariable Long id,
+                                               @RequestBody(required = false) Map<String, Object> body) {
+        Object raw = body == null ? null : body.get("netdisks");
+        if (raw != null && !(raw instanceof List)) {
+            throw new ServiceException("netdisks 必须是数组", 400);
+        }
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> netdisks = (List<Map<String, Object>>) raw;
+        return R.ok(shelfService.saveNetdisks(id, netdisks));
+    }
+
+    /**
+     * PDF 直录待解析书（轻挂载）。multipart：file 必填、title 必填、grade/subjectId 选填。
+     * 原件进 OSS + 第 1 页渲封面 PNG + 建 {@code book_type=pdf_pending} 空壳书。
+     * 返回 {id, title, bookType, pdfUrl, pdfPages, coverUrl}。
+     */
+    @SaCheckLogin
+    @PostMapping("/book/importPdf")
+    public R<Map<String, Object>> importPdf(@RequestParam(value = "file", required = false) MultipartFile file,
+                                            // 🔴 required=false 是故意的：交给 Service 出人话 400，
+                                            //    否则 Spring 的 MissingServletRequestParameter 会被兜成 500「未知异常」
+                                            @RequestParam(value = "title", required = false) String title,
+                                            @RequestParam(value = "grade", required = false) String grade,
+                                            @RequestParam(value = "subjectId", required = false) String subjectId) {
+        return R.ok(shelfPdfImportService.importPdf(file, title, grade, subjectId));
     }
 
     // ───────────────── 节点 ─────────────────
