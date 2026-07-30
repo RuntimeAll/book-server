@@ -63,7 +63,8 @@ public class ShelfPdfImportService {
      * @return {id, title, bookType, pdfUrl, pdfPages, coverUrl}
      */
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> importPdf(MultipartFile file, String title, String grade, String subjectId) {
+    public Map<String, Object> importPdf(MultipartFile file, String title, String grade, String subjectId,
+                                         String edition, String unit) {
         if (file == null || file.isEmpty()) {
             throw new ServiceException("上传文件不能为空", 400);
         }
@@ -113,15 +114,20 @@ public class ShelfPdfImportService {
         ShelfBookBo bo = new ShelfBookBo();
         bo.setTitle(title.trim());
         bo.setBookType(ShelfService.BOOK_TYPE_PDF_PENDING);
+        // 🔴 grade 口径=年级+册合一（"七年级上"），与书架 年级/册 筛选同源——调用方按此传
         bo.setGrade(StringUtils.trimToNull(grade));
         bo.setSubjectId(StringUtils.trimToNull(subjectId));
+        bo.setEdition(StringUtils.trimToNull(edition));
         Long bookId = shelfService.createBook(bo);
 
-        // ④ style_meta 合并写三件套（新书 style_meta 本为空，仍走合并写通路，语义一致）
+        // ④ style_meta 合并写三件套 + 章节（unit：表无列，挂 style_meta，FE 卡片展示/检索用）
         Map<String, Object> patch = new LinkedHashMap<>();
         patch.put("pdfUrl", pdfUrl);
         patch.put("pdfPages", pdfPages);
         patch.put("coverUrl", coverUrl);
+        if (StringUtils.isNotBlank(unit)) {
+            patch.put("unit", unit.trim());
+        }
         BizShelfBook fresh = bookMapper.selectById(bookId);
         shelfService.mergeStyleMeta(fresh, patch);
 

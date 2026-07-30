@@ -120,8 +120,10 @@ public class ShelfController {
                                             //    否则 Spring 的 MissingServletRequestParameter 会被兜成 500「未知异常」
                                             @RequestParam(value = "title", required = false) String title,
                                             @RequestParam(value = "grade", required = false) String grade,
-                                            @RequestParam(value = "subjectId", required = false) String subjectId) {
-        return R.ok(shelfPdfImportService.importPdf(file, title, grade, subjectId));
+                                            @RequestParam(value = "subjectId", required = false) String subjectId,
+                                            @RequestParam(value = "edition", required = false) String edition,
+                                            @RequestParam(value = "unit", required = false) String unit) {
+        return R.ok(shelfPdfImportService.importPdf(file, title, grade, subjectId, edition, unit));
     }
 
     // ───────────────── 节点 ─────────────────
