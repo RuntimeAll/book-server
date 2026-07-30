@@ -188,7 +188,7 @@ public class OralCalcService {
             }
             // 难度档：basic 基础 / advanced 提高；空 = 原有随机行为（零回归）
             String level = str(g.get("level"), "");
-            List<String[]> items = generate(type.code(), count, rnd, seenAll, level);
+            List<Item> items = generate(type.code(), count, rnd, seenAll, level);
             Map<String, Object> go = new LinkedHashMap<>();
             go.put("label", withGroupLabel ? str(g.get("label"), type.name()) : "");
             go.put("cols", cols);
@@ -196,11 +196,14 @@ public class OralCalcService {
             String mode = str(g.get("mode"), "oral");
             if (!"oral".equals(mode) && !"vertical".equals(mode) && !"tuoshi".equals(mode)) mode = "oral";
             go.put("mode", mode);
-            List<Map<String, String>> its = new ArrayList<>();
-            for (String[] qa : items) {
-                Map<String, String> it = new LinkedHashMap<>();
-                it.put("q", qa[0]);
-                it.put("a", qa[1]);
+            List<Map<String, Object>> its = new ArrayList<>();
+            for (Item item : items) {
+                Map<String, Object> it = new LinkedHashMap<>();
+                it.put("q", item.q());
+                it.put("a", item.a());
+                // 🔴 脱式分步（PRD-013 B5 清偿）：steps=逐步化简串，末项=终值；无分步的类型不出该字段，
+                //    {q,a} 老消费方零影响（主题层有 steps 逐行印"＝xx"，无则回落只印结果）。
+                if (!item.steps().isEmpty()) it.put("steps", item.steps());
                 its.add(it);
             }
             go.put("items", its);
@@ -261,58 +264,172 @@ public class OralCalcService {
         }
     }
 
-    private List<String[]> generate(String code, int count, Random rnd, Set<String> seen, String level) {
-        List<String[]> out = new ArrayList<>();
+    private List<Item> generate(String code, int count, Random rnd, Set<String> seen, String level) {
+        GenCtx ctx = new GenCtx(rnd, level, count);
+        List<Item> out = new ArrayList<>();
         int tries = 0;
         while (out.size() < count && tries++ < count * MAX_TRY) {
-            String[] qa = genOne(code, rnd, level);
-            if (qa == null || !seen.add(qa[0])) continue;
-            out.add(qa);
+            Item it = genOne(code, ctx);
+            // 三道闸：档位/琐碎闸（genOne 返 null 重摇）→ 同质配额闸（ctx.accept）→ 跨组去重
+            if (it == null || !ctx.accept(it) || !seen.add(it.q())) continue;
+            ctx.mark(it);
+            out.add(it);
         }
         if (out.size() < count) {
-            // 数域太小去重耗尽（如 5 以内加法全集有限）：放开去重补足——卷面每行必须凑满，
+            // 数域太小去重/配额耗尽（如 5 以内加法全集有限）：放开闸门补足——卷面每行必须凑满，
             // 少量重复算式比残行可接受（口算本就反复练）。
-            log.warn("[oralcalc] 类型 {} 去重耗尽（{}/{}），放开去重补足", code, out.size(), count);
+            log.warn("[oralcalc] 类型 {} 去重/配额耗尽（{}/{}），放开闸门补足", code, out.size(), count);
+            ctx.relaxed = true;
             int guard = 0;
             while (out.size() < count && guard++ < count * MAX_TRY) {
-                String[] qa = genOne(code, rnd, level);
-                if (qa != null) out.add(qa);
+                Item it = genOne(code, ctx);
+                if (it != null) {
+                    ctx.mark(it);
+                    out.add(it);
+                }
             }
         }
         return out;
     }
+
+    /**
+     * 出题产物：题面 {@code q} / 答案 {@code a} / 分步化简串 {@code steps} / 结构签名 {@code struct}。
+     *
+     * <p>{@code steps}（脱式解析用，其余类型空）：每项 = 完成一步运算后的**整条算式**（不带"＝"前缀），
+     * 末项 = 终值（等于 {@code a}）。例 {@code 36－15×2＝} → {@code ["36－30","6"]}；
+     * {@code (26＋52)÷6×5＝} → {@code ["78÷6×5","13×5","65"]}。
+     *
+     * <p>{@code struct}：同质闸 / 骨架轮换用的结构签名（如 {@code dec1:intdec}、{@code mix3:axb+cxd}），
+     * **不出参**，只在一次 generate（= 一个 group）内做配额统计。null = 不参与同质闸。
+     */
+    private record Item(String q, String a, List<String> steps, String struct) {}
+
+    /** 结构硬配额（不随题数放宽）：整数减小数一组最多 2 道（2026-07-30 目检：一行四道全是 6－2.7 型）。 */
+    private static final Map<String, Integer> HARD_CAP = Map.of("dec1:intdec", 2);
+
+    /**
+     * 一次 generate（= 一个 group）的生成上下文：难度档 + 结构配额 + 骨架轮换。
+     *
+     * <p>🔴 同质闸（2026-07-30 审计）：同 group 内同结构占比 ≤60%（{@code cap}=round(count×0.6)，下限 1），
+     * 另加 {@link #HARD_CAP} 硬配额；{@link #pickForm} 只在"未用满且用得最少"的结构里挑 —— 因此
+     * 4 道 mixops3 必出 4 种骨架、4 道 mul2dtens 不会全是"两位数×整十"、一组小数不会全是"整数减小数"。
+     *
+     * <p>{@code relaxed}=true 是关卷兜底（去重/配额耗尽时放开闸门），保证卷面每行凑满不留残行。
+     */
+    private static final class GenCtx {
+        final Random rnd;
+        final String level;
+        final int cap;
+        final Map<String, Integer> used = new LinkedHashMap<>();
+        boolean relaxed;
+
+        GenCtx(Random rnd, String level, int count) {
+            this.rnd = rnd;
+            this.level = level == null ? "" : level;
+            this.cap = Math.max(1, (int) Math.round(count * 0.6));
+        }
+
+        boolean adv() {
+            return "advanced".equals(level);
+        }
+
+        boolean basic() {
+            return "basic".equals(level);
+        }
+
+        private int limit(String struct) {
+            return Math.min(cap, HARD_CAP.getOrDefault(struct, Integer.MAX_VALUE));
+        }
+
+        /** 结构池挑一个（未用满 + 用得最少 + seed 驱动随机），返回下标。 */
+        int pickForm(String[] forms) {
+            if (relaxed) return rnd.nextInt(forms.length);
+            int best = Integer.MAX_VALUE;
+            List<Integer> pick = new ArrayList<>();
+            for (int i = 0; i < forms.length; i++) {
+                int c = used.getOrDefault(forms[i], 0);
+                if (c >= limit(forms[i])) continue;
+                if (c < best) {
+                    best = c;
+                    pick.clear();
+                }
+                if (c == best) pick.add(i);
+            }
+            // 全池用满（配额合计 < 题数）：放开随机，交由 generate 的兜底段收尾
+            return pick.isEmpty() ? rnd.nextInt(forms.length) : pick.get(rnd.nextInt(pick.size()));
+        }
+
+        boolean accept(Item it) {
+            if (relaxed || it.struct() == null) return true;
+            return used.getOrDefault(it.struct(), 0) < limit(it.struct());
+        }
+
+        void mark(Item it) {
+            if (it.struct() != null) used.merge(it.struct(), 1, Integer::sum);
+        }
+    }
+
+    // ── 结构池（下标即分支号；池名进 struct 标签，只对内不出参）──
+    private static final String[] DEC1_B = {"dec1:add", "dec1:sub"};
+    private static final String[] DEC1_A = {"dec1:add", "dec1:sub", "dec1:intdec"};
+    private static final String[] ADD3D_F = {"add3d:add", "add3d:sub"};
+    private static final String[] MUL1D_B = {"mul1d:2dx1d", "mul1d:3dx1d"};
+    private static final String[] MUL1D_A = {"mul1d:mid0", "mul1d:carry"};
+    private static final String[] MUL1DORAL_A = {"mul1doral:2dx1d", "mul1doral:1dx2d"};
+    private static final String[] MUL2DTENS_A = {"mul2dtens:2dxt", "mul2dtens:tx2d"};
+    private static final String[] DIV1D_B = {"div1d:exact", "div1d:rem"};
+    private static final String[] DIV1D_A = {"div1d:mid0", "div1d:tail0", "div1d:short", "div1d:rem"};
+    /** 脱式·两步骨架池（基础档 8 种）—— 堵"骨架五天连出/同卷出两次"。 */
+    private static final String[] MIX3_B = {
+        "mix3:a+bxc", "mix3:a-bxc", "mix3:axb+c", "mix3:axb-c",
+        "mix3:a-b/c", "mix3:a/b+c", "mix3:(a+b)/c", "mix3:(a-b)xc"};
+    /** 脱式·三步骨架池（提高档 9 种：括号在前 / 括号在后 / 双括号 / 连乘除混加减）。 */
+    private static final String[] MIX3_A = {
+        "mix3:a-b/cxd", "mix3:(a+b)/cxd", "mix3:ax(b/c-d)", "mix3:a/(bxc)+d",
+        "mix3:a-(b+c)/d", "mix3:(a-b)xc+d", "mix3:axb+cxd", "mix3:axb-cxd",
+        "mix3:(a+b)x(c-d)"};
 
     /** 支持难度档的类型（三年级计算谱系先落地）；其余类型忽略 level、走原随机逻辑。 */
     private static final Set<String> LEVELED =
         Set.of("mul2d2d", "mul1d", "div1d", "dec1", "add3d", "mul2dtens", "mixops3",
                "mul1doral", "div1doral");
 
-    private String[] genOne(String code, Random rnd, String level) {
+    private Item genOne(String code, GenCtx ctx) {
+        // 🔴 脱式恒走骨架轮换生成器（含 steps）：无档缺省 = 三步（类型名即三步），basic = 两步
+        if ("mixops3".equals(code)) return genMixops3(ctx, !ctx.basic());
         // 🔴 支持档位的类型：genLeveled 返回 null = 本次摇的不满足档位约束，交给 generate 重摇，
         //    **绝不回落原随机逻辑** —— 回落会漏出不符合档位的题（如基础档出现首位不够除的除法）。
-        if (!level.isEmpty() && LEVELED.contains(code)) {
-            return genLeveled(code, rnd, level);
+        if (!ctx.level.isEmpty() && LEVELED.contains(code)) {
+            return genLeveled(code, ctx);
         }
-        return genOne(code, rnd);
+        return genOne(code, ctx.rnd);
     }
 
     /**
      * 难度档生成器：{@code basic} 基础 / {@code advanced} 提高。
      *
-     * <p>难度靠**客观开关**控制，不靠估计：进位次数 / 因数是否含 0 / 首位是否够除 / 是否退位。
+     * <p>难度靠**客观开关**控制，不靠估计：进位次数 / 因数是否含 0 / 首位是否够除 / 商是否含 0 / 是否退位。
      * 只覆盖三年级计算谱系（每日一练双版本的落点）；其余类型返回 null → 回落原随机逻辑。
      * 生成不满足档位约束时返回 null，由 {@link #generate} 的重试循环重摇。
+     *
+     * <p>🔴 2026-07-30 审计（45 页人眼目检）三处硬伤在此清偿：①dec1 伪小数（x.0 操作数 / 整数结果）；
+     * ②竖式基础档漏出口算级除法（80÷2 / 66÷6）与 1-3 数字池套路（32×22 / 23×23）；
+     * ③一行四道同结构（31×80 / 58×80 / 33×80）—— 结构轮换交 {@link GenCtx#pickForm}。
      */
-    private String[] genLeveled(String code, Random rnd, String level) {
-        boolean adv = "advanced".equals(level);
+    private Item genLeveled(String code, GenCtx ctx) {
+        Random rnd = ctx.rnd;
+        boolean adv = ctx.adv();
         switch (code) {
             case "mul1doral" -> {
                 // 🔴 basic=原随机（整十整百乘一位）；提高堵"20×2/70×3 送分"（2026-07-30 目检）：
                 //   两位数乘一位数口算（非整十）+ 必须进位（个位积≥10）——三上口算真实提高档。
+                //   两种乘序轮换（34×7 / 7×34）防一行四道同结构。
                 if (!adv) return genOne(code, rnd);
                 int a = ri(rnd, 12, 99), b = ri(rnd, 3, 9);
                 if (a % 10 == 0 || (a % 10) * b < 10 || a * b > 999) return null;
-                return qa(a + "×" + b + "＝", String.valueOf(a * b));
+                int f = ctx.pickForm(MUL1DORAL_A);
+                return f == 0 ? qa(a + "×" + b + "＝", String.valueOf(a * b), MUL1DORAL_A[0])
+                              : qa(b + "×" + a + "＝", String.valueOf(a * b), MUL1DORAL_A[1]);
             }
             case "div1doral" -> {
                 // basic=原随机（整十整百商）；提高：两位数÷一位数整除口算（商非整十，如 78÷6＝13）。
@@ -322,13 +439,19 @@ public class OralCalcService {
                 return qa((b * q) + "÷" + b + "＝", String.valueOf(q));
             }
             case "mul2d2d" -> {
-                // 基础=各位数字 1-3（各位积 <10，竖式不进位）
+                // 🔴 基础（2026-07-30 审计修）：原"各位 1-3"数字池太窄，32×22/22×23/23×11/23×23 套路裸奔。
+                //   改为各位 1-9 + **交叉积进位 ≤1 次**（"不进位 / 最多一次进位"口径）+ 两因数不同 +
+                //   个位非 0（个位 0 = 整十乘法，属口算）——池子放大数十倍，视觉套路消失，难度不变。
                 // 提高（2026-07-30 放宽）：各位 4-9 数域太窄，一卷里反复出 75×76/77×75 雷同；
                 //   改为各位 3-9 + 个位积进位（(a%10)*(b%10)≥10）+ a≠b —— 数域变大，进位保证不丢。
                 if (!adv) {
-                    int a0 = ri(rnd, 1, 3) * 10 + ri(rnd, 1, 3);
-                    int b0 = ri(rnd, 1, 3) * 10 + ri(rnd, 1, 3);
-                    return qa(a0 + "×" + b0 + "＝", String.valueOf(a0 * b0));
+                    int a1 = ri(rnd, 1, 9), a0 = ri(rnd, 1, 9), b1 = ri(rnd, 1, 9), b0 = ri(rnd, 1, 9);
+                    int carries = (a1 * b1 >= 10 ? 1 : 0) + (a1 * b0 >= 10 ? 1 : 0)
+                                + (a0 * b1 >= 10 ? 1 : 0) + (a0 * b0 >= 10 ? 1 : 0);
+                    if (carries > 1) return null;
+                    int x = a1 * 10 + a0, y = b1 * 10 + b0;
+                    if (x == y) return null;
+                    return qa(x + "×" + y + "＝", String.valueOf(x * y));
                 }
                 int a = ri(rnd, 3, 9) * 10 + ri(rnd, 3, 9);
                 int b = ri(rnd, 3, 9) * 10 + ri(rnd, 3, 9);
@@ -337,89 +460,162 @@ public class OralCalcService {
             }
             case "mul2dtens" -> {
                 // 🔴 basic = 原随机逻辑（零回归，G 回归线）；提高堵"61×10 送分"：
-                //   乘数排除 10（20-90 整十），被乘数个位非 0（必须真进位算两步）。
+                //   乘数排除 10（20-90 整十），被乘数个位非 0（必须真进位算两步）；
+                //   🔴 两种乘序轮换（81×30 / 30×81）——堵"一行四道全是两位数×整十"（2026-07-30 审计）。
                 if (!adv) return genOne(code, rnd);
                 int a = ri(rnd, 12, 99), b = ri(rnd, 2, 9) * 10;
                 if (a % 10 == 0) return null;
-                return qa(a + "×" + b + "＝", String.valueOf(a * b));
+                int f = ctx.pickForm(MUL2DTENS_A);
+                return f == 0 ? qa(a + "×" + b + "＝", String.valueOf(a * b), MUL2DTENS_A[0])
+                              : qa(b + "×" + a + "＝", String.valueOf(a * b), MUL2DTENS_A[1]);
             }
             case "mixops3" -> {
-                // 基础=两步（数域 100 内）；提高=三步跨级（含括号/两级运算）
-                return genMixops3(rnd, adv);
+                // 基础=两步（数域 100 内）；提高=三步跨级（含括号/两级运算）。骨架轮换 + steps 见 genMixops3
+                return genMixops3(ctx, adv);
             }
             case "mul1d" -> {
                 if (!adv) {
-                    int a = ri(rnd, 1, 3) * 100 + ri(rnd, 0, 3) * 10 + ri(rnd, 1, 3);
-                    int b = ri(rnd, 2, 3);
-                    return qa(a + "×" + b + "＝", String.valueOf(a * b));
+                    // 基础（审计修）：原"各位 1-3 × 乘数 2-3"同属套路池；改为各位 1-9（无 0，0 是提高档陷阱）、
+                    //   乘数 2-5、**进位 ≤1 次**，两位/三位数两种形态轮换。
+                    int f = ctx.pickForm(MUL1D_B);
+                    int b = ri(rnd, 2, 5);
+                    int a = f == 0 ? ri(rnd, 12, 98) : ri(rnd, 112, 987);
+                    int carries = 0;
+                    for (int n = a; n > 0; n /= 10) {
+                        int d = n % 10;
+                        if (d == 0) return null;
+                        if (d * b >= 10) carries++;
+                    }
+                    if (carries > 1) return null;
+                    return qa(a + "×" + b + "＝", String.valueOf(a * b), MUL1D_B[f]);
                 }
-                if (rnd.nextBoolean()) {                       // 因数中间有 0
+                int f = ctx.pickForm(MUL1D_A);
+                if (f == 0) {                                  // 因数中间有 0（409×5）
                     int a = ri(rnd, 1, 9) * 100 + ri(rnd, 1, 9), b = ri(rnd, 4, 9);
-                    return qa(a + "×" + b + "＝", String.valueOf(a * b));
+                    return qa(a + "×" + b + "＝", String.valueOf(a * b), MUL1D_A[0]);
                 }
                 int a = ri(rnd, 6, 9) * 100 + ri(rnd, 6, 9) * 10 + ri(rnd, 6, 9);
                 int b = ri(rnd, 6, 9);                         // 连续进位
-                return qa(a + "×" + b + "＝", String.valueOf(a * b));
+                return qa(a + "×" + b + "＝", String.valueOf(a * b), MUL1D_A[1]);
             }
             case "div1d" -> {
-                int b = ri(rnd, 2, 9);
                 if (!adv) {
-                    // 基础 = 两位数÷一位数、整除、首位够除（商两位数）——笔算除法起步形态。
-                    // 🔴 按位数构造而非碰运气：q 上界锁 99/b，保证被除数是两位数，首位必 ≥ b。
-                    int maxQ = 99 / b;
-                    if (maxQ < 11) return null;
-                    int q = ri(rnd, 11, maxQ);
-                    int d = b * q;
-                    return firstDigit(d) < b ? null : qa(d + "÷" + b + "＝", String.valueOf(q));
+                    // 🔴 基础（2026-07-30 审计修）：原"两位数÷一位数整除"漏出 80÷2 / 66÷6 / 55÷5 / 96÷6
+                    //   这类口算级题（放"列竖式"零训练价值）。现在必须"值得列竖式"：
+                    //   f0 = 三位数÷一位数整除（首位够除 → 商三位；商无 0 位；**至少一步有余数往下带**；
+                    //        排除"被除数是除数的整十倍数"如 240÷2）；
+                    //   f1 = 有余数（商 ≥ 两位）—— 余数本身就要求竖式。
+                    int f = ctx.pickForm(DIV1D_B);
+                    int b = ri(rnd, 2, 9);
+                    if (f == 0) {
+                        int q = ri(rnd, Math.max(100, (100 + b - 1) / b), 999 / b);
+                        int d = b * q;
+                        if (q < 100 || d < 100 || d > 999) return null;
+                        if (firstDigit(d) < b) return null;                  // 首位不够除 = 提高档
+                        if (hasZeroDigit(q)) return null;                    // 商含 0 = 提高档
+                        if (d % 10 == 0 && (d / 10) % b == 0) return null;   // 除数的整十倍数 = 口算级
+                        if (divCarrySteps(d, b) == 0) return null;           // 每位都整除（369÷3）= 口算级
+                        return qa(d + "÷" + b + "＝", String.valueOf(q), DIV1D_B[0]);
+                    }
+                    int q = ri(rnd, 11, 99), r = ri(rnd, 1, b - 1);
+                    int d = b * q + r;
+                    if (d > 999 || hasZeroDigit(q)) return null;             // 商末尾/中间 0 = 提高档
+                    return qa(d + "÷" + b + "＝", q + "……" + r, DIV1D_B[1]);
                 }
-                int q = ri(rnd, 11, 99);
-                if (rnd.nextBoolean()) {                       // 首位不够除（商比被除数少一位）
-                    int d = b * q;
-                    return firstDigit(d) >= b ? null : qa(d + "÷" + b + "＝", String.valueOf(q));
+                // 提高 = 四种错点形态轮换：商中间有 0 / 商末尾有 0 / 首位不够除 / 三位数有余数
+                int f = ctx.pickForm(DIV1D_A);
+                int b = ri(rnd, 2, 9);
+                switch (f) {
+                    case 0 -> {                                              // 商中间有 0（612÷6＝102）
+                        int q = ri(rnd, 1, 9) * 100 + ri(rnd, 1, 9);
+                        int d = b * q;
+                        if (d > 999) return null;
+                        // 🔴 难度倒挂修（2026-07-30 复审）：÷2 可心算折半（610÷2 实锤）。
+                        //   注意此形态不叠加 divCarrySteps 闸——商中间 0 的合法样本里"每位整除"占比高，
+                        //   叠闸会稀到触发放宽兜底、四形态覆盖断裂（终链测试实锤回滚）
+                        if (b < 3) return null;
+                        return qa(d + "÷" + b + "＝", String.valueOf(q), DIV1D_A[0]);
+                    }
+                    case 1 -> {                                              // 商末尾有 0（840÷4＝210）
+                        int q = ri(rnd, 11, 49) * 10;
+                        int d = b * q;
+                        if (d > 999) return null;
+                        // 同上：堵 300÷2/420÷2/880÷8（复审实锤提高版除法反比基础简单）
+                        if (b < 3 || divCarrySteps(d, b) == 0) return null;
+                        return qa(d + "÷" + b + "＝", String.valueOf(q), DIV1D_A[1]);
+                    }
+                    case 2 -> {                                              // 首位不够除（372÷6＝62）
+                        int q = ri(rnd, 11, 99);
+                        int d = b * q;
+                        if (d < 100 || d > 999 || firstDigit(d) >= b) return null;
+                        return qa(d + "÷" + b + "＝", String.valueOf(q), DIV1D_A[2]);
+                    }
+                    default -> {                                             // 三位数有余数
+                        if (b < 3) return null;
+                        int q = ri(rnd, 21, 110), r = ri(rnd, 1, b - 1);
+                        int d = b * q + r;
+                        if (d < 100 || d > 999) return null;
+                        return qa(d + "÷" + b + "＝", q + "……" + r, DIV1D_A[3]);
+                    }
                 }
-                int r = ri(rnd, 1, b - 1);                     // 有余数
-                return qa((b * q + r) + "÷" + b + "＝", q + "……" + r);
             }
             case "dec1" -> {
-                // 以「十分之一」为整数单位算，规避浮点误差；dec1() 负责回显小数
+                // 以「十分之一」为整数单位算，规避浮点误差；dec1() 负责回显小数。
+                // 🔴 2026-07-30 审计铁律（两条，构造式保证不靠碰运气）：
+                //   ①**操作数十分位 ≠ 0** —— 禁 2.0＋3.8 / 6.0－4.0 这类伪小数（等价整数运算，还教错"小数末尾0"）；
+                //   ②**结果十分位 ≠ 0** —— 禁答案 10.0 / 4.0 / 2.0（三下未学小数性质不能化简，家长照着判错）。
+                // 基础 = 个位数.一位、不进不退（3.5＋4.1）；提高 = 可到两位数.一位且必含进/退位（14.6－8.9）。
                 if (!adv) {
-                    if (rnd.nextBoolean()) {                    // 不进位加
-                        int a = ri(rnd, 11, 80), b = ri(rnd, 11, 80);
-                        return (a % 10 + b % 10 >= 10 || a + b > 999) ? null
-                            : qa(dec1(a) + "＋" + dec1(b) + "＝", dec1(a + b));
+                    int f = ctx.pickForm(DEC1_B);
+                    if (f == 0) {                                            // 不进位加
+                        int ad = ri(rnd, 1, 8), bd = ri(rnd, 1, 9 - ad);     // 十分位和 ≤9 且 ≥2
+                        int ai = ri(rnd, 1, 8), bi = ri(rnd, 1, 9 - ai);     // 整数部分和 ≤9
+                        int a = ai * 10 + ad, b = bi * 10 + bd;
+                        return qa(dec1(a) + "＋" + dec1(b) + "＝", dec1(a + b), DEC1_B[0]);
                     }
-                    int a = ri(rnd, 21, 99), b = ri(rnd, 11, a - 10);   // 不退位减
-                    return a % 10 < b % 10 ? null : qa(dec1(a) + "－" + dec1(b) + "＝", dec1(a - b));
+                    int ad = ri(rnd, 2, 9), bd = ri(rnd, 1, ad - 1);         // 不退位减，差的十分位 ≥1
+                    int ai = ri(rnd, 2, 9), bi = ri(rnd, 1, ai);
+                    int a = ai * 10 + ad, b = bi * 10 + bd;
+                    return qa(dec1(a) + "－" + dec1(b) + "＝", dec1(a - b), DEC1_B[1]);
                 }
-                int form = rnd.nextInt(3);
-                if (form == 0) {                               // 进位加
-                    int a = ri(rnd, 11, 90), b = ri(rnd, 11, 90);
-                    return a % 10 + b % 10 < 10 ? null : qa(dec1(a) + "＋" + dec1(b) + "＝", dec1(a + b));
+                int f = ctx.pickForm(DEC1_A);
+                if (f == 0) {                                                // 进位加（十分位和 11-18）
+                    int ad = ri(rnd, 2, 9), bd = ri(rnd, 11 - ad, 9);
+                    if (ad + bd < 11) return null;                           // 和 =10 会出 x.0 结果，剔除
+                    int ai = ri(rnd, 2, 19), bi = ri(rnd, 2, 19);
+                    int a = ai * 10 + ad, b = bi * 10 + bd;
+                    return qa(dec1(a) + "＋" + dec1(b) + "＝", dec1(a + b), DEC1_A[0]);
                 }
-                if (form == 1) {                               // 退位减
-                    int a = ri(rnd, 21, 99), b = ri(rnd, 11, a - 5);
-                    return a % 10 >= b % 10 ? null : qa(dec1(a) + "－" + dec1(b) + "＝", dec1(a - b));
+                if (f == 1) {                                                // 退位减（14.6－8.9）
+                    int ad = ri(rnd, 1, 8), bd = ri(rnd, ad + 1, 9);         // 十分位不够减 → 必退位
+                    int bi = ri(rnd, 2, 9), ai = ri(rnd, bi + 1, 19);
+                    int a = ai * 10 + ad, b = bi * 10 + bd;
+                    return qa(dec1(a) + "－" + dec1(b) + "＝", dec1(a - b), DEC1_A[1]);
                 }
-                int a = ri(rnd, 3, 9) * 10, b = ri(rnd, 11, a - 10);    // 整数减小数（9－4.7）
-                return b % 10 == 0 ? null : qa((a / 10) + "－" + dec1(b) + "＝", dec1(a - b));
+                int ai = ri(rnd, 3, 19), bi = ri(rnd, 1, ai - 1), bd = ri(rnd, 1, 9);   // 整数减小数（12－4.7）
+                int b = bi * 10 + bd;
+                return qa(ai + "－" + dec1(b) + "＝", dec1(ai * 10 - b), DEC1_A[2]);
             }
             case "add3d" -> {
+                int f = ctx.pickForm(ADD3D_F);
                 if (!adv) {
-                    if (rnd.nextBoolean()) {                    // 不进位加
+                    if (f == 0) {                                            // 不进位加
                         int a = d3(rnd, 1, 4), b = d3(rnd, 1, 4);
-                        return carryAdd(a, b) > 0 ? null : qa(a + "＋" + b + "＝", String.valueOf(a + b));
+                        return carryAdd(a, b) > 0 ? null
+                            : qa(a + "＋" + b + "＝", String.valueOf(a + b), ADD3D_F[0]);
                     }
-                    int a = d3(rnd, 5, 9), b = d3(rnd, 1, 4);  // 不退位减
+                    int a = d3(rnd, 5, 9), b = d3(rnd, 1, 4);                // 不退位减
                     return (a <= b || borrowSub(a, b) > 0) ? null
-                        : qa(a + "－" + b + "＝", String.valueOf(a - b));
+                        : qa(a + "－" + b + "＝", String.valueOf(a - b), ADD3D_F[1]);
                 }
-                if (rnd.nextBoolean()) {                       // 连续进位加
+                if (f == 0) {                                                // 连续进位加
                     int a = ri(rnd, 150, 780), b = ri(rnd, 150, 999 - a);
                     return (b < 150 || carryAdd(a, b) < 2) ? null
-                        : qa(a + "＋" + b + "＝", String.valueOf(a + b));
+                        : qa(a + "＋" + b + "＝", String.valueOf(a + b), ADD3D_F[0]);
                 }
-                int a = ri(rnd, 300, 999), b = ri(rnd, 110, a - 50);   // 连续退位减
-                return borrowSub(a, b) < 2 ? null : qa(a + "－" + b + "＝", String.valueOf(a - b));
+                int a = ri(rnd, 300, 999), b = ri(rnd, 110, a - 50);         // 连续退位减
+                return borrowSub(a, b) < 2 ? null
+                    : qa(a + "－" + b + "＝", String.valueOf(a - b), ADD3D_F[1]);
             }
             default -> {
                 return null;
@@ -428,88 +624,173 @@ public class OralCalcService {
     }
 
     /**
-     * 三步混合运算（mixops3，三下两级运算落点）。
+     * 脱式混合运算（mixops3，三下两级运算落点）：基础 = 两步 8 骨架、提高 = 三步 9 骨架。
      *
-     * <p>硬约束（全部程序保证，不靠碰运气）：<b>全整数</b>／<b>每步除法必整除</b>／
-     * <b>中间结果恒正</b>／<b>终值 ≤ 1000</b>／<b>除数一位数</b>（{@code A÷(B×C)} 形态里 B×C ≤ 9）。
-     * 构造式生成（先定商再乘回被除数），不满足边界时返回 null 交 {@link #generate} 重摇。
+     * <p>🔴 2026-07-30 审计修（模板化失控）：原来基础/提高各只有 5 个骨架且**每次纯随机**，导致
+     * "N÷(a×b)+M" 五天连出、第 10 天同卷出两次。现在骨架池扩到 8/9 种，并由 {@link GenCtx#pickForm}
+     * 在一次 generate 内**挑用得最少的骨架** —— 一次出 4 道必是 4 种骨架（跨天重摇由脚本侧闸兜底）。
      *
-     * @param three true=三步跨级形态（提高档/无档缺省）；false=两步形态（基础档，数域 100 内）
+     * <p>硬约束（全部程序保证，不靠碰运气）：<b>全整数</b>／<b>每步除法必整除</b>／<b>中间结果 ∈[2,999]</b>／
+     * <b>除数一位数</b>（{@code A÷(B×C)} 形态里 B×C ≤ 9）／<b>括号内运算结果 ≥3</b>／<b>乘数 ≥2</b>
+     * （基础再抬到"因数 ≥3 且积 ≥12"，堵 {@code 2×3＋87} / {@code 8×(25÷5－4)} / {@code (5＋5)÷5} 级琐碎题）。
+     * 提高档操作数整档加大：被除数三位数、括号内两位数运算。
+     *
+     * @param three true=三步跨级形态（提高档 / 无档缺省）；false=两步形态（基础档，结果 ≤100）
      */
-    private String[] genMixops3(Random rnd, boolean three) {
-        if (!three) {
-            // ── 基础：两步，结果 ≤100 ──
-            switch (rnd.nextInt(5)) {
-                case 0 -> {                                     // A－B÷C
-                    int c = ri(rnd, 2, 9), q = ri(rnd, 2, 9), b = c * q;
-                    int a = ri(rnd, q + 1, 99);
-                    return qa(a + "－" + b + "÷" + c + "＝", String.valueOf(a - q));
-                }
-                case 1 -> {                                     // (A＋B)÷C
-                    int c = ri(rnd, 2, 9), s = c * ri(rnd, 2, 99 / c);
-                    if (s < 10) return null;
-                    int a = ri(rnd, 5, s - 5);
-                    if (a < 5 || s - a < 5) return null;
-                    return qa("(" + a + "＋" + (s - a) + ")÷" + c + "＝", String.valueOf(s / c));
-                }
-                case 2 -> {                                     // A×B－C
-                    int a = ri(rnd, 2, 9), b = ri(rnd, 2, 9), p = a * b;
-                    if (p < 6) return null;
-                    int c = ri(rnd, 2, p - 1);
-                    return qa(a + "×" + b + "－" + c + "＝", String.valueOf(p - c));
-                }
-                case 3 -> {                                     // A×B＋C
-                    int a = ri(rnd, 2, 9), b = ri(rnd, 2, 9), p = a * b;
-                    if (p > 90) return null;
-                    int c = ri(rnd, 2, 100 - p);
-                    return qa(a + "×" + b + "＋" + c + "＝", String.valueOf(p + c));
-                }
-                default -> {                                    // A÷B＋C
-                    int b = ri(rnd, 2, 9), q = ri(rnd, 2, 9), c = ri(rnd, 2, 90);
-                    if (q + c > 100) return null;
-                    return qa((b * q) + "÷" + b + "＋" + c + "＝", String.valueOf(q + c));
-                }
+    private Item genMixops3(GenCtx ctx, boolean three) {
+        String[] pool = three ? MIX3_A : MIX3_B;
+        int f = ctx.pickForm(pool);
+        return three ? genMix3(ctx.rnd, f, pool[f]) : genMix2(ctx.rnd, f, pool[f]);
+    }
+
+    /** 脱式·两步（基础档）8 骨架，带 steps 分步串。 */
+    private Item genMix2(Random rnd, int f, String s) {
+        switch (f) {
+            case 0 -> {                                          // A＋B×C（乘在后，练运算顺序）
+                int b = ri(rnd, 3, 9), c = ri(rnd, 3, 9), p = b * c;
+                if (p < 12) return null;
+                int a = ri(rnd, 11, 100 - p);
+                if (a < 11) return null;
+                return step(a + "＋" + b + "×" + c + "＝", String.valueOf(a + p), s,
+                    a + "＋" + p, String.valueOf(a + p));
+            }
+            case 1 -> {                                          // A－B×C
+                int b = ri(rnd, 3, 9), c = ri(rnd, 3, 9), p = b * c;
+                if (p < 12) return null;
+                int a = ri(rnd, p + 11, 99);
+                if (a > 99) return null;
+                return step(a + "－" + b + "×" + c + "＝", String.valueOf(a - p), s,
+                    a + "－" + p, String.valueOf(a - p));
+            }
+            case 2 -> {                                          // A×B＋C
+                int a = ri(rnd, 3, 9), b = ri(rnd, 3, 9), p = a * b;
+                if (p < 12) return null;
+                int c = ri(rnd, 11, 100 - p);
+                if (c < 11) return null;
+                return step(a + "×" + b + "＋" + c + "＝", String.valueOf(p + c), s,
+                    p + "＋" + c, String.valueOf(p + c));
+            }
+            case 3 -> {                                          // A×B－C
+                int a = ri(rnd, 3, 9), b = ri(rnd, 3, 9), p = a * b;
+                if (p < 24) return null;                         // 保证减数 ≥11 且差 ≥2
+                int c = ri(rnd, 11, p - 2);
+                return step(a + "×" + b + "－" + c + "＝", String.valueOf(p - c), s,
+                    p + "－" + c, String.valueOf(p - c));
+            }
+            case 4 -> {                                          // A－B÷C
+                int c = ri(rnd, 2, 9), q = ri(rnd, 3, 9), b = c * q;
+                if (b < 12) return null;                         // 被除数至少两位数
+                int a = ri(rnd, q + 11, 99);
+                return step(a + "－" + b + "÷" + c + "＝", String.valueOf(a - q), s,
+                    a + "－" + q, String.valueOf(a - q));
+            }
+            case 5 -> {                                          // A÷B＋C
+                int b = ri(rnd, 2, 9), q = ri(rnd, 4, 12), d = b * q;
+                if (d < 12 || d > 99) return null;
+                int c = ri(rnd, 11, 100 - q);
+                return step(d + "÷" + b + "＋" + c + "＝", String.valueOf(q + c), s,
+                    q + "＋" + c, String.valueOf(q + c));
+            }
+            case 6 -> {                                          // (A＋B)÷C（括号在前）
+                int c = ri(rnd, 2, 9), q = ri(rnd, 3, 99 / c), sum = c * q;
+                if (sum < 20) return null;                       // 括号内两位数加法，堵 (5＋5)÷5
+                int x = ri(rnd, 5, sum - 5), y = sum - x;
+                if (x == y || y < 5) return null;                // 三数雷同一眼算，剔除
+                return step("(" + x + "＋" + y + ")÷" + c + "＝", String.valueOf(q), s,
+                    sum + "÷" + c, String.valueOf(q));
+            }
+            default -> {                                         // (A－B)×C
+                int c = ri(rnd, 3, 9), diff = ri(rnd, 3, 12), p = diff * c;
+                if (p < 12 || p > 100) return null;
+                int a = ri(rnd, diff + 11, 99), b = a - diff;
+                if (b < 11) return null;
+                return step("(" + a + "－" + b + ")×" + c + "＝", String.valueOf(p), s,
+                    diff + "×" + c, String.valueOf(p));
             }
         }
-        // ── 提高：三步跨级（五种形态） ──
-        switch (rnd.nextInt(5)) {
-            case 0 -> {                                         // A－B÷C×D
-                int c = ri(rnd, 2, 9), q = ri(rnd, 2, 9), b = c * q, d = ri(rnd, 2, 9);
-                if (c == d) return null;                        // 🔴 ÷C×D 同数相消=退化一步（verifier S5）
+    }
+
+    /** 脱式·三步（提高档）9 骨架，带 steps 分步串；操作数整档加大（被除数三位数 / 括号内两位数运算）。 */
+    private Item genMix3(Random rnd, int f, String s) {
+        switch (f) {
+            case 0 -> {                                          // A－B÷C×D（连乘除混加减）
+                int c = ri(rnd, 2, 9), q = ri(rnd, 12, 60), b = c * q;
+                if (b < 100 || b > 999) return null;             // 被除数三位数
+                int d = ri(rnd, 2, 9);
+                if (d == c) return null;                         // 🔴 ÷C×D 同数相消=退化一步（verifier S5）
                 int p = q * d;
-                if (p >= 990) return null;
-                int a = ri(rnd, p + 1, 999);
-                return qa(a + "－" + b + "÷" + c + "×" + d + "＝", String.valueOf(a - p));
+                if (p > 900) return null;
+                int a = ri(rnd, p + 11, 999);
+                return step(a + "－" + b + "÷" + c + "×" + d + "＝", String.valueOf(a - p), s,
+                    a + "－" + q + "×" + d, a + "－" + p, String.valueOf(a - p));
             }
-            case 1 -> {                                         // (A＋B)÷C×D
-                int c = ri(rnd, 2, 9), q = ri(rnd, 2, 20), s = c * q, d = ri(rnd, 2, 9);
-                if (c == d) return null;                        // 同上：÷C×D 相消防退化
-                if (s < 12 || q * d > 1000) return null;
-                int a = ri(rnd, 5, s - 5);
-                if (a < 5 || s - a < 5) return null;
-                return qa("(" + a + "＋" + (s - a) + ")÷" + c + "×" + d + "＝", String.valueOf(q * d));
+            case 1 -> {                                          // (A＋B)÷C×D（括号在前）
+                int c = ri(rnd, 2, 9), q = ri(rnd, 11, 40), sum = c * q;
+                if (sum < 22 || sum > 300) return null;
+                int d = ri(rnd, 2, 9);
+                if (d == c || q * d > 999) return null;
+                int x = ri(rnd, 11, sum - 11), y = sum - x;
+                if (x == y || y < 11) return null;
+                return step("(" + x + "＋" + y + ")÷" + c + "×" + d + "＝", String.valueOf(q * d), s,
+                    sum + "÷" + c + "×" + d, q + "×" + d, String.valueOf(q * d));
             }
-            case 2 -> {                                         // A×(B÷C－D)
-                int c = ri(rnd, 2, 9), q = ri(rnd, 3, 12), b = c * q;
-                int d = ri(rnd, 1, q - 1), a = ri(rnd, 2, 9);
-                if (q - d < 1 || a * (q - d) > 1000) return null;
-                return qa(a + "×(" + b + "÷" + c + "－" + d + ")＝", String.valueOf(a * (q - d)));
+            case 2 -> {                                          // A×(B÷C－D)（括号在后）
+                int c = ri(rnd, 2, 9), q = ri(rnd, 12, 40), b = c * q;
+                if (b < 100 || b > 999) return null;
+                int d = ri(rnd, 2, q - 3), inner = q - d;
+                int a = ri(rnd, 3, 9);
+                if (inner < 3 || a * inner > 999 || a * inner < 12) return null;
+                return step(a + "×(" + b + "÷" + c + "－" + d + ")＝", String.valueOf(a * inner), s,
+                    a + "×(" + q + "－" + d + ")", a + "×" + inner, String.valueOf(a * inner));
             }
-            case 3 -> {                                         // A÷(B×C)＋D（🔴 括号内积 ≤9）
-                int b = ri(rnd, 2, 4), c = ri(rnd, 2, 9 / b);
-                int m = b * c;
-                if (m < 4) return null;
-                int q = ri(rnd, 3, 99), d = ri(rnd, 2, 99);
-                if (q + d > 1000) return null;
-                return qa((m * q) + "÷(" + b + "×" + c + ")＋" + d + "＝", String.valueOf(q + d));
+            case 3 -> {                                          // A÷(B×C)＋D（🔴 括号内积 ≤9）
+                int b = ri(rnd, 2, 4), c = ri(rnd, 2, 9 / b), m = b * c;
+                if (m < 4 || m > 9) return null;
+                int q = ri(rnd, 12, 99), dd = m * q;
+                if (dd < 100 || dd > 999) return null;
+                int d = ri(rnd, 11, 99);
+                return step(dd + "÷(" + b + "×" + c + ")＋" + d + "＝", String.valueOf(q + d), s,
+                    dd + "÷" + m + "＋" + d, q + "＋" + d, String.valueOf(q + d));
             }
-            default -> {                                        // A－(B＋C)÷D
-                int d = ri(rnd, 2, 9), q = ri(rnd, 2, 20), s = d * q;
-                if (s < 12) return null;
-                int b = ri(rnd, 5, s - 5);
-                if (b < 5 || s - b < 5) return null;
-                int a = ri(rnd, q + 1, 999);
-                return qa(a + "－(" + b + "＋" + (s - b) + ")÷" + d + "＝", String.valueOf(a - q));
+            case 4 -> {                                          // A－(B＋C)÷D
+                int dv = ri(rnd, 2, 9), q = ri(rnd, 11, 40), sum = dv * q;
+                if (sum < 22 || sum > 300) return null;
+                int x = ri(rnd, 11, sum - 11), y = sum - x;
+                if (x == y || y < 11) return null;
+                int a = ri(rnd, q + 11, 999);
+                return step(a + "－(" + x + "＋" + y + ")÷" + dv + "＝", String.valueOf(a - q), s,
+                    a + "－" + sum + "÷" + dv, a + "－" + q, String.valueOf(a - q));
+            }
+            case 5 -> {                                          // (A－B)×C＋D
+                int diff = ri(rnd, 11, 40), c = ri(rnd, 2, 9), p = diff * c;
+                if (p > 900) return null;
+                int a = ri(rnd, diff + 11, 99), b = a - diff;
+                if (b < 11) return null;
+                int d = ri(rnd, 11, 99);
+                if (p + d > 999) return null;
+                return step("(" + a + "－" + b + ")×" + c + "＋" + d + "＝", String.valueOf(p + d), s,
+                    diff + "×" + c + "＋" + d, p + "＋" + d, String.valueOf(p + d));
+            }
+            case 6 -> {                                          // A×B＋C×D（两级两次乘）
+                int a = ri(rnd, 11, 40), b = ri(rnd, 2, 9), p1 = a * b;
+                int c = ri(rnd, 11, 40), d = ri(rnd, 2, 9), p2 = c * d;
+                if (a == c || p1 + p2 > 999) return null;
+                return step(a + "×" + b + "＋" + c + "×" + d + "＝", String.valueOf(p1 + p2), s,
+                    p1 + "＋" + c + "×" + d, p1 + "＋" + p2, String.valueOf(p1 + p2));
+            }
+            case 7 -> {                                          // A×B－C×D
+                int a = ri(rnd, 11, 40), b = ri(rnd, 2, 9), p1 = a * b;
+                int c = ri(rnd, 11, 40), d = ri(rnd, 2, 9), p2 = c * d;
+                if (a == c || p1 - p2 < 11 || p1 > 999) return null;
+                return step(a + "×" + b + "－" + c + "×" + d + "＝", String.valueOf(p1 - p2), s,
+                    p1 + "－" + c + "×" + d, p1 + "－" + p2, String.valueOf(p1 - p2));
+            }
+            default -> {                                         // (A＋B)×(C－D)（双括号）
+                int x = ri(rnd, 11, 40), y = ri(rnd, 11, 40), sum = x + y;
+                int c = ri(rnd, 13, 40), d = ri(rnd, 2, c - 3), inner = c - d;
+                if (inner < 3 || sum * inner > 999) return null;
+                return step("(" + x + "＋" + y + ")×(" + c + "－" + d + ")＝", String.valueOf(sum * inner), s,
+                    sum + "×(" + c + "－" + d + ")", sum + "×" + inner, String.valueOf(sum * inner));
             }
         }
     }
@@ -522,6 +803,31 @@ public class OralCalcService {
     private static int firstDigit(int n) {
         while (n >= 10) n /= 10;
         return n;
+    }
+
+    /** 是否含 0 数位（商含 0 = 提高档错点，基础档剔除）。 */
+    private static boolean hasZeroDigit(int n) {
+        for (int x = n; x > 0; x /= 10) {
+            if (x % 10 == 0) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 竖式除法里"本位有余数、往下一位带"的步数。
+     *
+     * <p>0 = 每一位都刚好整除（{@code 369÷3}、{@code 80÷2}、{@code 222÷2}）—— 这类题口算就能出结果，
+     * 放在"列竖式计算"零训练价值（2026-07-30 审计实锤），基础档据此剔除。
+     */
+    private static int divCarrySteps(int d, int b) {
+        int cnt = 0, cur = 0;
+        for (char ch : String.valueOf(d).toCharArray()) {
+            cur = cur * 10 + (ch - '0');
+            int r = cur % b;
+            if (r != 0 && cur >= b) cnt++;
+            cur = r;
+        }
+        return cnt;
     }
 
     /** 竖式加法的进位次数。 */
@@ -548,7 +854,7 @@ public class OralCalcService {
         return cnt;
     }
 
-    private String[] genOne(String code, Random rnd) {
+    private Item genOne(String code, Random rnd) {
         return switch (code) {
             // ── 一年级 ──
             case "add5" -> {
@@ -688,11 +994,16 @@ public class OralCalcService {
                 if (rnd.nextBoolean()) {
                     int b = ri(rnd, 5, 40), c = ri(rnd, 5, 40), a = ri(rnd, b + c + 5, 99);
                     if (a > 99) yield null;
-                    yield qa(a + "－(" + b + "＋" + c + ")＝", String.valueOf(a - b - c));
+                    // 脱式消费方需分步（2026-07-30 审计批：mixops3 有 steps 而 paren 没有=解析体例不齐）
+                    yield step(a + "－(" + b + "＋" + c + ")＝", String.valueOf(a - b - c), "A－(B＋C)",
+                        a + "－" + (b + c), String.valueOf(a - b - c));
                 }
-                int c = ri(rnd, 2, 9), q = ri(rnd, 2, 9);
-                int s = c * q, b2 = ri(rnd, 1, s - 1);
-                yield qa("(" + (s - b2) + "＋" + b2 + ")÷" + c + "＝", String.valueOf(q));
+                // 琐碎闸（2026-07-30 审计批）：括号内和≥20、两加数≥2 且不等、商≥3——堵 (11＋4)÷5、(1＋14)÷5
+                int c = ri(rnd, 3, 9), q = ri(rnd, Math.max(3, (20 + c - 1) / c), 9);
+                int s = c * q, b2 = ri(rnd, 2, s - 2);
+                if (b2 * 2 == s) yield null;
+                yield step("(" + (s - b2) + "＋" + b2 + ")÷" + c + "＝", String.valueOf(q), "(A＋B)÷C",
+                    s + "÷" + c, String.valueOf(q));
             }
             // ── 三年级 ──
             case "add3d" -> {
@@ -742,8 +1053,10 @@ public class OralCalcService {
                 int a = ri(rnd, 12, 98), b = ri(rnd, 12, 98);
                 yield qa(a + "×" + b + "＝", String.valueOf(a * b));
             }
-            // 无档缺省 = 三步跨级形态（类型名即三步；两步形态走 level=basic）
-            case "mixops3" -> genMixops3(rnd, true);
+            // 无档缺省 = 三步跨级形态（类型名即三步；两步形态走 level=basic）。
+            // 🔴 正常路径由 genOne(code, GenCtx) 截走（带骨架轮换）；此处是无 ctx 的兜底入口，
+            //    临时 ctx（count=1）等价于"骨架纯随机"，保留防未知调用方裸调 genOne(code, rnd) 撞未知类型。
+            case "mixops3" -> genMixops3(new GenCtx(rnd, "", 1), true);
             case "fracsame" -> {
                 int m = ri(rnd, 3, 10);
                 if (rnd.nextBoolean()) {
@@ -946,8 +1259,19 @@ public class OralCalcService {
 
     // ───────────────── 小工具 ─────────────────
 
-    private String[] qa(String q, String a) {
-        return new String[]{q, a};
+    /** 无分步、不参与同质闸的普通题。 */
+    private static Item qa(String q, String a) {
+        return new Item(q, a, List.of(), null);
+    }
+
+    /** 无分步、带结构签名（进同质闸配额）的题。 */
+    private static Item qa(String q, String a, String struct) {
+        return new Item(q, a, List.of(), struct);
+    }
+
+    /** 带分步化简串的题（脱式）：steps 末项 = 终值，与 a 一致。 */
+    private static Item step(String q, String a, String struct, String... steps) {
+        return new Item(q, a, List.of(steps), struct);
     }
 
     private int ri(Random rnd, int lo, int hi) {

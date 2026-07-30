@@ -10,7 +10,9 @@
 @page { size: A4; margin: 0; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 210mm; }
-body { font-family: "SimSun","Songti SC",serif; color: #000; }
+/* Times 在前：数字/小数点/半角符号走西文字形（SimSun 半角句点 12pt 下点小距宽，
+   小数"3.5"视觉断成"3. 5"——2026-07-30 审计批），汉字回落 SimSun 不受影响 */
+body { font-family: "Times New Roman","SimSun","Songti SC",serif; color: #000; }
 
 .sheet { width: 210mm; height: 297mm; padding: 10mm 9mm; position: relative; }
 .frame { border: 1.2pt solid #000; height: 100%; position: relative; }
@@ -39,7 +41,8 @@ h2 small { font-family: "SimSun",serif; font-size: 10.5pt; font-weight: 400; }
 .grid.c5 { grid-template-columns: repeat(5,1fr); column-gap: 3mm; font-size: 12pt; }
 .grid.c4 { grid-template-columns: repeat(4,1fr); column-gap: 3mm; font-size: 12pt; }
 /* 留白档位（2026-07-30 压缩 3mm×3：verifier S6——6 份卷内容微超 297mm 溢出空白第二页） */
-.work-v { height: 38mm; } .work-t { height: 33mm; } .work-a { height: 25mm; }
+.work-v { height: 38mm; } .work-t { height: 33mm; }
+.work-a { flex: 1 1 30mm; height: auto; min-height: 24mm; }
 .app { font-size: 12pt; line-height: 1.7; }
 /* 题块渲染（移植自 book-v1）：选项网格 / 版式图 */
 .app .opts { margin-top: 1mm; display: grid; grid-template-columns: repeat(auto-fit, minmax(38mm, 1fr)); gap: 1mm 6mm; }
@@ -51,14 +54,28 @@ h2 small { font-family: "SimSun",serif; font-size: 10.5pt; font-weight: 400; }
 .ans-mode .grid.oral { row-gap: 3.2mm; font-size: 11pt; }
 .ans-mode .grid.c5, .ans-mode .grid.c4 { font-size: 11pt; }
 .ans-mode .app { font-size: 11pt; line-height: 1.6; }
-b.a { font-family: "SimHei",sans-serif; }
+b.a { font-family: "Times New Roman","SimHei",sans-serif; }
+/* 计算模块小题号（灰小字，作错题记录引用锚） */
+.qno { color: #888; font-size: 9pt; margin-right: .4mm; }
+/* 脱式分步解析行（縮进对齐算式体） */
+.sol-step { display: inline-block; margin-left: 4.5mm; line-height: 1.6; }
+/* 轮换位题目卷（2026-07-30 用户拍板+复审二刀）：应用题题块=题面内容+解答区（work-a，每题都有）。
+   复审实锤：块流布局下 Q1 解答区恒 ~34mm 而 Q2 吃"页脚前剩余"最低只剩 ~8mm——
+   改 flex：末节撑满剩余高度，两个 work-a 平分（min 24mm 保底），天然均衡且不压页脚 */
+body:not(.ans-mode) .frame { display: flex; flex-direction: column; }
+body:not(.ans-mode) .frame > section.last { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+body:not(.ans-mode) .frame > section.last .app { flex: 1 1 auto; display: flex; flex-direction: column; }
+.app .qitem { flex: 0 0 auto; }
 .app .item { margin-bottom: 2.4mm; }
 .app .sol { margin-left: 5mm; margin-top: .6mm; line-height: 1.75; }
-.rec { font-size: 11pt; line-height: 2.4; }
+/* 行距 2.4→2.0（复审：D6-B 解析内容偏高时错题记录被顶到页脚压字） */
+.rec { font-size: 11pt; line-height: 2.0; }
 .rec u { text-decoration: none; border-bottom: .8pt solid #000; display: inline-block; }
 .rec .box { margin-right: 2.6mm; white-space: nowrap; }
 
-.foot { position: absolute; left: 0; right: 0; bottom: 2.5mm; display: flex;
+/* fixed=打印时每页重复（内容超页时页脚不再被内容穿插，第2页也有水印）；
+   偏移换算：sheet 左右 padding 9mm、frame 底距页底 10mm+原 bottom 2.5mm → 第1页视觉与 absolute 版一致 */
+.foot { position: fixed; left: 9mm; right: 9mm; bottom: 12.5mm; display: flex;
         justify-content: space-between; align-items: center; padding: 0 5mm;
         font-size: 9.5pt; color: #555; }
 .foot .day { font-family: "SimHei",sans-serif; }
@@ -88,9 +105,10 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
-  /* 题库 md 尾部常带原书作答留白（"\n \n \n \n"），渲成连串空行会撑爆 A4 —— 渲染前剥掉 */
+  /* 题库 md 尾部常带原书作答留白（"\n \n \n \n"），渲成连串空行会撑爆 A4 —— 渲染前剥掉；
+     题面中段连续空行同样压成单换行（解答空间由 work-a 统一承载，不靠题面空行） */
   function trimMd(s) {
-    return String(s == null ? '' : s).replace(/(?:\n\s*)+$/, '');
+    return String(s == null ? '' : s).replace(/\n[ \t]*(?:\n[ \t]*)+/g, '\n').replace(/(?:\n\s*)+$/, '');
   }
 
   /* ── 页眉：主标题（accent 段标红）+ 小标题 ── */
@@ -110,8 +128,8 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     sub.appendChild(el('b', null, data.variantName || ''));
     sub.appendChild(document.createTextNode(' · 参考答案与解析'));
   } else {
-    sub.appendChild(document.createTextNode((data.subtitle || '') + '　|　'));
-    sub.appendChild(el('b', null, data.variantName || ''));
+    /* 主标题已含「·基础版/提高版」，副标题不再重复变体名（审计批：版头双写冗余） */
+    sub.appendChild(document.createTextNode(data.subtitle || ''));
   }
   head.appendChild(sub);
   frame.appendChild(head);
@@ -137,7 +155,7 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
   (data.modules || []).forEach(function (m, mi) {
     var sec = el('section');
     var h2 = el('h2', null, CN[mi] + '、' + m.title);
-    if (m.type === 'oral' && !isAns) {
+    if ((m.type === 'oral' || m.type === 'vertical' || m.type === 'stepwise') && !isAns) {
       var sm = el('small', null, '（共 ' + (m.items || []).length + ' 道）'); h2.appendChild(document.createTextNode(' ')); h2.appendChild(sm);
     }
     sec.appendChild(h2);
@@ -145,13 +163,27 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     if (m.type === 'oral' || m.type === 'vertical' || m.type === 'stepwise') {
       var cls = m.type === 'oral' ? 'grid oral' : m.type === 'vertical' ? 'grid c5' : 'grid c4';
       var grid = el('div', cls);
-      (m.items || []).forEach(function (it) {
+      (m.items || []).forEach(function (it, ii) {
         var d = el('div');
+        /* 小题号：错题记录栏「做错的题号」的引用锚（2026-07-30 审计批——无题号=错题记录失效） */
+        d.appendChild(el('span', 'qno', (ii + 1) + '. '));
         var q = m.type === 'stepwise' ? it.q.replace('＝', '') : it.q;
         d.appendChild(document.createTextNode(q));
         if (isAns) {
-          if (m.type === 'stepwise') { d.appendChild(document.createElement('br')); d.appendChild(document.createTextNode('＝')); }
-          d.appendChild(el('b', 'a', it.a));
+          if (m.type === 'stepwise') {
+            /* 分步解析：steps=逐步化简串（末项=终值加粗）；无 steps 时回落只印结果 */
+            var steps = it.steps && it.steps.length ? it.steps : [it.a];
+            steps.forEach(function (st, si) {
+              d.appendChild(document.createElement('br'));
+              var line = el('span', 'sol-step');
+              line.appendChild(document.createTextNode('＝'));
+              if (si === steps.length - 1) line.appendChild(el('b', 'a', st));
+              else line.appendChild(document.createTextNode(st));
+              d.appendChild(line);
+            });
+          } else {
+            d.appendChild(el('b', 'a', it.a));
+          }
         }
         grid.appendChild(d);
       });
@@ -167,7 +199,7 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
          补 option 型与 md2html 全量语法。题面绝不复制成纯文本。 */
       var app = el('div', 'app');
       (m.blocks || []).forEach(function (b, qi) {
-        var wrap = el('div', isAns ? 'item' : null);
+        var wrap = el('div', isAns ? 'item' : 'qitem');
         var first = true;
         function buildImg(c) {
           var img = document.createElement('img');
@@ -186,6 +218,12 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
         }
         (b.rows || []).forEach(function (row) {
           var cells = row.cells || [];
+          /* 空白行整行剥掉（原书作答留白混进 rows 会撑大题面、挤压末题解答区） */
+          var hasContent = cells.some(function (c) {
+            return (c.type === 'image' && c.url) || c.type === 'option'
+                || (c.type === 'text' && trimMd(c.md).trim());
+          });
+          if (!hasContent) return;
           var options = cells.filter(function (c) { return c.type === 'option'; });
           if (options.length) {            // 选项行 → 网格（对齐 book-v1 .opts）
             var opts = el('div', 'opts');

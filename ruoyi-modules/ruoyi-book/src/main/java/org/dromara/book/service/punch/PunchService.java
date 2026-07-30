@@ -227,12 +227,44 @@ public class PunchService {
         r.put("day", day);
         for (String paper : want) {
             byte[] pdf = renderer.render(THEME, assembleDay(bookId, day, paper), "punch-d" + day + "-" + paper);
+            pdf = trimBlankTailPages(pdf);
             OssClient oss = OssFactory.instance();
             UploadResult up = oss.uploadSuffix(pdf, ".pdf", "application/pdf");
             r.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
             log.info("[punch] 导出 bookId={} day={} paper={} size={}B url={}", bookId, day, paper, pdf.length, up.getUrl());
         }
         return r;
+    }
+
+    /**
+     * 裁掉尾部空白页：版面留白微溢出 297mm 时 Chrome 会多出一页。punch-v1 页脚是
+     * {@code position:fixed}（每页重复），故溢出页上仍有「第 N 天/玉米练习册」文本——
+     * 空白判定=剥去页脚词后无任何文本。只从末页向前裁，至少保留 1 页；失败按原样返回不阻塞导出。
+     */
+    private byte[] trimBlankTailPages(byte[] pdf) {
+        try (org.apache.pdfbox.pdmodel.PDDocument doc = org.apache.pdfbox.pdmodel.PDDocument.load(pdf)) {
+            org.apache.pdfbox.text.PDFTextStripper stripper = new org.apache.pdfbox.text.PDFTextStripper();
+            boolean changed = false;
+            while (doc.getNumberOfPages() > 1) {
+                int last = doc.getNumberOfPages();
+                stripper.setStartPage(last);
+                stripper.setEndPage(last);
+                String residue = stripper.getText(doc)
+                    .replaceAll("\\s+", "")
+                    .replaceAll("第\\d+天(·解析)?", "")
+                    .replace("玉米练习册", "");
+                if (!residue.isEmpty()) break;
+                doc.removePage(last - 1);
+                changed = true;
+            }
+            if (!changed) return pdf;
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            doc.save(bos);
+            return bos.toByteArray();
+        } catch (Exception e) {
+            log.warn("[punch] 尾页裁剪失败，按原 PDF 返回", e);
+            return pdf;
+        }
     }
 
     // ───────────────── ③ 录入：幂等 upsert 一天 ─────────────────
