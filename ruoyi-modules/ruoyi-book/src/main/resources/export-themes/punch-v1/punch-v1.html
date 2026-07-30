@@ -42,7 +42,7 @@ h2 small { font-family: "SimSun",serif; font-size: 10.5pt; font-weight: 400; }
 .grid.c4 { grid-template-columns: repeat(4,1fr); column-gap: 3mm; font-size: 12pt; }
 /* 留白档位（2026-07-30 压缩 3mm×3：verifier S6——6 份卷内容微超 297mm 溢出空白第二页） */
 .work-v { height: 38mm; } .work-t { height: 33mm; }
-.work-a { flex: 1 1 30mm; height: auto; min-height: 24mm; }
+.work-a { height: 24mm; }
 .app { font-size: 12pt; line-height: 1.7; }
 /* 题块渲染（移植自 book-v1）：选项网格 / 版式图 */
 .app .opts { margin-top: 1mm; display: grid; grid-template-columns: repeat(auto-fit, minmax(38mm, 1fr)); gap: 1mm 6mm; }
@@ -59,13 +59,9 @@ b.a { font-family: "Times New Roman","SimHei",sans-serif; }
 .qno { color: #888; font-size: 9pt; margin-right: .4mm; }
 /* 脱式分步解析行（縮进对齐算式体） */
 .sol-step { display: inline-block; margin-left: 4.5mm; line-height: 1.6; }
-/* 轮换位题目卷（2026-07-30 用户拍板+复审二刀）：应用题题块=题面内容+解答区（work-a，每题都有）。
-   复审实锤：块流布局下 Q1 解答区恒 ~34mm 而 Q2 吃"页脚前剩余"最低只剩 ~8mm——
-   改 flex：末节撑满剩余高度，两个 work-a 平分（min 24mm 保底），天然均衡且不压页脚 */
-body:not(.ans-mode) .frame { display: flex; flex-direction: column; }
-body:not(.ans-mode) .frame > section.last { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-body:not(.ans-mode) .frame > section.last .app { flex: 1 1 auto; display: flex; flex-direction: column; }
-.app .qitem { flex: 0 0 auto; }
+/* 轮换位题目卷（2026-07-30 用户拍板+复审二刀）：应用题题块=题面内容+解答区（work-a 基高 24mm、
+   每题都有）。均分由 JS 落实（见 balanceWorkAreas——flex 在 Chrome 打印路径不生效，终验实锤）：
+   渲染后量 frame 剩余空隙均摊给各解答区 → 两题天然均衡且不压页脚 */
 .app .item { margin-bottom: 2.4mm; }
 .app .sol { margin-left: 5mm; margin-top: .6mm; line-height: 1.75; }
 /* 行距 2.4→2.0（复审：D6-B 解析内容偏高时错题记录被顶到页脚压字） */
@@ -279,6 +275,23 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
   } else {
     var secs = frame.querySelectorAll('section');
     if (secs.length) secs[secs.length - 1].className = 'last';
+  }
+
+  /* ── 题目卷解答区均分（2026-07-30 复审二刀）：frame 剩余空隙均摊给各 work-a（基高 24mm），
+     两题解答区恒等且填满到页脚线，不再"末题吃剩余"。flex 方案在 Chrome 打印不生效，故 JS 落实。 */
+  if (!isAns) {
+    var workas = Array.prototype.slice.call(frame.querySelectorAll('.app .work-a'));
+    if (workas.length) {
+      var frameBox = frame.getBoundingClientRect();
+      var lastBox = workas[workas.length - 1].getBoundingClientRect();
+      var slack = (frameBox.bottom - 2) - lastBox.bottom;   /* -2px≈边框宽 */
+      if (slack > 0) {
+        var add = slack / workas.length;
+        workas.forEach(function (w) {
+          w.style.height = (w.getBoundingClientRect().height + add) + 'px';
+        });
+      }
+    }
   }
 
   /* ── 页脚 ── */
