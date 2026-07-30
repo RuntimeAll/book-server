@@ -2,6 +2,7 @@ package org.dromara.book.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
+import org.dromara.book.domain.bo.FeedbackPlanExportBo;
 import org.dromara.book.domain.bo.FeedbackSheetBo;
 import org.dromara.book.service.schedule.FeedbackSheetService;
 import org.dromara.common.core.domain.R;
@@ -53,13 +54,14 @@ public class FeedbackSheetController {
         return R.ok();
     }
 
-    /** 列表（owner，可选 targetId / keyword / batchKey）→ {rows,total}。 */
+    /** 列表（owner，可选 targetId / keyword / batchKey / planId）→ {rows,total}。 */
     @SaCheckLogin
     @GetMapping("/sheet/page")
     public R<Map<String, Object>> page(@RequestParam(required = false) Long targetId,
                                        @RequestParam(required = false) String keyword,
-                                       @RequestParam(required = false) String batchKey) {
-        return R.ok(feedbackService.page(targetId, keyword, batchKey));
+                                       @RequestParam(required = false) String batchKey,
+                                       @RequestParam(required = false) Long planId) {
+        return R.ok(feedbackService.page(targetId, keyword, batchKey, planId));
     }
 
     /** 详情（含 rows）。 */
@@ -93,5 +95,17 @@ public class FeedbackSheetController {
     public R<Map<String, Object>> exportBatchPng(@RequestParam Long targetId,
                                                  @RequestParam(required = false) String batchKey) {
         return R.ok(feedbackService.exportBatchPng(targetId, batchKey));
+    }
+
+    /**
+     * 按课程计划导出反馈图（PRD-015 D7/D13）：{planId, mode:'single'|'long'}，mode 缺省 'single'。
+     * single = 该计划最新一单（lesson_seq 最大）单张；long = 全量按序号升序拼长图。
+     * 🔴 版式沿用现有导出模板，只改黄条标题=「序号 · 上课日期（· 备注）」，无"第几次"字样。
+     */
+    @SaCheckLogin
+    @PostMapping("/export-plan-png")
+    public R<Map<String, Object>> exportPlanPng(@RequestBody FeedbackPlanExportBo bo) {
+        return R.ok(feedbackService.exportPlanPng(bo == null ? null : bo.getPlanId(),
+            bo == null ? null : bo.getMode()));
     }
 }

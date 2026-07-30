@@ -5,8 +5,10 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.FeedbackSheetBo;
 import org.dromara.book.domain.entity.BizFeedbackSheet;
+import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.domain.entity.BizStudent;
 import org.dromara.book.mapper.BizFeedbackSheetMapper;
+import org.dromara.book.mapper.BizScheduleSessionMapper;
 import org.dromara.book.mapper.BizStudentMapper;
 import org.dromara.book.util.ScheduleRenderUtil;
 import org.dromara.common.core.exception.ServiceException;
@@ -38,11 +40,18 @@ public class FeedbackSheetService {
 
     private final BizFeedbackSheetMapper sheetMapper;
     private final BizStudentMapper studentMapper;
+    private final BizScheduleSessionMapper sessionMapper;
     private final ScheduleRenderUtil renderUtil;
 
     // ─────────────────────────── CRUD ───────────────────────────
 
-    /** 建/改反馈单，返回 id。 */
+    /**
+     * 建/改反馈单，返回 id。
+     *
+     * <p>PRD-015 D6/D7 增量（🔴 全 additive，旧调用不传新参 = 旧行为一字不差）：
+     * ①收 sessionId/planId；②传了 sessionId 没传 planId → 从场次回填 planId；
+     * ③lessonSeq 不传且有 planId（且原本没序号）→ 服务端自动 = 该计划下现有反馈 max+1。
+     */
     public Long upsert(FeedbackSheetBo bo) {
         // 反馈单以学生为主体，targetId 必填。缺失时返 400 而非落库触 NOT NULL 抛裸 500（BUG-D4-01/P7-BUG-1）。
         if (bo.getTargetId() == null) {
@@ -54,10 +63,27 @@ public class FeedbackSheetService {
         } else {
             e = new BizFeedbackSheet();
         }
+        // 🔴 改单态先扣下原值：下面 set(null) 在 updateById 的 NOT_NULL 策略下 = 保持原值，
+        //    但内存对象已被清空，序号/计划推导必须用扣下来的原值判断。
+        Long existPlanId = e.getPlanId();
+        Integer existSeq = e.getLessonSeq();
+
         e.setTargetId(bo.getTargetId());
+        // PRD-015 绑定三列：sessionId 主绑定 + planId 冗余（传 sessionId 未传 planId 时从场次回填）
+        Long planId = bo.getPlanId();
+        if (bo.getSessionId() != null && planId == null) {
+            planId = planIdOfSession(bo.getSessionId());
+        }
+        e.setSessionId(bo.getSessionId());
+        e.setPlanId(planId);
         // PRD-010 批次字段（可空=散单；update 走 NOT_NULL 策略，不传保持原值）
         e.setBatchKey(bo.getBatchKey());
-        e.setLessonSeq(bo.getLessonSeq());
+        Integer seq = bo.getLessonSeq();
+        Long effPlanId = planId != null ? planId : existPlanId;
+        if (seq == null && existSeq == null && effPlanId != null) {
+            seq = nextLessonSeq(effPlanId);
+        }
+        e.setLessonSeq(seq);
         e.setTitle(bo.getTitle());
         e.setLessonDate(parseDate(bo.getLessonDate()));
         e.setRowsJson(bo.getRows() == null ? "[]" : JsonUtils.toJsonString(bo.getRows()));
@@ -69,12 +95,16 @@ public class FeedbackSheetService {
         return e.getId();
     }
 
-    /** 列表（FE PageResult = {rows,total}）。owner 过滤 + 可选 targetId / keyword / batchKey（PRD-010）。 */
-    public Map<String, Object> page(Long targetId, String keyword, String batchKey) {
+    /**
+     * 列表（FE PageResult = {rows,total}）。owner 过滤 + 可选 targetId / keyword / batchKey（PRD-010）
+     * / planId（PRD-015 计划过滤）。
+     */
+    public Map<String, Object> page(Long targetId, String keyword, String batchKey, Long planId) {
         Long uid = LoginHelper.getUserId();
         LambdaQueryWrapper<BizFeedbackSheet> w = new LambdaQueryWrapper<BizFeedbackSheet>()
             .eq(BizFeedbackSheet::getCreateBy, uid)
             .eq(targetId != null, BizFeedbackSheet::getTargetId, targetId)
+            .eq(planId != null, BizFeedbackSheet::getPlanId, planId)
             .eq(batchKey != null && !batchKey.isBlank(), BizFeedbackSheet::getBatchKey, batchKey)
             .like(keyword != null && !keyword.isBlank(), BizFeedbackSheet::getTitle, keyword)
             .orderByDesc(BizFeedbackSheet::getId);
@@ -171,6 +201,50 @@ public class FeedbackSheetService {
         return m;
     }
 
+    /**
+     * 按课程计划导出（PRD-015 D7/D13，AC7）：该计划下反馈单按 lesson_seq 升序出图。
+     *
+     * <p>🔴 版式 = 现有导出模板<b>零样式改动</b>（同一 wrapDoc + 同一五列表），只改黄条标题拼法：
+     * 「{序号} · {上课日期}」，title 有值则作备注追加其后（D7）。全图不出现"第几次/第 N 节"。
+     *
+     * @param planId 计划 id（必填）
+     * @param mode   'single' = 该计划 lesson_seq 最大的一单单张（缺省）；'long' = 全量升序拼长图
+     */
+    public Map<String, Object> exportPlanPng(Long planId, String mode) {
+        if (planId == null) {
+            throw new ServiceException("请选择课程计划（planId 必填）", 400);
+        }
+        boolean longMode = "long".equalsIgnoreCase(mode == null ? "" : mode.trim());
+        List<BizFeedbackSheet> sheets = sheetMapper.selectList(new LambdaQueryWrapper<BizFeedbackSheet>()
+            .eq(BizFeedbackSheet::getCreateBy, LoginHelper.getUserId())
+            .eq(BizFeedbackSheet::getPlanId, planId)
+            .orderByAsc(BizFeedbackSheet::getLessonSeq)
+            .orderByAsc(BizFeedbackSheet::getId));
+        if (sheets.isEmpty()) {
+            throw new ServiceException("该课程计划下还没有反馈单", 400);
+        }
+        if (!longMode) {
+            // single = 最新一单（升序列表的末位 = lesson_seq 最大；序号并列时取 id 大的）
+            sheets = List.of(sheets.get(sheets.size() - 1));
+        }
+        StringBuilder body = new StringBuilder();
+        int height = 14;    // 顶部留白（.wrap padding-top），与批次导出同口径
+        for (BizFeedbackSheet e : sheets) {
+            List<Map<String, Object>> rows = parseRows(e.getRowsJson());
+            body.append(sectionHtml(e.getLessonSeq(), e.getLessonDate(), e.getTitle(), rows));
+            height += 88 + estimateContentH(rows) + 16;
+        }
+        String html = wrapDoc(body.toString());
+        String file = renderUtil.renderToPng(html, "feedback_plan_" + planId + "_" + (longMode ? "long" : "single"),
+            640, height);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("file", file);
+        m.put("url", "/teacher/schedule/artifact?path=" + file);
+        m.put("mode", longMode ? "long" : "single");
+        m.put("sheetCount", sheets.size());
+        return m;
+    }
+
     /** 内容高度估算（BUG-014 收边算法，单张/批次共用）。 */
     private int estimateContentH(List<Map<String, Object>> rows) {
         int contentH = 0;
@@ -220,6 +294,18 @@ public class FeedbackSheetService {
         return sb.toString();
     }
 
+    /**
+     * 单节课的段落（PRD-015 D7 标题版）：黄条 = 「{序号} · {上课日期}」，title 有值作备注追加其后。
+     * 🔴 只换标题字符串，表格/样式与 PRD-004 定版零漂移（复用下面的 {@link #sectionHtml(String, List)}）。
+     */
+    private String sectionHtml(Integer seq, LocalDate lessonDate, String title, List<Map<String, Object>> rows) {
+        List<String> parts = new ArrayList<>();
+        if (seq != null) parts.add(String.valueOf(seq));
+        if (lessonDate != null) parts.add(lessonDate.toString());
+        if (title != null && !title.isBlank()) parts.add(title.trim());
+        return sectionHtml(parts.isEmpty() ? null : String.join(" · ", parts), rows);
+    }
+
     /** 单节课的段落（黄标题条 + 五列表）。批次导出=N 段垂直堆叠。 */
     private String sectionHtml(String title, List<Map<String, Object>> rows) {
         StringBuilder sb = new StringBuilder();
@@ -264,11 +350,44 @@ public class FeedbackSheetService {
         return e;
     }
 
+    /**
+     * 场次 → 冗余计划 id（PRD-015 D6 回填）。场次不存在/非本人/未绑计划 → null（不报错，
+     * 反馈单允许无计划=散单，D11 弹性骨架）。
+     */
+    private Long planIdOfSession(Long sessionId) {
+        BizScheduleSession s = sessionMapper.selectById(sessionId);
+        if (s == null) return null;
+        Long uid = LoginHelper.getUserId();
+        if (uid != null && s.getCreateBy() != null && !uid.equals(s.getCreateBy())) return null;
+        return s.getPlanId();
+    }
+
+    /**
+     * 计划内下一个反馈序号（D7）= 该计划下现有反馈的 max(lesson_seq)+1，全为空时按行数+1。
+     * 🔴 与 {@code SettlementService.createFeedbackShell} 同口径（结算自动建壳走那条，人工建单走这条）。
+     */
+    private int nextLessonSeq(Long planId) {
+        int max = 0;
+        int count = 0;
+        for (BizFeedbackSheet fb : sheetMapper.selectList(new LambdaQueryWrapper<BizFeedbackSheet>()
+            .eq(BizFeedbackSheet::getCreateBy, LoginHelper.getUserId())
+            .eq(BizFeedbackSheet::getPlanId, planId))) {
+            count++;
+            if (fb.getLessonSeq() != null && fb.getLessonSeq() > max) {
+                max = fb.getLessonSeq();
+            }
+        }
+        return Math.max(max, count) + 1;
+    }
+
     private Map<String, Object> brief(BizFeedbackSheet e) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(e.getId()));
         m.put("targetId", e.getTargetId() == null ? null : String.valueOf(e.getTargetId()));
         m.put("targetName", targetName(e.getTargetId()));
+        // PRD-015 绑定三列（雪花一律字符串出参；旧单为 null）
+        m.put("sessionId", e.getSessionId() == null ? null : String.valueOf(e.getSessionId()));
+        m.put("planId", e.getPlanId() == null ? null : String.valueOf(e.getPlanId()));
         m.put("batchKey", e.getBatchKey());
         m.put("lessonSeq", e.getLessonSeq());
         m.put("title", e.getTitle());
