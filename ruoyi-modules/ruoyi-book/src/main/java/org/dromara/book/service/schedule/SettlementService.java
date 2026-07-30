@@ -122,7 +122,9 @@ public class SettlementService {
     /** 待结算一行（键名对齐 FE 契约 PendingSettlementVO；subjectLabel 为 additive 展示字段）。 */
     private Map<String, Object> pendingRow(BizScheduleSession s) {
         String subject = resolveSubject(s);
-        BizTuitionAccount acc = findAccount(s.getTargetId(), subject);
+        BizTuitionAccount any = findAnyAccount(s.getTargetId(), subject);
+        boolean disabled = any != null && TuitionAccountService.STATUS_DISABLED.equals(any.getStatus());
+        BizTuitionAccount acc = disabled ? null : any;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("sessionId", String.valueOf(s.getId()));
         m.put("date", String.valueOf(s.getSessionDate()));
@@ -134,6 +136,9 @@ public class SettlementService {
         m.put("planLessonTitle", lessonTitle(s.getPlanLessonId()));
         // 🔴 无账户 = null（不是 0）：FE 据此提示「先开户」，别显示成 0 元误导
         m.put("price", acc == null ? null : num(acc.getLessonPrice()));
+        // additive（bug 批 BUG-3/A）：null=没开户 / '0'=在用 / '1'=已停用——
+        // 让 FE 把「没开户」和「停用了」两种 price=null 说清楚，别一律劝人去开户
+        m.put("accountStatus", any == null ? null : any.getStatus());
         return m;
     }
 
@@ -221,6 +226,11 @@ public class SettlementService {
         String subject = resolveSubject(s);
         BizTuitionAccount acc = findAccount(s.getTargetId(), subject);
         if (acc == null) {
+            // 「没开户」与「开了但停用」是两回事，skipped 里得说准（bug 批 BUG-3/A）
+            BizTuitionAccount any = findAnyAccount(s.getTargetId(), subject);
+            if (any != null) {
+                throw new ServiceException("「" + EduTermUtil.subjectLabel(subject) + "」课时账户已停用，请先启用再结算");
+            }
             throw new ServiceException("未开通「" + EduTermUtil.subjectLabel(subject) + "」课时账户，请先开户再结算");
         }
         BigDecimal hours = scale2(it.getHours() == null ? DEFAULT_HOURS : it.getHours());
@@ -389,8 +399,18 @@ public class SettlementService {
         return s;
     }
 
-    /** 学生×学科账户（owner 过滤）；无账户返 null。 */
+    /**
+     * 学生×学科<b>在用</b>账户（owner 过滤 + 排除停用）；无账户或已停用返 null。
+     * 🔴 bug 批 BUG-3/A：停用账户不参与结算取价与扣费——要继续上课先启用回来。
+     * （冲正走 {@code accountMapper.selectById(deduct.accountId)}，不经这里，停用后旧账仍能退。）
+     */
     private BizTuitionAccount findAccount(Long studentId, String subject) {
+        BizTuitionAccount a = findAnyAccount(studentId, subject);
+        return a != null && TuitionAccountService.STATUS_DISABLED.equals(a.getStatus()) ? null : a;
+    }
+
+    /** 学生×学科账户（含停用，owner 过滤）——用于把「没开户」与「已停用」两种情况分开说。 */
+    private BizTuitionAccount findAnyAccount(Long studentId, String subject) {
         if (studentId == null || subject == null || subject.isBlank()) return null;
         return accountMapper.selectOne(new LambdaQueryWrapper<BizTuitionAccount>()
             .eq(BizTuitionAccount::getCreateBy, LoginHelper.getUserId())

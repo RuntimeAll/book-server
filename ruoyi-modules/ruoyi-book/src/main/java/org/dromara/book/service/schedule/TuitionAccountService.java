@@ -61,6 +61,19 @@ public class TuitionAccountService {
     public static final String FLOW_REVERSE = "3";
     public static final String FLOW_ADJUST = "4";
 
+    /** 账户状态码：'0' 正常 / '1' 停用（停用 = 不再参与建计划学科下拉与结算取账户）。 */
+    public static final String STATUS_ACTIVE = "0";
+    public static final String STATUS_DISABLED = "1";
+
+    /**
+     * 「未停用」条件（PRD-015 bug 批 BUG-3/A）：status 不是 '1' 就算在用。
+     * 🔴 用 isNull().or().ne() 而不是裸 ne——SQL 里 {@code NULL <> '1'} 求值为 NULL（不成立），
+     * 存量行若 status 为 NULL 会被整条过滤掉，账户凭空消失。
+     */
+    public static void notDisabled(LambdaQueryWrapper<BizTuitionAccount> w) {
+        w.and(x -> x.isNull(BizTuitionAccount::getStatus).or().ne(BizTuitionAccount::getStatus, STATUS_DISABLED));
+    }
+
     private final BizTuitionAccountMapper accountMapper;
     private final BizTuitionFlowMapper flowMapper;
     private final BizStudentMapper studentMapper;
@@ -135,15 +148,51 @@ public class TuitionAccountService {
         return e.getId();
     }
 
-    /** 学生是否已开通该学科账户（计划学科归属校验用，PRD-015 §9 班级跳过）。 */
+    /**
+     * 学生是否已开通该学科账户（计划学科归属校验用，PRD-015 §9 班级跳过）。
+     * 🔴 bug 批 BUG-3/A：<b>停用账户不算开通</b>——停用后该学科不再出现在建计划下拉里。
+     */
     public boolean hasAccount(Long studentId, String subject) {
         if (studentId == null || subject == null || subject.isBlank()) {
             return false;
         }
-        return accountMapper.selectCount(new LambdaQueryWrapper<BizTuitionAccount>()
+        LambdaQueryWrapper<BizTuitionAccount> w = new LambdaQueryWrapper<BizTuitionAccount>()
             .eq(BizTuitionAccount::getCreateBy, LoginHelper.getUserId())
             .eq(BizTuitionAccount::getStudentId, studentId)
-            .eq(BizTuitionAccount::getSubject, subject)) > 0;
+            .eq(BizTuitionAccount::getSubject, subject);
+        notDisabled(w);
+        return accountMapper.selectCount(w) > 0;
+    }
+
+    /**
+     * 停用 / 启用账户（bug 批 BUG-3/A）。停用 = 该学科不再出现在建计划下拉、结算取不到账户；
+     * 余额与流水<b>原样保留</b>（停用不是删除，账不能凭空消失），随时可启用回来。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void setStatus(Long accountId, String status) {
+        BizTuitionAccount acc = requireOwnedAccount(accountId);
+        String st = status == null ? "" : status.trim();
+        if (!STATUS_ACTIVE.equals(st) && !STATUS_DISABLED.equals(st)) {
+            throw new ServiceException("状态只支持 '0' 正常 / '1' 停用", 400);
+        }
+        acc.setStatus(st);
+        accountMapper.updateById(acc);
+    }
+
+    /**
+     * 删户（硬删，bug 批 BUG-3/A 拍板口径）：<b>仅零流水账户可删</b>。
+     * 🔴 有任何一条流水就只能停用——扣费/冲正只经流水行产生是审计线铁律（D1），
+     * 删掉账户会让台账与已结场次对不上账，比留一行停用账户危险得多。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteAccount(Long accountId) {
+        requireOwnedAccount(accountId);
+        long flows = flowMapper.selectCount(new LambdaQueryWrapper<BizTuitionFlow>()
+            .eq(BizTuitionFlow::getAccountId, accountId));
+        if (flows > 0) {
+            throw new ServiceException("该账户已有 " + flows + " 条课时记录，不能删除；如不再使用请改为「停用」", 400);
+        }
+        accountMapper.deleteById(accountId);
     }
 
     // ─────────────────────────── 手工流水（充值 / 调整） ───────────────────────────

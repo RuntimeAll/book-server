@@ -6,6 +6,7 @@ import org.dromara.book.domain.bo.TuitionAccountBo;
 import org.dromara.book.domain.bo.TuitionFlowBo;
 import org.dromara.book.service.schedule.TuitionAccountService;
 import org.dromara.common.core.domain.R;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -48,6 +49,28 @@ public class TuitionAccountController {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("id", String.valueOf(id));
         return R.ok(r);
+    }
+
+    /**
+     * 停用 / 启用账户（bug 批 BUG-3/A，additive）：body {"status":"0"|"1"}。
+     * 停用后该学科不进建计划下拉、结算取不到账户；余额与流水原样保留。
+     */
+    @SaCheckLogin
+    @PostMapping("/{id}/status")
+    public R<Void> setStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        accountService.setStatus(id, body == null ? null : body.get("status"));
+        return R.ok();
+    }
+
+    /**
+     * 删户（bug 批 BUG-3/A，additive）：<b>仅零流水账户可硬删</b>，
+     * 有流水返 400「请改为停用」（审计线不可断）。
+     */
+    @SaCheckLogin
+    @DeleteMapping("/{id}")
+    public R<Void> delete(@PathVariable Long id) {
+        accountService.deleteAccount(id);
+        return R.ok();
     }
 
     /** 手工流水（'1' 充值 / '4' 调整）→ {id}（流水 id）。事务内插流水 + 更新余额。 */
