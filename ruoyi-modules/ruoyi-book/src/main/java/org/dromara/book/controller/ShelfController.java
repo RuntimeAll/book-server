@@ -82,6 +82,16 @@ public class ShelfController {
         return R.ok(shelfService.getStructure(id));
     }
 
+    /**
+     * 电子课本阅读页数据（2026-07-30 课本展示改版）：目录（章+起始页码）+ 全书页表（页码→整页图）。
+     * 零迁移——页图取自题块，页码=source_page。返回 {title,totalPages,chapters,pages}。
+     */
+    @SaCheckLogin
+    @GetMapping("/book/{id}/pages")
+    public R<Map<String, Object>> textbookPages(@PathVariable Long id) {
+        return R.ok(bookExportService.textbookPages(id));
+    }
+
     @SaCheckLogin
     @DeleteMapping("/book/{id}")
     public R<Void> deleteBook(@PathVariable Long id) {
