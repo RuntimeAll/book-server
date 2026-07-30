@@ -53,6 +53,8 @@ public class ScheduleTargetService {
     private final BizScheduleSessionMapper sessionMapper;
     private final BizCoursePlanMapper planMapper;
     private final BizCoursePlanLessonMapper lessonMapper;
+    /** PRD-015：卡片上的每科课时余额角标（学生卡专有）。 */
+    private final TuitionAccountService accountService;
 
     private boolean isClass(String targetType) {
         return "1".equals(targetType);
@@ -250,6 +252,8 @@ public class ScheduleTargetService {
                 m.put("parentPhone", s.getParentPhone());
                 m.put("color", s.getColor());
                 m.put("archived", s.getArchived());
+                // PRD-015 additive：每科课时账户（卡片余额角标/学科 chips 直接吃这里，免 N 次 /account/list）
+                m.put("accounts", accountService.listAccounts(s.getId()));
                 fillAggregates(m, "0", s.getId(), today, s.getSubject());
                 out.add(m);
             }

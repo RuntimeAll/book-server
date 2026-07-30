@@ -270,10 +270,10 @@ public class TuitionAccountService {
         m.put("timeRange", timeRange);
         m.put("content", content);
         m.put("flowType", f.getFlowType());
-        m.put("hoursDelta", f.getHoursDelta());
-        m.put("amountDelta", f.getAmountDelta());
-        m.put("hoursAfter", f.getHoursAfter());
-        m.put("amountAfter", f.getAmountAfter());
+        m.put("hoursDelta", num(f.getHoursDelta()));
+        m.put("amountDelta", num(f.getAmountDelta()));
+        m.put("hoursAfter", num(f.getHoursAfter()));
+        m.put("amountAfter", num(f.getAmountAfter()));
         return m;
     }
 
@@ -300,7 +300,17 @@ public class TuitionAccountService {
         rows.sort(Comparator.comparing(x -> String.valueOf(x.get("date") == null ? "" : x.get("date"))));
 
         String html = buildLedgerHtml(stuName, subjectLabel, acc, rows);
-        int height = 150 + Math.max(rows.size(), 1) * 30 + 26;
+        // 高度收边（同 FeedbackSheetService BUG-014 口径）：标题条+meta 行+表头+内边距 ≈ 124px，
+        // 每行 27px，内容列约 30 个中文字换行 → 长内容多算一行不裁切、短行不留白底。
+        int rowsH = 0;
+        for (Map<String, Object> row : rows) {
+            int lines = Math.max(1, (int) Math.ceil(str(row.get("content")).length() / 30.0));
+            rowsH += lines * 27;
+        }
+        if (rows.isEmpty()) {
+            rowsH = 34;
+        }
+        int height = 124 + rowsH + 14;
         String file = renderUtil.renderToPng(html, "ledger_" + accountId, 720, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
@@ -357,7 +367,7 @@ public class TuitionAccountService {
             sb.append("<td class=\"c\">").append(esc(str(row.get("timeRange")))).append("</td>");
             sb.append("<td>").append(esc(str(row.get("content")))).append("</td>");
             sb.append("<td class=\"r\">").append(esc(signed(row.get("hoursDelta")))).append("</td>");
-            sb.append("<td class=\"r\">").append(esc(str(row.get("hoursAfter")))).append("</td>");
+            sb.append("<td class=\"r\">").append(esc(plainObj(row.get("hoursAfter")))).append("</td>");
             sb.append("</tr>");
         }
         if (rows.isEmpty()) {
@@ -377,9 +387,9 @@ public class TuitionAccountService {
         m.put("studentId", a.getStudentId() == null ? null : String.valueOf(a.getStudentId()));
         m.put("subject", a.getSubject());
         m.put("subjectLabel", EduTermUtil.subjectLabel(a.getSubject()));
-        m.put("lessonPrice", a.getLessonPrice());
-        m.put("hoursRemain", a.getHoursRemain());
-        m.put("amountRemain", a.getAmountRemain());
+        m.put("lessonPrice", num(a.getLessonPrice()));
+        m.put("hoursRemain", num(a.getHoursRemain()));
+        m.put("amountRemain", num(a.getAmountRemain()));
         m.put("status", a.getStatus());
         m.put("note", a.getNote());
         return m;
@@ -445,6 +455,15 @@ public class TuitionAccountService {
         return v == null ? BigDecimal.ZERO : v;
     }
 
+    /**
+     * 🔴 JSON 数值口径：全局 JacksonConfig 把 BigDecimal 序列化成<b>字符串</b>（ToStringSerializer），
+     * 而契约正本 account.ts 里 lessonPrice/hoursRemain/hoursDelta… 全是 number。
+     * 故 VO 出参统一过本方法转 Double（两位小数，double 表达无损），保证 FE 拿到的是数字不是 "300.00"。
+     */
+    private Double num(BigDecimal v) {
+        return v == null ? null : v.doubleValue();
+    }
+
     private BigDecimal scale2(BigDecimal v) {
         return nz(v).setScale(2, RoundingMode.HALF_UP);
     }
@@ -456,11 +475,19 @@ public class TuitionAccountService {
         return s.scale() < 0 ? s.setScale(0, RoundingMode.HALF_UP).toPlainString() : s.toPlainString();
     }
 
-    /** 带符号显示（+2 / -1 / -0.67）。 */
+    /** 台账行里的数值列已转 Double（见 {@link #num}），出图时统一去尾零显示。 */
+    private String plainObj(Object v) {
+        if (v == null) return "";
+        if (v instanceof BigDecimal d) return plain(d);
+        if (v instanceof Number n) return plain(BigDecimal.valueOf(n.doubleValue()));
+        return String.valueOf(v);
+    }
+
+    /** 带符号显示（+2 / -1 / -0.67；0 不加号）。 */
     private String signed(Object v) {
-        if (!(v instanceof BigDecimal d)) return str(v);
-        String s = plain(d);
-        return d.signum() > 0 ? "+" + s : s;
+        String s = plainObj(v);
+        if (s.isEmpty() || s.startsWith("-") || "0".equals(s)) return s;
+        return "+" + s;
     }
 
     private String str(Object o) {
