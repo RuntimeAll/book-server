@@ -1695,3 +1695,103 @@ ALTER TABLE biz_ingest_job
 --   🔴 prod RDS 部署 BE 前必须先手工同步（BizShelfItem 实体已带字段，缺列=书架域整体 500）。
 ALTER TABLE `biz_shelf_item`
   ADD COLUMN `content_json` json NULL COMMENT '结构化内容(打卡=模块JSON/讲义=Tiptap,按book_type分流;PRD-012 D2/PRD-013 D5)' AFTER `explain_json`;
+
+-- ============================================================
+-- PRD-015 AC10 一致性补全①：biz_feedback_sheet 建表（B 位 2026-07-30 回补）
+-- 🔴 历史缺口——本表 2026-07-13 由 PRD-004 交付稿建库，建表语句一直只在
+--    codeplace-B/prd/PRD-004/DDL.sql，从未收进收敛 DDL；PRD-010（batch 两列）与
+--    PRD-015（session_id/plan_id 两列）都是在它之上 ALTER，新库按本文件建会缺表。
+-- 正本 = PRD-004/DDL.sql + PRD-010 两列 + PRD-015 两列合成，以 dev :3307
+--    SHOW CREATE TABLE biz_feedback_sheet 实际输出为准（2026-07-30 核对）。
+-- 🔴 新库执行顺序：先本段 CREATE TABLE，后面 PRD-010 / PRD-015 的 ALTER 段即可跳过
+--    （两段列已含在本 CREATE 内，重复执行会报 Duplicate column）。
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS `biz_feedback_sheet` (
+  `id`          bigint       NOT NULL COMMENT '雪花主键',
+  `target_id`   bigint       NOT NULL COMMENT '学生（biz_student.id）',
+  `session_id`  bigint       DEFAULT NULL COMMENT '绑定场次 (PRD-015 D6 主绑定)',
+  `plan_id`     bigint       DEFAULT NULL COMMENT '冗余计划id(按计划查/导出)',
+  `batch_key`   varchar(64)  DEFAULT NULL COMMENT '反馈批次键(PRD-010 独立批次;PRD-015 起降级为遗留只读)',
+  `lesson_seq`  int          DEFAULT NULL COMMENT '课次序号(PRD-010 批次内 → PRD-015 计划内反馈序号,服务端自动=count(plan_id)+1)',
+  `title`       varchar(200) DEFAULT NULL COMMENT '反馈单标题（PRD-015 D7 起降为可空备注,导出标题动态拼）',
+  `lesson_date` date         DEFAULT NULL,
+  `rows_json`   json         DEFAULT NULL COMMENT '行数组 [{seq,module,content,mastery,weakness,kp_id?}]（五列实料标准；kp_id 可选留画像通路零功能）',
+  `create_dept` bigint       DEFAULT NULL,
+  `create_by`   bigint       DEFAULT NULL COMMENT '归属老师',
+  `create_time` datetime     DEFAULT CURRENT_TIMESTAMP,
+  `update_by`   bigint       DEFAULT NULL,
+  `update_time` datetime     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `remark`      varchar(500) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_target` (`target_id`),
+  KEY `idx_fb_target_batch` (`target_id`,`batch_key`,`lesson_seq`),
+  KEY `idx_fb_plan` (`plan_id`,`lesson_seq`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课后反馈单（PRD-004 最小版：CRUD+PNG导出）';
+
+-- ============================================================
+-- PRD-015 AC10 一致性补全②：biz_course_plan_lesson.special_ids（B 位 2026-07-30 回补）
+-- 🔴 历史缺口——正本一直只在 codeplace-C/prd/PRD-003/DDL.sql（2026-07-13 材料位交付稿），
+--    未收进收敛 DDL；BizCoursePlanLesson 实体已带该字段，新库缺列 = 备课材料位整体 500。
+-- special 本体复用 PRD-002 biz_shelf_* 三表（book_type='special'），零新表。
+-- ============================================================
+
+ALTER TABLE `biz_course_plan_lesson`
+  ADD COLUMN `special_ids` json DEFAULT NULL COMMENT '本课绑定的专项书id数组 [biz_shelf_book.id,...]（PRD-003 D4 材料位）';
+
+-- ============================================================
+-- PRD-015 教务域：账户/结算/反馈绑定（B 位 2026-07-30）
+-- 一条线 = 场次为交点：开户(=学生×学科绑定) → 排课 → 过点待结算 → 一键结算(扣课时课费+标已上+反馈壳)
+--   → 反馈按计划导出 → 请假/取消自动冲正返还。
+-- dev :3307 已于 2026-07-30 直接 apply（四线共库一次生效）；
+-- 🔴 prod RDS(ai_lesson_prep) 必须**先于 BE 镜像**手工同步，否则教务域整体 500。
+-- ============================================================
+
+-- ① 账户（开户即学生×学科绑定，D2/D3；余额可负=欠费不拦截）
+CREATE TABLE IF NOT EXISTS `biz_tuition_account` (
+  `id`            bigint        NOT NULL COMMENT '雪花',
+  `student_id`    bigint        NOT NULL COMMENT 'biz_student.id',
+  `subject`       varchar(20)   NOT NULL COMMENT '学科字典码 biz_edu_subject',
+  `lesson_price`  decimal(10,2) NOT NULL DEFAULT 0 COMMENT '每课时单价(元)',
+  `hours_remain`  decimal(7,2)  NOT NULL DEFAULT 0 COMMENT '剩余课时(可负=欠费;两位小数,D5 实扣 0.67 等)',
+  `amount_remain` decimal(10,2) NOT NULL DEFAULT 0 COMMENT '剩余金额(元)',
+  `status`        char(1)       NOT NULL DEFAULT '0' COMMENT '0正常/1停用',
+  `note`          varchar(255)  DEFAULT NULL,
+  `create_by`     bigint        DEFAULT NULL,
+  `create_time`   datetime      DEFAULT NULL,
+  `update_time`   datetime      DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_student_subject` (`student_id`,`subject`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课时课费账户(学生x学科, PRD-015; 开户=学科绑定)';
+
+-- ② 流水（充值/扣课/冲正/调整一张账，D1；uk(session_id,flow_type)=防重复扣/重复冲）
+CREATE TABLE IF NOT EXISTS `biz_tuition_flow` (
+  `id`           bigint        NOT NULL,
+  `account_id`   bigint        NOT NULL COMMENT 'biz_tuition_account.id',
+  `flow_type`    char(1)       NOT NULL COMMENT '1充值/2扣课/3冲正/4调整',
+  `hours_delta`  decimal(7,2)  NOT NULL DEFAULT 0 COMMENT '课时增减(扣为负;两位小数=实扣课时)',
+  `amount_delta` decimal(10,2) NOT NULL DEFAULT 0 COMMENT '金额增减(扣为负)',
+  `hours_after`  decimal(7,2)  DEFAULT NULL COMMENT '本笔后剩余课时快照(台账"剩余"列,写入时定格)',
+  `amount_after` decimal(10,2) DEFAULT NULL COMMENT '本笔后剩余金额快照',
+  `session_id`   bigint        DEFAULT NULL COMMENT '关联场次(扣课/冲正必填=幂等键)',
+  `note`         varchar(255)  DEFAULT NULL,
+  `create_by`    bigint        DEFAULT NULL,
+  `create_time`  datetime      DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_session_type` (`session_id`,`flow_type`),
+  KEY `idx_account_time` (`account_id`,`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课时课费流水(PRD-015; uk(session_id,flow_type)=防重复扣/重复冲)';
+
+-- ③ 场次结算态（D4 只提醒不自动扣：过点未结进待结算清单，老师一键确认才动账）
+ALTER TABLE `biz_schedule_session`
+  ADD COLUMN `settle_status` char(1) NOT NULL DEFAULT '0' COMMENT '0未结/1已结/2已冲正 (PRD-015)',
+  ADD INDEX `idx_settle` (`settle_status`, `session_date`);
+
+-- ④ 反馈绑定（D6 绑场次 + 冗余 plan_id 供按计划查/导；lesson_seq 语义改计划内序号）
+--    🔴 若上面 AC10 补全①的 CREATE TABLE 刚建过表，本段两列已含在内，跳过本段。
+ALTER TABLE `biz_feedback_sheet`
+  ADD COLUMN `session_id` bigint NULL COMMENT '绑定场次 (PRD-015 D6 主绑定)' AFTER `target_id`,
+  ADD COLUMN `plan_id`    bigint NULL COMMENT '冗余计划id(按计划查/导出)' AFTER `session_id`,
+  ADD INDEX `idx_fb_plan` (`plan_id`, `lesson_seq`);
+-- lesson_seq 语义变更: PRD-010 批次内课次号 → PRD-015 计划内反馈序号(服务端自动=count(plan_id)+1)
+-- batch_key: 遗留只读，新单不再要求
