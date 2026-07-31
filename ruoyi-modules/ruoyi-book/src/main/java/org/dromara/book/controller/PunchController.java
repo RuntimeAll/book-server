@@ -32,6 +32,8 @@ import java.util.Map;
  *   GET  /teacher/punch/day?bookId=&amp;day=                  一天原文 {goals,modules,review}
  *   GET  /teacher/punch/preview?bookId=&amp;day=&amp;paper=       纸面 HTML 串（FE iframe，与导出同源）
  *   POST /teacher/punch/exportDay  {bookId,day,papers?}   双卷 PDF → OSS {questionUrl,answerUrl}
+ *   POST /teacher/punch/exportBook {bookId,papers?}       整册异步导出提交 → {export:{status:running}}
+ *   GET  /teacher/punch/exportStatus?bookId=              轮询 → {export: style_meta.punchExport}
  *   POST /teacher/punch/upsertDay  {bookId,day,goals,modules}  幂等建/覆盖 → {nodeId,itemIds}
  *   POST /teacher/punch/review     {bookId,day,action,issues?} 审核流 → {review}
  * </pre>
@@ -87,15 +89,23 @@ public class PunchController {
     }
 
     /**
-     * 整书导出（2026-07-30）：全部天合并成册，每种卷一份全册 PDF。
-     * 同步长任务（10 天双卷约 40-80s），FE 调用侧超时放宽到 5 分钟。
+     * 整书导出 v2（2026-07-30 异步化）：提交即返回 {bookId, export:{status:'running',...}}，
+     * worker 后台逐天渲染合并，结果覆盖写 style_meta.punchExport（持久化，重导覆盖上一次）。
+     * FE 轮询 GET /exportStatus 取进展；重复提交（running 未超时）返 409。
      */
     @SaCheckLogin
     @PostMapping("/exportBook")
     public R<Map<String, Object>> exportBook(@RequestBody Map<String, Object> body) {
-        return R.ok(punchService.exportBook(
+        return R.ok(punchService.submitExportBook(
             reqId(body.get("bookId"), "bookId"),
             strList(body.get("papers"))));
+    }
+
+    /** 整书导出状态（FE 轮询口）：{bookId, export: style_meta.punchExport | null}。 */
+    @SaCheckLogin
+    @GetMapping("/exportStatus")
+    public R<Map<String, Object>> exportStatus(@RequestParam String bookId) {
+        return R.ok(punchService.exportStatus(reqId(bookId, "bookId")));
     }
 
     @SaCheckLogin

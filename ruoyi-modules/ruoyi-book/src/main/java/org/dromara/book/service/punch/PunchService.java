@@ -74,6 +74,17 @@ public class PunchService {
     private final ChromePdfRenderer renderer;
     private final ObjectMapper om;
 
+    /**
+     * 整书导出异步 worker。🔴 setter + @Lazy 注入：worker 构造器反向依赖本服务
+     * （渲染/落状态都走这里），构造器互注会成环，@Lazy 代理断环。
+     */
+    private PunchExportWorker exportWorker;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setExportWorker(@org.springframework.context.annotation.Lazy PunchExportWorker exportWorker) {
+        this.exportWorker = exportWorker;
+    }
+
     /** 打卡纸面主题（版式=每日一练定版 CSS，单文件自包含）。 */
     public static final String THEME = "punch-v1";
 
@@ -98,7 +109,15 @@ public class PunchService {
      * @return {paper,title,accent,subtitle,variantName,day,goals,modules}
      */
     public Map<String, Object> assembleDay(Long bookId, int day, String paper) {
-        BizShelfBook book = requireReadableBook(bookId);
+        return assembleDay(requireReadableBook(bookId), day, paper);
+    }
+
+    /**
+     * 无门禁内部口（异步导出 worker 用）：权限已在提交线程校验完，
+     * 异步线程没有 SaToken 上下文，不能再走 {@link #requireReadableBook}。
+     */
+    Map<String, Object> assembleDay(BizShelfBook book, int day, String paper) {
+        Long bookId = book.getId();
         BizShelfNode node = requireDay(bookId, day);
         Map<String, Object> meta = parseMap(node.getMetaJson());
         Map<String, Object> style = parseMap(book.getStyleMetaJson());
@@ -236,15 +255,114 @@ public class PunchService {
         return r;
     }
 
+    /** 整书导出 running 态超过此时长视为僵尸（BE 重启丢任务等），放行重新提交覆盖。 */
+    private static final long EXPORT_STALE_MS = 15 * 60 * 1000L;
+
     /**
-     * 整书导出（2026-07-30 用户点单）：全部天逐天渲染后 PDFBox 合并成册 → OSS。
-     * 每种卷出一份全册 PDF（题目全册 / 解析全册），替代 FE 逐天串行出 20 个散链接。
-     * 同步长任务（每天一次 Chrome 渲染，10 天双卷约 40-80s）——FE 侧超时须放宽。
+     * 整书导出 v2（2026-07-30 用户点单：异步 + 持久化 + 覆盖）——提交即返回，
+     * {@link PunchExportWorker} 在 exportPdfExecutor 池逐天渲染合并（10 天双卷约 2-5min）。
+     * 状态与结果唯一落点 = {@code style_meta_json.punchExport}（覆盖写：重导天然盖掉上一次；
+     * 换页/重登/BE 在跑都能续看，FE 轮询 {@link #exportStatus} 取进展）。
      *
      * @param papers 要出的卷（question/answer），空 = 双卷
-     * @return {questionUrl?, answerUrl?, days}
+     * @return {bookId, export:{status:'running',papers,days,startedAt}}
      */
-    public Map<String, Object> exportBook(Long bookId, List<String> papers) {
+    public Map<String, Object> submitExportBook(Long bookId, List<String> papers) {
+        BizShelfBook book = requireOwnedBook(bookId);
+        List<String> want = normPapers(papers);
+        List<Integer> days = new ArrayList<>();
+        for (Map<String, Object> d : listDays(bookId)) {
+            days.add((Integer) d.get("day"));
+        }
+        if (days.isEmpty()) throw new ServiceException("本书还没有内容", 400);
+
+        // 并发闸：running 且未过僵尸线 → 拒绝重复提交（单书串行；多书并发由线程池管）
+        Map<String, Object> cur = punchExportOf(book);
+        if (cur != null && "running".equals(cur.get("status")) && !isStale(cur)) {
+            throw new ServiceException("整册导出进行中，请稍候（完成后会覆盖上一次结果）", 409);
+        }
+
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("status", "running");
+        state.put("papers", want);
+        state.put("days", days.size());
+        state.put("startedAt", LocalDateTime.now().toString());
+        state.put("startedAtMs", System.currentTimeMillis());
+        writePunchExport(bookId, state);
+        exportWorker.run(bookId, want, days);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("export", state);
+        return r;
+    }
+
+    /** 整书导出状态查询（FE 轮询口）：{bookId, export: style_meta.punchExport|null}。 */
+    public Map<String, Object> exportStatus(Long bookId) {
+        BizShelfBook book = requireReadableBook(bookId);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("export", punchExportOf(book));
+        return r;
+    }
+
+    /**
+     * 渲染整书合并 PDF（worker 专用，无门禁——权限在 {@link #submitExportBook} 已校验）。
+     * 逐天 Chrome 渲染 + 裁尾部空白页 + PDFBox 合并，返回合并后的字节。
+     */
+    byte[] renderBookMerged(Long bookId, String paper, List<Integer> days) {
+        BizShelfBook book = bookMapper.selectById(bookId);
+        if (book == null) throw new ServiceException("书不存在", 404);
+        org.apache.pdfbox.multipdf.PDFMergerUtility merger = new org.apache.pdfbox.multipdf.PDFMergerUtility();
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        merger.setDestinationStream(bos);
+        for (int day : days) {
+            byte[] pdf = renderer.render(THEME, assembleDay(book, day, paper), "punch-book-d" + day + "-" + paper);
+            merger.addSource(new java.io.ByteArrayInputStream(trimBlankTailPages(pdf)));
+        }
+        try {
+            merger.mergeDocuments(org.apache.pdfbox.io.MemoryUsageSetting.setupMainMemoryOnly());
+        } catch (java.io.IOException e) {
+            throw new ServiceException("整书 PDF 合并失败: " + e.getMessage(), 500);
+        }
+        log.info("[punch] 整书渲染合并 bookId={} paper={} days={} size={}B", bookId, paper, days.size(), bos.size());
+        return bos.toByteArray();
+    }
+
+    /**
+     * 覆盖写 {@code style_meta_json.punchExport}（worker/提交线程共用；只动这一个键，
+     * 其余 style 键经 parse→put→回写保留）。异步线程可调（mapper 无登录依赖）。
+     */
+    void writePunchExport(Long bookId, Map<String, Object> state) {
+        BizShelfBook fresh = bookMapper.selectById(bookId);
+        if (fresh == null) {
+            log.warn("[punch] writePunchExport 书已不存在 bookId={}", bookId);
+            return;
+        }
+        Map<String, Object> style = parseMap(fresh.getStyleMetaJson());
+        style.put("punchExport", state);
+        BizShelfBook up = new BizShelfBook();
+        up.setId(bookId);
+        up.setStyleMetaJson(JsonUtils.toJsonString(style));
+        bookMapper.updateById(up);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> punchExportOf(BizShelfBook book) {
+        Object o = parseMap(book.getStyleMetaJson()).get("punchExport");
+        return o instanceof Map ? (Map<String, Object>) o : null;
+    }
+
+    private boolean isStale(Map<String, Object> exportState) {
+        try {
+            long started = (long) Double.parseDouble(String.valueOf(exportState.get("startedAtMs")));
+            return System.currentTimeMillis() - started > EXPORT_STALE_MS;
+        } catch (RuntimeException e) {
+            return true;   // 没有/坏掉的时间戳按僵尸放行，别把导出永久锁死
+        }
+    }
+
+    private List<String> normPapers(List<String> papers) {
         List<String> want = new ArrayList<>();
         if (papers != null) {
             for (Object o : papers) {
@@ -256,35 +374,7 @@ public class PunchService {
             want.add("question");
             want.add("answer");
         }
-        List<Integer> days = new ArrayList<>();
-        for (Map<String, Object> d : listDays(bookId)) {
-            days.add((Integer) d.get("day"));
-        }
-        if (days.isEmpty()) throw new ServiceException("本书还没有内容", 400);
-
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("bookId", String.valueOf(bookId));
-        r.put("days", days.size());
-        for (String paper : want) {
-            org.apache.pdfbox.multipdf.PDFMergerUtility merger = new org.apache.pdfbox.multipdf.PDFMergerUtility();
-            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-            merger.setDestinationStream(bos);
-            for (int day : days) {
-                byte[] pdf = renderer.render(THEME, assembleDay(bookId, (int) day, paper), "punch-book-d" + day + "-" + paper);
-                merger.addSource(new java.io.ByteArrayInputStream(trimBlankTailPages(pdf)));
-            }
-            try {
-                merger.mergeDocuments(org.apache.pdfbox.io.MemoryUsageSetting.setupMainMemoryOnly());
-            } catch (java.io.IOException e) {
-                log.error("[punch] 整书合并失败 bookId={} paper={}", bookId, paper, e);
-                throw new ServiceException("整书 PDF 合并失败: " + e.getMessage(), 500);
-            }
-            OssClient oss = OssFactory.instance();
-            UploadResult up = oss.uploadSuffix(bos.toByteArray(), ".pdf", "application/pdf");
-            r.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
-            log.info("[punch] 整书导出 bookId={} paper={} days={} size={}B", bookId, paper, days.size(), bos.size());
-        }
-        return r;
+        return want;
     }
 
     /**

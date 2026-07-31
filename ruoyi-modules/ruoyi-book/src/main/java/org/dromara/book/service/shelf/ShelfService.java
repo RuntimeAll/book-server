@@ -54,6 +54,18 @@ public class ShelfService {
     private final BizSubjectMapper subjectMapper;
     private final BizCoursePlanLessonMapper lessonMapper;
 
+    /**
+     * PDF 直录待解析书类型（与电子课本 textbook 区分：只挂原件+封面，没有节点树/题项，
+     * 等人工或管线来解析）。book_type 列 varchar(16)，无字典无枚举约束，同 daily_punch 加法。
+     */
+    public static final String BOOK_TYPE_PDF_PENDING = "pdf_pending";
+
+    /** 网盘链接 provider 白名单（style_meta_json.netdisks[].provider）。 */
+    private static final Set<String> NETDISK_PROVIDERS = Set.of("baidu", "quark", "aliyun", "other");
+
+    /** 一本书最多绑几条网盘链接。 */
+    private static final int NETDISK_MAX = 10;
+
     // ───────────────── 书 CRUD + 列表 ─────────────────
 
     @Transactional(rollbackFor = Exception.class)
@@ -193,6 +205,73 @@ public class ShelfService {
         itemMapper.delete(new LambdaQueryWrapper<BizShelfItem>().eq(BizShelfItem::getBookId, id));
         nodeMapper.delete(new LambdaQueryWrapper<BizShelfNode>().eq(BizShelfNode::getBookId, id));
         bookMapper.deleteById(id);
+    }
+
+    // ───────────────── 网盘链接（style_meta_json.netdisks，零 DDL） ─────────────────
+
+    /**
+     * 绑定书的网盘链接（整表覆盖式保存：传什么就是什么，空数组=清空）。
+     *
+     * <p>🔴 合并写：只覆盖 style_meta_json 的 {@code netdisks} 键，
+     * accent/subtitle/variantName/punchReview 等既有键原样保留（同
+     * {@code PunchService.recomputeBookReview} 的 style_meta 读-改-写范式），
+     * 且只 UPDATE style_meta_json 一列，不整行 upsert。
+     *
+     * @param bookId 书 id（写门禁 = {@link #requireOwnedBook}）
+     * @param raw    {@code [{provider,url,code?,note?}]}；provider ∈ baidu/quark/aliyun/other，url 非空，≤10 条
+     * @return {bookId, netdisks}
+     */
+    @Transactional(rollbackFor = Exception.class)
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> saveNetdisks(Long bookId, List<Map<String, Object>> raw) {
+        BizShelfBook b = requireOwnedBook(bookId);
+
+        List<Map<String, Object>> netdisks = new ArrayList<>();
+        if (raw != null) {
+            if (raw.size() > NETDISK_MAX) {
+                throw new ServiceException("网盘链接最多 " + NETDISK_MAX + " 条，收到 " + raw.size(), 400);
+            }
+            for (Object o : raw) {
+                if (!(o instanceof Map)) {
+                    throw new ServiceException("netdisks 元素必须是对象 {provider,url,code?,note?}", 400);
+                }
+                Map<String, Object> src = (Map<String, Object>) o;
+                String provider = str(src.get("provider")).toLowerCase();
+                if (!NETDISK_PROVIDERS.contains(provider)) {
+                    throw new ServiceException("provider 非法（只能 baidu/quark/aliyun/other）：" + src.get("provider"), 400);
+                }
+                String url = str(src.get("url"));
+                if (url.isEmpty()) {
+                    throw new ServiceException("url 不能为空（provider=" + provider + "）", 400);
+                }
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("provider", provider);
+                m.put("url", url);
+                m.put("code", blankToNull(src.get("code")));
+                m.put("note", blankToNull(src.get("note")));
+                netdisks.add(m);
+            }
+        }
+
+        mergeStyleMeta(b, Map.of("netdisks", netdisks));
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("netdisks", netdisks);
+        return r;
+    }
+
+    /**
+     * 🔴 style_meta_json 合并写：读旧 JSON → putAll 增量键 → 只 UPDATE style_meta_json 一列。
+     * 绝不整体替换（accent/subtitle/variantName/punchReview 等既有键必须活下来）。
+     */
+    void mergeStyleMeta(BizShelfBook book, Map<String, Object> patch) {
+        Map<String, Object> style = parseMap(book.getStyleMetaJson());
+        style.putAll(patch);
+        BizShelfBook up = new BizShelfBook();
+        up.setId(book.getId());
+        up.setStyleMetaJson(JsonUtils.toJsonString(style));
+        bookMapper.updateById(up);
     }
 
     // ───────────────── 节点 增删改序 ─────────────────
@@ -663,6 +742,33 @@ public class ShelfService {
     private Object parse(String json) {
         if (json == null || json.isBlank()) return null;
         return JsonUtils.parseObject(json, Object.class);
+    }
+
+    /**
+     * JSON 对象列解析成可改的 Map。空列 → 空 Map；
+     * 🔴 非空但解析不出对象 → 直接抛，绝不静默当空 Map 继续写（那会把整列既有键抹掉）。
+     */
+    private Map<String, Object> parseMap(String json) {
+        if (json == null || json.isBlank()) return new LinkedHashMap<>();
+        Map<String, Object> m;
+        try {
+            m = JsonUtils.parseMap(json);
+        } catch (Exception e) {
+            throw new ServiceException("style_meta_json 解析失败，拒绝覆盖写：" + e.getMessage(), 500);
+        }
+        if (m == null) {
+            throw new ServiceException("style_meta_json 不是 JSON 对象，拒绝覆盖写", 500);
+        }
+        return new LinkedHashMap<>(m);
+    }
+
+    private String str(Object o) {
+        return o == null ? "" : String.valueOf(o).trim();
+    }
+
+    private String blankToNull(Object o) {
+        String s = str(o);
+        return s.isEmpty() ? null : s;
     }
 
     private Long parseId(String s) {

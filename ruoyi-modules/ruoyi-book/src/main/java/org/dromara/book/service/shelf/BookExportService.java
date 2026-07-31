@@ -378,6 +378,92 @@ public class BookExportService {
         return out;
     }
 
+    // ───────────────── 电子课本阅读页数据（目录+页码+整页图） ─────────────────
+
+    /**
+     * 电子课本阅读页数据（2026-07-30 用户点单：课本展示=目录→页码→整页图翻书，不再走题块浏览页）。
+     *
+     * <p>零迁移：页图仍取自题块（每页=一条题引用，blockJson 首图 / biz_question_image role=stem 兜底，
+     * 与 {@link #exportImageBook} 同口径）；页码 = {@code biz_shelf_item.source_page}（PRD-006 录入
+     * 审核链已回填），缺失回退文档序号。章 = 顶层节点，startPage = 该章子树最小页码。
+     *
+     * @return {bookId, title, totalPages, chapters:[{nodeId,name,startPage}], pages:[{page,url}]}
+     */
+    public Map<String, Object> textbookPages(Long bookId) {
+        BizShelfBook book = requireExportableBook(bookId);
+
+        List<BizShelfNode> nodes = nodeMapper.selectList(new LambdaQueryWrapper<BizShelfNode>()
+            .eq(BizShelfNode::getBookId, bookId)
+            .orderByAsc(BizShelfNode::getSeq).orderByAsc(BizShelfNode::getId));
+        List<BizShelfItem> items = itemMapper.selectList(new LambdaQueryWrapper<BizShelfItem>()
+            .eq(BizShelfItem::getBookId, bookId)
+            .orderByAsc(BizShelfItem::getSeq).orderByAsc(BizShelfItem::getId));
+
+        Map<Long, List<BizShelfNode>> childrenOf = new LinkedHashMap<>();
+        List<BizShelfNode> roots = new ArrayList<>();
+        for (BizShelfNode n : nodes) {
+            if (n.getParentId() == null) roots.add(n);
+            else childrenOf.computeIfAbsent(n.getParentId(), k -> new ArrayList<>()).add(n);
+        }
+        Map<Long, List<BizShelfItem>> itemsByNode = new LinkedHashMap<>();
+        Set<Long> qids = new LinkedHashSet<>();
+        for (BizShelfItem it : items) {
+            itemsByNode.computeIfAbsent(it.getNodeId(), k -> new ArrayList<>()).add(it);
+            if ("question".equals(it.getKind()) && it.getQuestionId() != null) qids.add(it.getQuestionId());
+        }
+        Map<Long, String> blockJsonByQid = loadBlockJson(qids);
+
+        // 章=顶层节点子树；页去重取首图（同页多题只留第一张，与整书导出的页序一致）
+        Map<Integer, String> urlByPage = new java.util.TreeMap<>();
+        List<Map<String, Object>> chapters = new ArrayList<>();
+        int running = 0;
+        for (BizShelfNode root : roots) {
+            List<BizShelfNode> subtree = new ArrayList<>();
+            expandNodes(List.of(root), childrenOf, subtree);
+            Integer chapterStart = null;
+            for (BizShelfNode n : subtree) {
+                for (BizShelfItem it : itemsByNode.getOrDefault(n.getId(), List.of())) {
+                    if (!"question".equals(it.getKind()) || it.getQuestionId() == null) continue;
+                    running++;
+                    int page = it.getSourcePage() != null && it.getSourcePage() > 0 ? it.getSourcePage() : running;
+                    String url = firstImageUrl(blockJsonByQid.get(it.getQuestionId()));
+                    if (url == null) url = stemImageFallback(it.getQuestionId());
+                    if (url == null) {
+                        log.warn("[textbook-pages] 页无图 bookId={} qid={} page={}", bookId, it.getQuestionId(), page);
+                        continue;
+                    }
+                    urlByPage.putIfAbsent(page, url);
+                    if (chapterStart == null || page < chapterStart) chapterStart = page;
+                }
+            }
+            if (chapterStart != null) {
+                Map<String, Object> ch = new LinkedHashMap<>();
+                ch.put("nodeId", String.valueOf(root.getId()));
+                ch.put("name", root.getName());
+                ch.put("startPage", chapterStart);
+                chapters.add(ch);
+            }
+        }
+        if (urlByPage.isEmpty()) {
+            throw new ServiceException("本书没有整页图（不是电子课本或页图缺失）", 400);
+        }
+
+        List<Map<String, Object>> pages = new ArrayList<>(urlByPage.size());
+        for (Map.Entry<Integer, String> e : urlByPage.entrySet()) {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("page", e.getKey());
+            p.put("url", e.getValue());
+            pages.add(p);
+        }
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("title", book.getTitle());
+        r.put("totalPages", ((java.util.TreeMap<Integer, String>) urlByPage).lastKey());
+        r.put("chapters", chapters);
+        r.put("pages", pages);
+        return r;
+    }
+
     // ───────────────── 图片书（textbook）：整页图逐页拼 A4 ─────────────────
 
     private byte[] exportImageBook(BizShelfBook book) {
