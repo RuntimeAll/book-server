@@ -146,6 +146,20 @@ public class ShelfController {
     }
 
     /**
+     * 打卡书版面开关（哪些固定区块显示/隐藏，零 DDL 落 style_meta_json.punchLayout）。
+     * body: {@code {showInfo?, showGoals?, showWrongLog?}}（班级姓名栏 / 今日目标 / 解析卷错题记录）。
+     * 🔴 缺省全开，只有显式 false 才隐藏；不传的键不动；空 body = 全恢复默认。
+     * 展示与导出同源，改一次两边一起变，**不动任何题目内容**。
+     * 返回 {bookId, punchLayout}。
+     */
+    @SaCheckLogin
+    @PostMapping("/book/{id}/punch-layout")
+    public R<Map<String, Object>> savePunchLayout(@PathVariable Long id,
+                                                  @RequestBody(required = false) Map<String, Object> body) {
+        return R.ok(shelfService.savePunchLayout(id, body));
+    }
+
+    /**
      * PDF 直录待解析书（轻挂载）。multipart：file 必填、title 必填、grade/subjectId 选填。
      * 原件进 OSS + 第 1 页渲封面 PNG + 建 {@code book_type=pdf_pending} 空壳书。
      * 返回 {id, title, bookType, pdfUrl, pdfPages, coverUrl}。

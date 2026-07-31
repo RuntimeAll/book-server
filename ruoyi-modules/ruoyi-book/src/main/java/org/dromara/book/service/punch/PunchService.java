@@ -104,6 +104,9 @@ public class PunchService {
     private static final String DEFAULT_ACCENT = "暑假作业";
     private static final String DEFAULT_ROTATING_TITLE = "解决问题";
 
+    /** 版面开关白名单（书 style_meta.punchLayout）：缺省全开，显式 false 才隐藏。 */
+    public static final List<String> LAYOUT_KEYS = List.of("showInfo", "showGoals", "showWrongLog");
+
     // ───────────────── ① 组数据（展示/导出同源） ─────────────────
 
     /**
@@ -181,8 +184,28 @@ public class PunchService {
         data.put("variantName", str(style.get("variantName"), ""));
         data.put("day", day);
         data.put("goals", goalsOf(meta));
+        data.put("layout", layoutOf(style));
         data.put("modules", modules);
         return data;
+    }
+
+    /**
+     * 版面开关（书 style_meta.punchLayout → 主题 data.layout）。
+     *
+     * <p>同一套题换版面，不必重灌内容：{@code showInfo}（班级/姓名/日期栏）、
+     * {@code showGoals}（今日目标）、{@code showWrongLog}（解析卷·今日错题记录）。
+     * 🔴 缺省全开，**只有显式 false 才隐藏**——老书零影响。
+     */
+    private Map<String, Object> layoutOf(Map<String, Object> style) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Object raw = style.get("punchLayout");
+        if (raw instanceof Map<?, ?> m) {
+            for (String k : LAYOUT_KEYS) {
+                Object v = ((Map<String, Object>) m).get(k);
+                if (v != null) out.put(k, !Boolean.FALSE.equals(v) && !"false".equals(String.valueOf(v)));
+            }
+        }
+        return out;
     }
 
     /** 轮换位模块：{type:rotating,title,blocks:[{qid,rows,answer}]}（题面绝不复制成文本）。 */

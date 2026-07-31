@@ -195,14 +195,19 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
   head.appendChild(sub);
   frame.appendChild(head);
 
-  /* ── 信息栏 + 今日目标（仅题目卷） ── */
+  /* ── 信息栏 + 今日目标（仅题目卷；受书级版面开关控制） ──
+     lay.showInfo / showGoals / showWrongLog 三个开关来自书 style_meta.punchLayout，
+     缺省全开（老书零影响）；显式 false 才隐藏。同一套内容换版面，不必重灌数据。 */
+  var lay = data.layout || {};
   if (!isAns) {
-    var info = el('div', 'info');
-    ['班级', '姓名', '日期'].forEach(function (k) {
-      var s = el('span'); s.appendChild(document.createTextNode(k + '：')); s.appendChild(el('u')); info.appendChild(s);
-    });
-    frame.appendChild(info);
-    if (data.goals && data.goals.length) {
+    if (lay.showInfo !== false) {
+      var info = el('div', 'info');
+      ['班级', '姓名', '日期'].forEach(function (k) {
+        var s = el('span'); s.appendChild(document.createTextNode(k + '：')); s.appendChild(el('u')); info.appendChild(s);
+      });
+      frame.appendChild(info);
+    }
+    if (lay.showGoals !== false && data.goals && data.goals.length) {
       var g = el('div', 'goal'); g.appendChild(el('b', null, '今日目标'));
       data.goals.forEach(function (t2, i2) {
         g.appendChild(el('span', null, '①②③④⑤'.charAt(i2) + ' ' + t2));
@@ -358,8 +363,8 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     frame.appendChild(sec);
   });
 
-  /* ── 解析卷：错题记录栏 ── */
-  if (isAns) {
+  /* ── 解析卷：错题记录栏（受 lay.showWrongLog 控制，缺省开） ── */
+  if (isAns && lay.showWrongLog !== false) {
     var sec = el('section', 'last');
     var h = el('h2', null, CN[(data.modules || []).length] + '、今日错题记录 ');
     h.appendChild(el('small', null, '（家长核对后填写）'));

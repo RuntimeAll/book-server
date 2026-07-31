@@ -18,6 +18,7 @@ import org.dromara.book.mapper.BizShelfBookMapper;
 import org.dromara.book.mapper.BizShelfItemMapper;
 import org.dromara.book.mapper.BizShelfNodeMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
+import org.dromara.book.service.punch.PunchService;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
@@ -315,6 +316,53 @@ public class ShelfService {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("bookId", String.valueOf(bookId));
         r.put("promo", promo);
+        return r;
+    }
+
+    // ───────────────── 打卡版面开关（style_meta_json.punchLayout，零 DDL） ─────────────────
+
+    /**
+     * 保存打卡书的<b>版面开关</b>（哪些固定区块显示/隐藏，不动任何题目内容）。
+     *
+     * <p>用途：同一套题换版面。比如「今日目标」这栏对某些册子多余（三上混合运算这种纯计算册，
+     * 目标写了也是套话），关掉即可——不必逐天重灌 goals，更不必改主题模板。
+     *
+     * <p>开关（{@link PunchService#LAYOUT_KEYS}）：{@code showInfo} 班级/姓名/日期栏、
+     * {@code showGoals} 今日目标、{@code showWrongLog} 解析卷·今日错题记录。
+     * 🔴 <b>缺省全开，只有显式传 false 才隐藏</b>——不传的键不动，老书零影响。
+     *
+     * <p>展示与导出同源（都读 punch-v1 主题的 {@code data.layout}），改一次两边一起变。
+     *
+     * @param bookId 书 id（写门禁 = {@link #requireOwnedBook}）
+     * @param raw    {@code {showInfo?:bool, showGoals?:bool, showWrongLog?:bool}}；空 = 清空（全恢复默认）
+     * @return {bookId, punchLayout}
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> savePunchLayout(Long bookId, Map<String, Object> raw) {
+        BizShelfBook b = requireOwnedBook(bookId);
+
+        Map<String, Object> layout = new LinkedHashMap<>();
+        if (raw != null) {
+            for (String k : raw.keySet()) {
+                if (!PunchService.LAYOUT_KEYS.contains(k)) {
+                    throw new ServiceException("未知版面开关：" + k
+                        + "（只支持 " + String.join("/", PunchService.LAYOUT_KEYS) + "）", 400);
+                }
+            }
+            for (String k : PunchService.LAYOUT_KEYS) {
+                Object v = raw.get(k);
+                if (v != null) {
+                    layout.put(k, !Boolean.FALSE.equals(v) && !"false".equals(String.valueOf(v)));
+                }
+            }
+        }
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("punchLayout", layout.isEmpty() ? null : layout);
+        mergeStyleMeta(b, patch);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("punchLayout", layout.isEmpty() ? null : layout);
         return r;
     }
 
