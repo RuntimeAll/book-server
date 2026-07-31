@@ -51,6 +51,12 @@ public class PunchExportWorker {
      */
     @Async(ExportAsyncConfig.EXPORT_EXECUTOR)
     public void run(Long bookId, List<String> papers, List<Integer> days) {
+        run(bookId, papers, days, PunchService.FORMAT_PDF);
+    }
+
+    /** @param format {@code pdf} 整册合并 PDF | {@code png} 逐页图片 zip（发小红书用） */
+    @Async(ExportAsyncConfig.EXPORT_EXECUTOR)
+    public void run(Long bookId, List<String> papers, List<Integer> days, String format) {
         long startMs = System.currentTimeMillis();
         ExecutorService inner = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "punch-export-inner-" + bookId);
@@ -59,7 +65,7 @@ public class PunchExportWorker {
         });
         try {
             CompletableFuture<Void> future =
-                CompletableFuture.runAsync(() -> doRun(bookId, papers, days, startMs), inner);
+                CompletableFuture.runAsync(() -> doRun(bookId, papers, days, startMs, format), inner);
             future.get(TASK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             log.warn("[punch-export] 整册导出超时 10min，置失败 bookId={}", bookId);
@@ -74,21 +80,54 @@ public class PunchExportWorker {
     }
 
     private void doRun(Long bookId, List<String> papers, List<Integer> days, long startMs) {
+        doRun(bookId, papers, days, startMs, PunchService.FORMAT_PDF);
+    }
+
+    /**
+     * @param format {@code pdf} = 整册合并 PDF；{@code png} = 逐页图片打 zip
+     *               （小红书发的是图，PDF 发不了；一天一页 → zip 内一天一张）
+     */
+    private void doRun(Long bookId, List<String> papers, List<Integer> days, long startMs, String format) {
         Map<String, Object> state = new LinkedHashMap<>();
         state.put("status", "done");
         state.put("papers", papers);
         state.put("days", days.size());
+        state.put("format", format);
         OssClient oss = OssFactory.instance();
         for (String paper : papers) {
             byte[] merged = punchService.renderBookMerged(bookId, paper, days);
-            String url = oss.uploadSuffix(merged, ".pdf", "application/pdf").getUrl();
+            String url;
+            if (PunchService.FORMAT_PNG.equals(format)) {
+                byte[] zip = zipPages(punchService.pdfAllPagesToPng(merged), paper);
+                url = oss.uploadSuffix(zip, ".zip", "application/zip").getUrl();
+            } else {
+                url = oss.uploadSuffix(merged, ".pdf", "application/pdf").getUrl();
+            }
             state.put("question".equals(paper) ? "questionUrl" : "answerUrl", url);
         }
         state.put("exportedAt", LocalDateTime.now().toString());
         state.put("durationMs", System.currentTimeMillis() - startMs);
         punchService.writePunchExport(bookId, state);
-        log.info("[punch-export] 完成 bookId={} papers={} days={} 耗时={}ms",
-            bookId, papers, days.size(), state.get("durationMs"));
+        log.info("[punch-export] 完成 bookId={} papers={} days={} format={} 耗时={}ms",
+            bookId, papers, days.size(), format, state.get("durationMs"));
+    }
+
+    /** 逐页 PNG → zip（条目名「第01天-题目.png」，解压即按天有序）。 */
+    private byte[] zipPages(List<byte[]> pages, String paper) {
+        String label = "question".equals(paper) ? "题目" : "解析";
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(bos)) {
+            for (int i = 0; i < pages.size(); i++) {
+                zos.putNextEntry(new java.util.zip.ZipEntry(
+                    String.format("第%02d天-%s.png", i + 1, label)));
+                zos.write(pages.get(i));
+                zos.closeEntry();
+            }
+        } catch (Exception e) {
+            log.error("[punch-export] 图片打包失败 paper={}", paper, e);
+            throw new org.dromara.common.core.exception.ServiceException("图片打包失败: " + e.getMessage(), 500);
+        }
+        return bos.toByteArray();
     }
 
     private void markFailed(Long bookId, String msg) {

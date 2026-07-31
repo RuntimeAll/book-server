@@ -259,6 +259,23 @@ public class PunchService {
      * @return {questionUrl?, answerUrl?}
      */
     public Map<String, Object> exportDay(Long bookId, int day, List<String> papers) {
+        return exportDay(bookId, day, papers, FORMAT_PDF);
+    }
+
+    /**
+     * 导出本天 → OSS，可选 PDF 或 PNG 图片。
+     *
+     * <p>🔴 {@code format=png} 的用途：**小红书发的是图，PDF 发不了**。一天一页，
+     * 故单天 PNG 恰好一张，可直接当发布物料。
+     *
+     * <p>实现上 PNG 走「先渲 PDF → PDFBox 转位图」，**不额外调 Chrome**——渲染耗时
+     * 与 PDF 完全相同，转换只是毫秒级的位图光栅化。
+     *
+     * @param papers 要出的卷（question/answer），空 = 双卷
+     * @param format {@code pdf}（默认）| {@code png}
+     * @return {questionUrl?, answerUrl?, format}
+     */
+    public Map<String, Object> exportDay(Long bookId, int day, List<String> papers, String format) {
         List<String> want = new ArrayList<>();
         if (papers != null) {
             for (Object o : papers) {
@@ -270,18 +287,78 @@ public class PunchService {
             want.add("question");
             want.add("answer");
         }
+        String fmt = normalizeFormat(format);
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("bookId", String.valueOf(bookId));
         r.put("day", day);
+        r.put("format", fmt);
         for (String paper : want) {
             byte[] pdf = renderer.render(THEME, assembleDay(bookId, day, paper), "punch-d" + day + "-" + paper);
             pdf = trimBlankTailPages(pdf);
             OssClient oss = OssFactory.instance();
-            UploadResult up = oss.uploadSuffix(pdf, ".pdf", "application/pdf");
+            UploadResult up;
+            if (FORMAT_PNG.equals(fmt)) {
+                byte[] png = pdfPageToPng(pdf, 0);
+                up = oss.uploadSuffix(png, ".png", "image/png");
+                log.info("[punch] 导出图片 bookId={} day={} paper={} size={}B url={}",
+                    bookId, day, paper, png.length, up.getUrl());
+            } else {
+                up = oss.uploadSuffix(pdf, ".pdf", "application/pdf");
+                log.info("[punch] 导出 bookId={} day={} paper={} size={}B url={}",
+                    bookId, day, paper, pdf.length, up.getUrl());
+            }
             r.put("question".equals(paper) ? "questionUrl" : "answerUrl", up.getUrl());
-            log.info("[punch] 导出 bookId={} day={} paper={} size={}B url={}", bookId, day, paper, pdf.length, up.getUrl());
         }
         return r;
+    }
+
+    static final String FORMAT_PDF = "pdf";
+    static final String FORMAT_PNG = "png";
+    /** 图片导出 DPI：150 ≈ A4 1240×1754px，小红书发图足够清晰又不过大。 */
+    private static final int PNG_DPI = 150;
+
+    static String normalizeFormat(String format) {
+        String f = format == null ? "" : format.trim().toLowerCase();
+        if (FORMAT_PNG.equals(f) || "image".equals(f) || "img".equals(f)) return FORMAT_PNG;
+        if (f.isEmpty() || FORMAT_PDF.equals(f)) return FORMAT_PDF;
+        throw new ServiceException("不支持的导出格式：" + format + "（只支持 pdf / png）", 400);
+    }
+
+    /** PDF 指定页 → PNG 字节（PDFBox 光栅化，不调 Chrome）。 */
+    private byte[] pdfPageToPng(byte[] pdf, int pageIndex) {
+        try (org.apache.pdfbox.pdmodel.PDDocument doc =
+                 org.apache.pdfbox.pdmodel.PDDocument.load(pdf)) {
+            if (doc.getNumberOfPages() == 0) throw new ServiceException("PDF 无页面，无法转图片", 500);
+            int idx = Math.min(Math.max(pageIndex, 0), doc.getNumberOfPages() - 1);
+            java.awt.image.BufferedImage img =
+                new org.apache.pdfbox.rendering.PDFRenderer(doc).renderImageWithDPI(idx, PNG_DPI);
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(img, "png", bos);
+            return bos.toByteArray();
+        } catch (ServiceException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("[punch] PDF 转 PNG 失败", e);
+            throw new ServiceException("PDF 转图片失败: " + e.getMessage(), 500);
+        }
+    }
+
+    /** PDF 全部页 → PNG 列表（整册图片导出用）。 */
+    List<byte[]> pdfAllPagesToPng(byte[] pdf) {
+        try (org.apache.pdfbox.pdmodel.PDDocument doc =
+                 org.apache.pdfbox.pdmodel.PDDocument.load(pdf)) {
+            org.apache.pdfbox.rendering.PDFRenderer rd = new org.apache.pdfbox.rendering.PDFRenderer(doc);
+            List<byte[]> out = new ArrayList<>();
+            for (int i = 0; i < doc.getNumberOfPages(); i++) {
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                javax.imageio.ImageIO.write(rd.renderImageWithDPI(i, PNG_DPI), "png", bos);
+                out.add(bos.toByteArray());
+            }
+            return out;
+        } catch (Exception e) {
+            log.error("[punch] PDF 整册转 PNG 失败", e);
+            throw new ServiceException("PDF 转图片失败: " + e.getMessage(), 500);
+        }
     }
 
     /** 整书导出 running 态超过此时长视为僵尸（BE 重启丢任务等），放行重新提交覆盖。 */
@@ -297,8 +374,14 @@ public class PunchService {
      * @return {bookId, export:{status:'running',papers,days,startedAt}}
      */
     public Map<String, Object> submitExportBook(Long bookId, List<String> papers) {
+        return submitExportBook(bookId, papers, FORMAT_PDF);
+    }
+
+    /** @param format {@code pdf} 整册合并 PDF | {@code png} 逐页图片 zip（一天一张，发小红书用） */
+    public Map<String, Object> submitExportBook(Long bookId, List<String> papers, String format) {
         BizShelfBook book = requireOwnedBook(bookId);
         List<String> want = normPapers(papers);
+        String fmt = normalizeFormat(format);
         List<Integer> days = new ArrayList<>();
         for (Map<String, Object> d : listDays(bookId)) {
             days.add((Integer) d.get("day"));
@@ -315,10 +398,11 @@ public class PunchService {
         state.put("status", "running");
         state.put("papers", want);
         state.put("days", days.size());
+        state.put("format", fmt);
         state.put("startedAt", LocalDateTime.now().toString());
         state.put("startedAtMs", System.currentTimeMillis());
         writePunchExport(bookId, state);
-        exportWorker.run(bookId, want, days);
+        exportWorker.run(bookId, want, days, fmt);
 
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("bookId", String.valueOf(bookId));

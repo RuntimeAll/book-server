@@ -79,13 +79,18 @@ public class PunchController {
         return R.ok(Map.of("html", html));
     }
 
+    /**
+     * 导出本天 → OSS。body 加 {@code format}：{@code pdf}（默认）| {@code png}。
+     * 🔴 png 的用途 = 小红书发的是图，PDF 发不了；一天一页故单天 PNG 恰好一张。
+     */
     @SaCheckLogin
     @PostMapping("/exportDay")
     public R<Map<String, Object>> exportDay(@RequestBody Map<String, Object> body) {
         return R.ok(punchService.exportDay(
             reqId(body.get("bookId"), "bookId"),
             reqInt(body.get("day"), "day"),
-            strList(body.get("papers"))));
+            strList(body.get("papers")),
+            body.get("format") == null ? null : String.valueOf(body.get("format"))));
     }
 
     /**
@@ -98,7 +103,8 @@ public class PunchController {
     public R<Map<String, Object>> exportBook(@RequestBody Map<String, Object> body) {
         return R.ok(punchService.submitExportBook(
             reqId(body.get("bookId"), "bookId"),
-            strList(body.get("papers"))));
+            strList(body.get("papers")),
+            body.get("format") == null ? null : String.valueOf(body.get("format"))));
     }
 
     /** 整书导出状态（FE 轮询口）：{bookId, export: style_meta.punchExport | null}。 */
