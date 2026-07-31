@@ -70,6 +70,9 @@ public class ShelfService {
     private static final int PROMO_TITLE_MAX = 100;
     private static final int PROMO_DESC_MAX = 3000;
 
+    /** 生产配方 JSON 体积上限（style_meta_json.recipe）——这里只存指针，正文留在脚本里。 */
+    private static final int RECIPE_JSON_MAX = 8000;
+
     // ───────────────── 书 CRUD + 列表 ─────────────────
 
     @Transactional(rollbackFor = Exception.class)
@@ -312,6 +315,49 @@ public class ShelfService {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("bookId", String.valueOf(bookId));
         r.put("promo", promo);
+        return r;
+    }
+
+    // ───────────────── 生产配方溯源（style_meta_json.recipe，零 DDL） ─────────────────
+
+    /**
+     * 保存书的<b>生产配方溯源</b>（覆盖式：传什么就是什么，空 = 清空）。
+     *
+     * <p>用途 = 资料工厂与线上书的绑定：书是产物，recipe 记它<b>怎么造出来的</b>——
+     * 生产脚本在哪、怎么重跑、随机种子、模块配比、教材红线、过了哪些闸。
+     * 下次要续造同类册子，从线上书就能找回源头，不必翻记忆或猜目录。
+     *
+     * <p>结构不做强校验（各产线形态差异大：本地 DSL / 出题器 API / 人工编排），
+     * 只约束总体积。约定键（软约定，见打卡流水线 SOP）：
+     * {@code factory, engine, sourceDir, scripts{}, rebuild, seed, scale{}, modules[],
+     * syllabus, gates[], pdf, builtAt, next}。
+     *
+     * <p>同 {@link #saveNetdisks} / {@link #savePromo} 范式：只覆盖 {@code recipe} 键，
+     * 其余键原样保留。
+     *
+     * @param bookId 书 id（写门禁 = {@link #requireOwnedBook}）
+     * @param raw    配方对象；null 或空 Map = 清空
+     * @return {bookId, recipe}
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> saveRecipe(Long bookId, Map<String, Object> raw) {
+        BizShelfBook b = requireOwnedBook(bookId);
+
+        Map<String, Object> recipe = (raw == null || raw.isEmpty()) ? null : raw;
+        if (recipe != null) {
+            String probe = JsonUtils.toJsonString(recipe);
+            if (probe != null && probe.length() > RECIPE_JSON_MAX) {
+                throw new ServiceException("配方 JSON 最多 " + RECIPE_JSON_MAX
+                    + " 字符，收到 " + probe.length() + "（大块正文请留在脚本里，这里只记指针）", 400);
+            }
+        }
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("recipe", recipe);
+        mergeStyleMeta(b, patch);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("recipe", recipe);
         return r;
     }
 

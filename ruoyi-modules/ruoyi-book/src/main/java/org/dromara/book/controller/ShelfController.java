@@ -132,6 +132,20 @@ public class ShelfController {
     }
 
     /**
+     * 保存书的生产配方溯源（资料工厂 ↔ 线上书绑定，零 DDL 落 style_meta_json.recipe）。
+     * body = 配方对象自身（{@code {factory,engine,sourceDir,scripts,rebuild,seed,scale,modules,
+     * syllabus,gates,pdf,builtAt,next}}，软约定不强校验），空 body = 清空；JSON ≤ 8000 字符。
+     * 🔴 只覆盖 recipe 键，style_meta 其余键原样保留。
+     * 返回 {bookId, recipe}；书详情/列表的 styleMeta 里天然带出。
+     */
+    @SaCheckLogin
+    @PostMapping("/book/{id}/recipe")
+    public R<Map<String, Object>> saveRecipe(@PathVariable Long id,
+                                             @RequestBody(required = false) Map<String, Object> body) {
+        return R.ok(shelfService.saveRecipe(id, body));
+    }
+
+    /**
      * PDF 直录待解析书（轻挂载）。multipart：file 必填、title 必填、grade/subjectId 选填。
      * 原件进 OSS + 第 1 页渲封面 PNG + 建 {@code book_type=pdf_pending} 空壳书。
      * 返回 {id, title, bookType, pdfUrl, pdfPages, coverUrl}。
