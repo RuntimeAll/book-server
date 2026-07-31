@@ -64,6 +64,19 @@ b.a { font-family: "Times New Roman","SimHei",sans-serif; }
    渲染后量 frame 剩余空隙均摊给各解答区 → 两题天然均衡且不压页脚 */
 .app .item { margin-bottom: 2.4mm; }
 .app .sol { margin-left: 5mm; margin-top: .6mm; line-height: 1.75; }
+/* ── 结构型题（2026-07-31 补：三上混合运算特训「二合一 / 树状图」）──
+   与计算模块不同，这两型自带作答位（横线 / 空框），不再追加 work-* 留白。 */
+.grid.c2 { grid-template-columns: repeat(2,1fr); column-gap: 5mm; row-gap: 2mm; font-size: 12pt; }
+.cmb { display: flex; align-items: center; }
+.cmb .brace { font-size: 24pt; font-weight: 200; margin: 0 1.6mm 0 .8mm; line-height: 1; }
+.cmb .two { line-height: 1.75; }
+.ansline { margin: 1mm 0 2.4mm 2mm; font-size: 11.5pt; white-space: nowrap; }
+.ansline u { text-decoration: none; border-bottom: .8pt solid #000; display: inline-block;
+             min-width: 42mm; text-align: center; }
+.tree { text-align: center; }
+.tree svg { width: 72mm; height: 41mm; display: block; margin: 0 auto; }
+.tree text { font-family: "Times New Roman","SimSun",serif; font-size: 13px; }
+.ans-mode .grid.c2 { font-size: 11pt; }
 /* 行距 2.4→2.0（复审：D6-B 解析内容偏高时错题记录被顶到页脚压字） */
 .rec { font-size: 11pt; line-height: 2.0; }
 .rec u { text-decoration: none; border-bottom: .8pt solid #000; display: inline-block; }
@@ -100,6 +113,58 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  /* 结构型题（combine/tree）辅助：运算符统一成卷面字形（ASCII 减号在 12pt 下太短，与「一」难分） */
+  function opCh(o) {
+    return String(o == null ? '' : o).replace(/-/g, '−').replace(/\*/g, '×').replace(/\//g, '÷');
+  }
+  function svgEl(tag, attrs) {
+    var e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (var k in attrs) { if (attrs.hasOwnProperty(k)) e.setAttribute(k, attrs[k]); }
+    return e;
+  }
+  /* 树状图：顶层两数经 op1 得中层值，中层再与 other 经 op2 得底值。
+     side='l' 中层结果在左（mid op2 other）/ 'r' 在右（other op2 mid）。
+     题目卷中层与底层留空框，解析卷填值。汇线按左右实位取点，避免交叉。 */
+  function buildTree(it, showAns) {
+    var right = it.side === 'r';
+    var ax = right ? 116 : 30, bx = right ? 188 : 102;
+    var mx = right ? 152 : 66, ox = right ? 68 : 150;
+    var acx = ax + 22, bcx = bx + 22, mcx = mx + 22, ocx = ox + 22;
+    var botX = Math.round((mx + ox) / 2);
+    var s = svgEl('svg', { viewBox: '0 0 264 150' });
+    function box(x, y, v) {
+      s.appendChild(svgEl('rect', { x: x, y: y, width: 44, height: 24,
+        fill: 'none', stroke: '#000', 'stroke-width': 1.2 }));
+      var t = svgEl('text', { x: x + 22, y: y + 17, 'text-anchor': 'middle' });
+      t.textContent = (v == null ? '' : String(v));
+      s.appendChild(t);
+    }
+    function op(x, y, o) {
+      var t = svgEl('text', { x: x, y: y, 'text-anchor': 'middle', 'font-size': 14 });
+      t.textContent = opCh(o); s.appendChild(t);
+    }
+    function line(x1, y1, x2, y2) {
+      s.appendChild(svgEl('line', { x1: x1, y1: y1, x2: x2, y2: y2, stroke: '#000', 'stroke-width': 1 }));
+    }
+    box(ax, 6, it.l); op(Math.round((acx + bcx) / 2), 24, it.op1); box(bx, 6, it.r);
+    line(acx, 30, mcx - 8, 54); line(bcx, 30, mcx + 8, 54);
+    box(mx, 54, showAns ? it.mid : '');
+    op(Math.round((mcx + ocx) / 2), 72, it.op2);
+    box(ox, 54, it.other);
+    var lcx = Math.min(mcx, ocx), rcx = Math.max(mcx, ocx);
+    line(lcx, 78, botX + 14, 104); line(rcx, 78, botX + 30, 104);
+    box(botX, 104, showAns ? it.total : '');
+    return s;
+  }
+  /* 「综合算式：____」作答行；解析卷把答案印在横线上 */
+  function ansLine(text, showAns) {
+    var d = el('div', 'ansline');
+    d.appendChild(document.createTextNode('综合算式：'));
+    var u = el('u');
+    if (showAns && text) u.appendChild(el('b', 'a', text));
+    d.appendChild(u);
+    return d;
   }
   /* 题库 md 尾部常带原书作答留白（"\n \n \n \n"），渲成连串空行会撑爆 A4 —— 渲染前剥掉；
      题面中段连续空行同样压成单换行（解答空间由 work-a 统一承载，不靠题面空行） */
@@ -151,7 +216,8 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
   (data.modules || []).forEach(function (m, mi) {
     var sec = el('section');
     var h2 = el('h2', null, CN[mi] + '、' + m.title);
-    if ((m.type === 'oral' || m.type === 'vertical' || m.type === 'stepwise') && !isAns) {
+    if ((m.type === 'oral' || m.type === 'vertical' || m.type === 'stepwise'
+         || m.type === 'combine' || m.type === 'tree') && !isAns) {
       var sm = el('small', null, '（共 ' + (m.items || []).length + ' 道）'); h2.appendChild(document.createTextNode(' ')); h2.appendChild(sm);
     }
     sec.appendChild(h2);
@@ -252,6 +318,43 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
       });
       sec.appendChild(app);
     }
+
+    /* ── 二合一：两个算式合并成一个综合算式（2026-07-31 补，三上混合运算特训）
+       items:[{e1,e2,a}]——e1/e2 = 两个分步算式（含 ＝ 与结果），a = 综合算式（含 ＝ 与结果）。
+       自带作答横线，不追加 work-* 留白。 ── */
+    if (m.type === 'combine') {
+      var gc = el('div', 'grid c2');
+      (m.items || []).forEach(function (it, ii) {
+        var cell = el('div');
+        var row = el('div', 'cmb');
+        row.appendChild(document.createTextNode('（' + (ii + 1) + '）'));
+        row.appendChild(el('span', 'brace', '{'));
+        var two = el('div', 'two');
+        two.appendChild(document.createTextNode(it.e1 || ''));
+        two.appendChild(document.createElement('br'));
+        two.appendChild(document.createTextNode(it.e2 || ''));
+        row.appendChild(two);
+        cell.appendChild(row);
+        cell.appendChild(ansLine(it.a, isAns));
+        gc.appendChild(cell);
+      });
+      sec.appendChild(gc);
+    }
+
+    /* ── 树状图：先填空，再列综合算式（2026-07-31 补）
+       items:[{l,op1,r,mid,op2,other,side,total,a}]——顶层 l op1 r = mid，
+       中层 mid 与 other 经 op2 = total（side 指明 mid 在左/右）。 ── */
+    if (m.type === 'tree') {
+      var gt = el('div', 'grid c2');
+      (m.items || []).forEach(function (it) {
+        var cell = el('div', 'tree');
+        cell.appendChild(buildTree(it, isAns));
+        cell.appendChild(ansLine(it.a, isAns));
+        gt.appendChild(cell);
+      });
+      sec.appendChild(gt);
+    }
+
     frame.appendChild(sec);
   });
 

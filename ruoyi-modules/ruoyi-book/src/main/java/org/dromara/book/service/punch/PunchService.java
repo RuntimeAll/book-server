@@ -48,6 +48,12 @@ import java.util.stream.Collectors;
  *       meta_json={@code {goals:[...], review:{status,issues:[...]}}}</li>
  *   <li><b>计算模块 = item</b>：kind={@code module}、content_json={@code {type:oral|vertical|stepwise,title,items:[{q,a}]}}、
  *       seq=模块序（出题器现产，本书私有数据）</li>
+ *   <li><b>结构型模块 = item</b>（2026-07-31 补，三上混合运算特训）：同 kind={@code module}，两型 ——
+ *       {@code {type:combine,title,items:[{e1,e2,a}]}} 二合一（两个算式合并成综合算式）、
+ *       {@code {type:tree,title,items:[{l,op1,r,mid,op2,other,side,total,a}]}} 树状图（先填空再列式，
+ *       side=l|r 指明中层结果在左还是右）。渲染见 punch-v1 主题 combine/tree 分支；
+ *       两型自带作答位，不追加留白区。<b>本层不校验 items 结构</b>——非 rotating 模块一律原样落
+ *       content_json，题面正确性由产线闸把关（见 举一反三产物/解题模型库/_验算/逐行恒等校验.py）</li>
  *   <li><b>轮换位真题 = 逐题 item</b>：kind={@code question} + question_id 引用，seq 续排 ——
  *       🔴 <b>绝不复制题面文本</b>：渲染时现取 {@code biz_question_block.block_json}，改题库即改打卡书</li>
  * </ul>
