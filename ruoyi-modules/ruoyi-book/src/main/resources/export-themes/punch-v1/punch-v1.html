@@ -172,7 +172,21 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     return String(s == null ? '' : s).replace(/\n[ \t]*(?:\n[ \t]*)+/g, '\n').replace(/(?:\n\s*)+$/, '');
   }
 
-  /* ── 页眉：主标题（accent 段标红）+ 小标题 ── */
+  /* 天序号 → 中文（1..99）：1→一 / 11→十一 / 20→二十 / 30→三十。与本地出卷脚本口径一致。 */
+  function cnDay(n) {
+    n = parseInt(n, 10);
+    if (!n || n < 1) return '';
+    var D = '零一二三四五六七八九';
+    if (n < 10) return D.charAt(n);
+    if (n === 10) return '十';
+    if (n < 20) return '十' + D.charAt(n % 10);
+    var t2 = D.charAt(Math.floor(n / 10)) + '十';
+    return n % 10 === 0 ? t2 : t2 + D.charAt(n % 10);
+  }
+
+  /* ── 页眉：主标题（accent 段标红）+ 天序号后缀 + 小标题 ──
+     天序号进主标题（「…每日特训-第一天」）：一天一页，页眉不带天号则每页看着一样，
+     打印散页后分不清顺序（2026-07-31 用户点名）。中文序号，非「第 1 天」。 */
   var head = el('div', 'head');
   var h1 = el('h1');
   var t = data.title || '', acc = data.accent || '';
@@ -182,12 +196,16 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     var r = el('span', 'red', acc); h1.appendChild(r);
     h1.appendChild(document.createTextNode(t.slice(i + acc.length)));
   } else h1.textContent = t;
+  if (data.day) h1.appendChild(document.createTextNode('-第' + cnDay(data.day) + '天'));
   head.appendChild(h1);
   var sub = el('div', 'sub');
   if (isAns) {
-    sub.appendChild(document.createTextNode('第 ' + data.day + ' 天 · '));
-    sub.appendChild(el('b', null, data.variantName || ''));
-    sub.appendChild(document.createTextNode(' · 参考答案与解析'));
+    /* 天号已进主标题，副标题不再重复（原「第 N 天 · 变体 · 参考答案与解析」） */
+    if (data.variantName) {
+      sub.appendChild(el('b', null, data.variantName));
+      sub.appendChild(document.createTextNode(' · '));
+    }
+    sub.appendChild(document.createTextNode('参考答案与解析'));
   } else {
     /* 主标题已含「·基础版/提高版」，副标题不再重复变体名（审计批：版头双写冗余） */
     sub.appendChild(document.createTextNode(data.subtitle || ''));

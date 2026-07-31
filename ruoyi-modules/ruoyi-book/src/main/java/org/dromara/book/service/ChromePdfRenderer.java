@@ -46,7 +46,36 @@ public class ChromePdfRenderer {
         "/usr/bin/chromium"
     };
 
-    private static final long CHROME_TIMEOUT_MS = 60_000L;
+    /**
+     * 单次渲染基线超时（单天/单卷绰绰有余）。
+     * 🔴 整册导出**一次把 N 天渲成一个 PDF**，耗时随天数线性涨——10 天实测 60~70s，
+     * 30 天更久。故实际超时 = 基线 + 每页预算 × 页数，见 {@link #timeoutFor(int)}。
+     * 固定 60s 曾让 10 天的书成败各半、30 天必挂（2026-07-31 实测）。
+     */
+    private static final long CHROME_TIMEOUT_BASE_MS = 60_000L;
+    /** 每页追加预算（整册合并渲染用）。 */
+    private static final long CHROME_TIMEOUT_PER_PAGE_MS = 6_000L;
+    /** 超时硬顶（防真卡死时线程被无限占）。 */
+    private static final long CHROME_TIMEOUT_MAX_MS = 600_000L;
+
+    private static long timeoutFor(int pages) {
+        if (pages <= 1) return CHROME_TIMEOUT_BASE_MS;
+        return Math.min(CHROME_TIMEOUT_BASE_MS + (long) pages * CHROME_TIMEOUT_PER_PAGE_MS,
+            CHROME_TIMEOUT_MAX_MS);
+    }
+
+    /**
+     * 🔴 全局 chrome 并发闸（2026-07-31 事故修复）。
+     *
+     * <p>整册导出是**逐天渲染再合并**，单次只渲一页本该 3~5s；但多个导出任务并发时
+     * （两本书的 worker + 用户手点「导出本天」= 3 个 chrome 同时跑），容器内存与
+     * /dev/shm 被瓜分，慢的超时、快的直接崩溃退出无产物——**症状是随机失败，不是必现**。
+     *
+     * <p>限并发后单任务稍慢但确定成功。等待上限 5 分钟（排队比失败强，但不能无限排）。
+     */
+    private static final java.util.concurrent.Semaphore CHROME_SLOTS =
+        new java.util.concurrent.Semaphore(2, true);
+    private static final long SLOT_WAIT_MS = 300_000L;
 
     /**
      * 渲染一份 PDF。
@@ -56,6 +85,15 @@ public class ChromePdfRenderer {
      * @param tag       日志/临时文件标记（如 "question"/"answer"）
      */
     public byte[] render(String themeDir, Map<String, Object> data, String tag) {
+        return render(themeDir, data, tag, 1);
+    }
+
+    /**
+     * 渲染一份 PDF，并按页数放宽超时。
+     *
+     * @param pages 预计页数（整册合并渲染传天数；单卷传 1）。超时 = 基线 + 每页预算 × 页数。
+     */
+    public byte[] render(String themeDir, Map<String, Object> data, String tag, int pages) {
         Path work;
         try {
             work = Files.createTempDirectory("pdf-render-");
@@ -65,7 +103,7 @@ public class ChromePdfRenderer {
             throw new ServiceException("导出环境准备失败: " + e.getMessage(), 500);
         }
         try {
-            return renderInWork(work, themeDir + ".html", data, tag);
+            return renderInWork(work, themeDir + ".html", data, tag, pages);
         } finally {
             deleteQuietly(work);
         }
@@ -111,7 +149,8 @@ public class ChromePdfRenderer {
         }
     }
 
-    private byte[] renderInWork(Path work, String themeHtml, Map<String, Object> data, String tag) {
+    private byte[] renderInWork(Path work, String themeHtml, Map<String, Object> data,
+                                String tag, int pages) {
         try {
             String json = om.writeValueAsString(data);
             // 防 </script> 提前闭合注入块（Jackson 默认不转义 /）：转义所有 </ 为 <\/。
@@ -128,6 +167,13 @@ public class ChromePdfRenderer {
             cmd.add("--headless=new");
             cmd.add("--disable-gpu");
             cmd.add("--no-sandbox");
+            // 🔴 容器里 /dev/shm 默认只有 64MB，渲染大页面（整册几十页）共享内存耗尽 →
+            //    渲染进程直接崩、chrome 退出但无产物（不是超时！2026-07-31 单天导出实测踩中，
+            //    当时正并发跑整册导出，shm 被吃光）。改用 /tmp 落共享内存，容量随磁盘。
+            cmd.add("--disable-dev-shm-usage");
+            // 🔴 独立 profile：不带这个参数，并发的多个 chrome 实例共用默认 user-data-dir，
+            //    撞 SingletonLock 后有的实例直接退出无产物。work 是每次渲染独有的临时目录。
+            cmd.add("--user-data-dir=" + work.resolve("chrome-profile").toAbsolutePath());
             cmd.add("--no-pdf-header-footer");
             // 20s 虚拟时间预算：整卷可能十余张 OSS 外链图，预算过小图未加载完就打印（白框/缺图）。
             // 虚拟时钟在页面静止时快进，加大预算不增加正常卷的真实渲染耗时。
@@ -136,22 +182,39 @@ public class ChromePdfRenderer {
             cmd.add("--print-to-pdf=" + pdfOut.toAbsolutePath());
             cmd.add(htmlOut.toAbsolutePath().toUri().toString());
 
-            // 🔴 stdout 重定向到文件而非进程内阻塞读，让 waitFor(60s) 守卫真正生效（历史坑）。
+            // 🔴 stdout 重定向到文件而非进程内阻塞读，让 waitFor 守卫真正生效（历史坑）。
             Path logFile = work.resolve("chrome-" + tag + ".log");
-            Process p = new ProcessBuilder(cmd)
-                .redirectErrorStream(true)
-                .redirectOutput(logFile.toFile())
-                .start();
-            boolean done = p.waitFor(CHROME_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
-            if (!done) {
-                p.destroyForcibly();
-                p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
-                throw new ServiceException("PDF 渲染超时（超 " + (CHROME_TIMEOUT_MS / 1000) + "s）", 500);
+            long timeoutMs = timeoutFor(pages);
+
+            if (!CHROME_SLOTS.tryAcquire(SLOT_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                throw new ServiceException("PDF 渲染排队超时（导出任务过多，稍后再试）", 503);
             }
+            Process p = null;
+            try {
+                p = new ProcessBuilder(cmd)
+                    .redirectErrorStream(true)
+                    .redirectOutput(logFile.toFile())
+                    .start();
+                boolean done = p.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (!done) {
+                    p.destroyForcibly();
+                    p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+                    throw new ServiceException("PDF 渲染超时（" + pages + " 页，超 "
+                        + (timeoutMs / 1000) + "s）", 500);
+                }
+            } finally {
+                CHROME_SLOTS.release();
+            }
+
             if (!Files.exists(pdfOut) || Files.size(pdfOut) == 0) {
                 String logtxt = Files.exists(logFile) ? Files.readString(logFile, StandardCharsets.UTF_8) : "";
-                log.error("[pdf-render] chrome 无产物 exit={} log={}", p.exitValue(), logtxt);
-                throw new ServiceException("PDF 渲染失败（无产物）", 500);
+                int exit = p.exitValue();
+                log.error("[pdf-render] chrome 无产物 tag={} pages={} exit={} log={}", tag, pages, exit, logtxt);
+                // 🔴 把 exit code 与 chrome 日志尾部带进异常：光说"无产物"没法定位
+                //    （崩溃 / OOM / 参数错 症状相同）。
+                String tail = logtxt.length() > 400 ? logtxt.substring(logtxt.length() - 400) : logtxt;
+                throw new ServiceException("PDF 渲染失败（无产物，chrome exit=" + exit
+                    + "）：" + tail.replaceAll("\\s+", " ").trim(), 500);
             }
             return Files.readAllBytes(pdfOut);
         } catch (ServiceException e) {
