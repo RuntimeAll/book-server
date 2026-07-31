@@ -66,6 +66,10 @@ public class ShelfService {
     /** 一本书最多绑几条网盘链接。 */
     private static final int NETDISK_MAX = 10;
 
+    /** 宣发文案长度上限（style_meta_json.promo）。 */
+    private static final int PROMO_TITLE_MAX = 100;
+    private static final int PROMO_DESC_MAX = 3000;
+
     // ───────────────── 书 CRUD + 列表 ─────────────────
 
     @Transactional(rollbackFor = Exception.class)
@@ -258,6 +262,48 @@ public class ShelfService {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("bookId", String.valueOf(bookId));
         r.put("netdisks", netdisks);
+        return r;
+    }
+
+    // ───────────────── 宣发文案（style_meta_json.promo，零 DDL） ─────────────────
+
+    /**
+     * 保存书的宣发文案（标题 + 描述，覆盖式：传什么就是什么，两者皆空 = 清空）。
+     *
+     * <p>用途：成品资料发小红书/朋友圈的现成话术，跟着书走不散落——书在哪，文案就在哪。
+     * 同 {@link #saveNetdisks} 范式：只覆盖 style_meta_json 的 {@code promo} 键，其余键原样保留。
+     *
+     * @param bookId 书 id（写门禁 = {@link #requireOwnedBook}）
+     * @param raw    {@code {title?, desc?}}；title ≤ 100 字，desc ≤ 3000 字
+     * @return {bookId, promo}；promo 为 null 表示已清空
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> savePromo(Long bookId, Map<String, Object> raw) {
+        BizShelfBook b = requireOwnedBook(bookId);
+
+        String title = str(raw == null ? null : raw.get("title"));
+        String desc = str(raw == null ? null : raw.get("desc"));
+        if (title.length() > PROMO_TITLE_MAX) {
+            throw new ServiceException("宣发标题最多 " + PROMO_TITLE_MAX + " 字，收到 " + title.length(), 400);
+        }
+        if (desc.length() > PROMO_DESC_MAX) {
+            throw new ServiceException("宣发描述最多 " + PROMO_DESC_MAX + " 字，收到 " + desc.length(), 400);
+        }
+
+        Map<String, Object> promo = null;
+        if (!title.isEmpty() || !desc.isEmpty()) {
+            promo = new LinkedHashMap<>();
+            promo.put("title", blankToNull(title));
+            promo.put("desc", blankToNull(desc));
+        }
+        // 🔴 Map.of 不收 null value（清空场景）→ 用 LinkedHashMap 装 patch
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("promo", promo);
+        mergeStyleMeta(b, patch);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("bookId", String.valueOf(bookId));
+        r.put("promo", promo);
         return r;
     }
 

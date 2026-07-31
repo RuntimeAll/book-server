@@ -119,6 +119,19 @@ public class ShelfController {
     }
 
     /**
+     * 保存书的宣发文案（标题 + 描述，覆盖保存，零 DDL 落 style_meta_json.promo）。
+     * body: {@code {title?, desc?}}，title ≤ 100 字、desc ≤ 3000 字，两者皆空 = 清空。
+     * 🔴 只覆盖 promo 键，style_meta 其余键原样保留。
+     * 返回 {bookId, promo}；书详情/列表的 styleMeta 里天然带出。
+     */
+    @SaCheckLogin
+    @PostMapping("/book/{id}/promo")
+    public R<Map<String, Object>> savePromo(@PathVariable Long id,
+                                            @RequestBody(required = false) Map<String, Object> body) {
+        return R.ok(shelfService.savePromo(id, body));
+    }
+
+    /**
      * PDF 直录待解析书（轻挂载）。multipart：file 必填、title 必填、grade/subjectId 选填。
      * 原件进 OSS + 第 1 页渲封面 PNG + 建 {@code book_type=pdf_pending} 空壳书。
      * 返回 {id, title, bookType, pdfUrl, pdfPages, coverUrl}。
