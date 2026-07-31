@@ -24,6 +24,12 @@ public class ShelfBookBo {
 
     private String status;
 
+    /**
+     * 公开标记（1=公开可读，0=仅 owner）。🔴 只在 updateBook 生效且**仅超级管理员可改**，
+     * createBook 一律建成私有（0）——公开是审定后的独立动作，不能随建书顺手带上。
+     */
+    private Integer isPublic;
+
     /** 编排风格元数据（Object，Service 序列化为 JSON 文本） */
     private Object styleMeta;
 

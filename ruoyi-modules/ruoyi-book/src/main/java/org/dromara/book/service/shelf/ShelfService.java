@@ -101,6 +101,14 @@ public class ShelfService {
         if (bo.getGrade() != null) b.setGrade(bo.getGrade());
         if (bo.getEdition() != null) b.setEdition(bo.getEdition());
         if (bo.getStatus() != null) b.setStatus(bo.getStatus());
+        // 🔴 公开标记：仅超管可改（与题目 setPublic 同口径——「入库 ≠ 公开」）。
+        //    老师传了也不生效，直接拒，避免静默忽略造成「我明明改了」的误判。
+        if (bo.getIsPublic() != null) {
+            if (!LoginHelper.isSuperAdmin()) {
+                throw new ServiceException("公开/取消公开仅超级管理员可操作", 403);
+            }
+            b.setIsPublic(bo.getIsPublic() != 0 ? 1 : 0);
+        }
         if (bo.getStyleMeta() != null) b.setStyleMetaJson(toJson(bo.getStyleMeta()));
         if (bo.getRemark() != null) b.setRemark(bo.getRemark());
         bookMapper.updateById(b);
