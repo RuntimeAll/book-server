@@ -343,15 +343,27 @@ public class ShelfService {
      * <p>展示与导出同源（都读主题的 {@code data.layout}），改一次两边一起变。
      *
      * @param bookId 书 id（写门禁 = {@link #requireOwnedBook}）
-     * @param raw    版面参数；空 = 清空（全恢复默认）
+     * @param raw    版面参数；空 = 清空（全恢复默认）；🔴 非空 = <b>合并</b>——只动传入的键，
+     *               其余键原样保留（PRD-017 批3 verifier I-A：早期全量覆盖语义下，MCP 只传
+     *               3 个布尔开关的一次调用会把 flat 书的 accent/qPrefix/watermark 静默抹光）；
+     *               传入键值为 {@code null} = 清除该键（回该键缺省）
      * @return {bookId, punchLayout}
      */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> savePunchLayout(Long bookId, Map<String, Object> raw) {
         BizShelfBook b = requireOwnedBook(bookId);
 
+        // 🔴 合并语义：从现存 punchLayout 起手，而不是每次从零重建（I-A 修复）
         Map<String, Object> layout = new LinkedHashMap<>();
-        if (raw != null) {
+        Object existing = parseMap(b.getStyleMetaJson()).get("punchLayout");
+        if (existing instanceof Map<?, ?> em) {
+            for (Map.Entry<?, ?> e : em.entrySet()) {
+                layout.put(String.valueOf(e.getKey()), e.getValue());
+            }
+        }
+        if (raw == null || raw.isEmpty()) {
+            layout.clear();                       // 空 body = reset 恢复默认（MCP reset=True 走这条）
+        } else {
             for (String k : raw.keySet()) {
                 if (!PunchService.LAYOUT_KEYS.contains(k)) {
                     throw new ServiceException("未知版面参数：" + k
@@ -359,18 +371,24 @@ public class ShelfService {
                 }
             }
             for (String k : PunchService.LAYOUT_BOOL_KEYS) {
+                if (!raw.containsKey(k)) continue;
                 Object v = raw.get(k);
-                if (v != null) {
-                    layout.put(k, !Boolean.FALSE.equals(v) && !"false".equals(String.valueOf(v)));
-                }
+                if (v == null) { layout.remove(k); continue; }
+                layout.put(k, !Boolean.FALSE.equals(v) && !"false".equals(String.valueOf(v)));
             }
             for (String k : PunchService.LAYOUT_STR_KEYS) {
+                if (!raw.containsKey(k)) continue;
                 Object v = raw.get(k);
-                if (v != null) layout.put(k, String.valueOf(v));
+                if (v == null) { layout.remove(k); continue; }
+                if (!(v instanceof CharSequence)) {          // N2：写入口该响亮，字符串类同样 400
+                    throw new ServiceException("版面参数 " + k + " 必须是字符串，收到：" + v, 400);
+                }
+                layout.put(k, String.valueOf(v));
             }
             for (String k : PunchService.LAYOUT_NUM_KEYS) {
+                if (!raw.containsKey(k)) continue;
                 Object v = raw.get(k);
-                if (v == null) continue;
+                if (v == null) { layout.remove(k); continue; }
                 if (v instanceof Number n) {
                     layout.put(k, n);
                 } else {
@@ -382,8 +400,9 @@ public class ShelfService {
                 }
             }
             for (String k : PunchService.LAYOUT_LIST_KEYS) {
+                if (!raw.containsKey(k)) continue;
                 Object v = raw.get(k);
-                if (v == null) continue;
+                if (v == null) { layout.remove(k); continue; }
                 if (!(v instanceof List<?> l)) {
                     throw new ServiceException("版面参数 " + k + " 必须是数组，收到：" + v, 400);
                 }

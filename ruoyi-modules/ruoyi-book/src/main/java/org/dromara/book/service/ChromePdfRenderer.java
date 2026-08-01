@@ -155,8 +155,9 @@ public class ChromePdfRenderer {
             String json = om.writeValueAsString(data);
             // 与 renderInWork 同一转义：防 </script> 提前闭合注入块（Jackson 默认不转义 /）
             json = json.replace("</", "<\\/");
-            // 🔴 与 renderInWork / 本地注入器 render_punch.py 同一顺序：先 MathJax 再数据
-            //    （反过来的话，万一 vendor 里出现数据占位符字面就会被二次替换）。
+            // 🔴 与 renderInWork / 本地注入器 render_punch.py 同一顺序：先 MathJax 再数据。
+            //    注意这个顺序下 vendor 里若含数据占位符字面反而会被二次替换（实测 tex-svg.js
+            //    为 0 处，且 loadMathjax 加载时有断言兜底）——选它只为与本地注入器逐字对齐。
             return injectMathjax(themeDir, tpl).replace(DATA_TOKEN, json);
         } catch (Exception e) {
             log.error("[pdf-render] 数据注入失败 theme={}", themeDir, e);
@@ -316,6 +317,9 @@ public class ChromePdfRenderer {
             if (idx < 0) continue;
             String rel = uri.substring(idx + prefix.length());
             if (rel.isBlank() || rel.endsWith("/")) continue;
+            // N4（PRD-017 批3 verifier）：MathJax vendor 走 classpath 静态缓存内联，
+            // 拷进临时目录的那份没人用——2.1MB × 每次渲染的 I/O 白花，跳过。
+            if (MATHJAX_VENDOR.equals(rel)) continue;
             Path dst = work.resolve(rel);
             Files.createDirectories(dst.getParent());
             try (InputStream in = rc.getInputStream()) {

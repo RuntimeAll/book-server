@@ -126,6 +126,8 @@ public class PunchService {
      * 「查看源代码」即得全卷答案（2026-08-01 PRD-017 批0 勘察抓到的现役缺口，非本卡引入）。
      * 其余模块型没有这两个键，remove 空转，零影响。
      */
+    // 🔴 按通用字段名剥、不看 type；且只剥 modules[].items[] 与 modules[].blocks[] 两层不递归
+    //    （现役 6 型全扁平；将来若有嵌套 items 的模块型这里会漏，先在此声明——N7）。
     private static final List<String> ANSWER_ONLY_ITEM_FIELDS =
         List.of("a", "steps", "mid", "total");
 
@@ -167,17 +169,8 @@ public class PunchService {
 
     // ───────────────── ① 组数据（展示/导出同源） ─────────────────
 
-    /**
-     * 组一天的模板数据（punch-v1 主题入参）。
-     *
-     * @param bookId 打卡书 id
-     * @param day    第几天（= 天节点 seq）
-     * @param paper  {@code question} 题目卷 / {@code answer} 解析卷
-     * @return {paper,title,accent,subtitle,variantName,day,goals,modules}
-     */
-    public Map<String, Object> assembleDay(Long bookId, int day, String paper) {
-        return assembleDay(requireReadableBook(bookId), day, paper);
-    }
+    // N6（PRD-017 批3 verifier）：assembleDay(Long,..) 便捷重载已无调用方，删除——
+    // 消费点全部改走 assembleDay(BizShelfBook,..)（book 取一次，主题与内容同源派生）。
 
     /**
      * 无门禁内部口（异步导出 worker 用）：权限已在提交线程校验完，
