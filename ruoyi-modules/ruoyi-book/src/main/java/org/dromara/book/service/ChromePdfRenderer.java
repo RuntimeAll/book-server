@@ -24,7 +24,13 @@ import java.util.Map;
  * {@code __PAPER_DATA__} 注入点）与随附静态资源（katex 等）；每次渲染把整个主题目录
  * 拷到临时目录，注入 JSON 数据后以 {@code --print-to-pdf} 渲染，用毕即删。
  *
- * <p>调用方：专项双卷导出（sujunyu-v1）、计算题出题器（oralcalc-v1）。
+ * <p>可选第二个注入点 {@code <!--__MATHJAX__-->}：主题里写这个 HTML 注释，渲染时会被换成
+ * 同目录 {@code tex-svg.js} 的内联 {@code <script>}（PRD-017 批0 D3=b′）。这样主题文件在仓库里
+ * 仍是几十 KB 可 review 的纯文本，产物却是自包含单文件——{@link #renderHtml} 那条不拷资源的
+ * 预览出口也就能吃带 MathJax 的主题。没有这个注释、或主题目录里没有 {@code tex-svg.js} 的
+ * 老主题（punch-v1/book-v1/…）完全不受影响。
+ *
+ * <p>调用方：专项双卷导出（sujunyu-v1）、计算题出题器（oralcalc-v1）、打卡（punch-v1/flat-v1）。
  */
 @Slf4j
 @Component
@@ -34,6 +40,13 @@ public class ChromePdfRenderer {
     private final ObjectMapper om;
 
     private static final String DATA_TOKEN = "__PAPER_DATA__";
+
+    /** MathJax 注入点（HTML 注释形态：没有 vendor 时原样留着也是渲染中性的）。 */
+    private static final String MATHJAX_TOKEN = "<!--__MATHJAX__-->";
+    /** 主题目录下的 MathJax vendor 文件名（tex-svg：批0 实测 chtml 内联会静默出坏卷面）。 */
+    private static final String MATHJAX_VENDOR = "tex-svg.js";
+    /** vendor 内容缓存（2MB 级，按主题读一次；空串 = 该主题没有 vendor，别反复找）。 */
+    private static final Map<String, String> MATHJAX_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final String[] CHROME_CANDIDATES = {
         "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -103,7 +116,7 @@ public class ChromePdfRenderer {
             throw new ServiceException("导出环境准备失败: " + e.getMessage(), 500);
         }
         try {
-            return renderInWork(work, themeDir + ".html", data, tag, pages);
+            return renderInWork(work, themeDir, data, tag, pages);
         } finally {
             deleteQuietly(work);
         }
@@ -142,21 +155,74 @@ public class ChromePdfRenderer {
             String json = om.writeValueAsString(data);
             // 与 renderInWork 同一转义：防 </script> 提前闭合注入块（Jackson 默认不转义 /）
             json = json.replace("</", "<\\/");
-            return tpl.replace(DATA_TOKEN, json);
+            // 🔴 与 renderInWork / 本地注入器 render_punch.py 同一顺序：先 MathJax 再数据
+            //    （反过来的话，万一 vendor 里出现数据占位符字面就会被二次替换）。
+            return injectMathjax(themeDir, tpl).replace(DATA_TOKEN, json);
         } catch (Exception e) {
             log.error("[pdf-render] 数据注入失败 theme={}", themeDir, e);
             throw new ServiceException("预览数据注入失败: " + e.getMessage(), 500);
         }
     }
 
-    private byte[] renderInWork(Path work, String themeHtml, Map<String, Object> data,
+    /**
+     * 把主题里的 {@code <!--__MATHJAX__-->} 换成内联的 tex-svg.js（PRD-017 批0 D3=b′）。
+     *
+     * <p>三档零影响：主题不含占位符 → 原样返回；主题目录没有 {@code tex-svg.js} → 占位符
+     * 留在 HTML 里（它本身是注释，渲染中性）并 warn；两者都有 → 内联。
+     *
+     * <p>🔴 与本地注入器 {@code 打卡/_模板/render_punch.py} 必须同款，否则本地样张与线上导出
+     * 对拍会漂：同一 vendor 文件、同一转义姿势（{@code </script} → {@code <\/script}）、
+     * 同一注入顺序（MathJax 先、数据后）。
+     */
+    private String injectMathjax(String themeDir, String html) {
+        if (!html.contains(MATHJAX_TOKEN)) return html;
+        String js = MATHJAX_CACHE.computeIfAbsent(themeDir, ChromePdfRenderer::loadMathjax);
+        if (js.isEmpty()) {
+            log.warn("[pdf-render] 主题 {} 写了 MathJax 注入点却没有 {}，跳过内联（公式将不渲染）",
+                themeDir, MATHJAX_VENDOR);
+            return html;
+        }
+        return html.replace(MATHJAX_TOKEN, "<script>" + js + "</script>");
+    }
+
+    /** 读 classpath 主题目录下的 tex-svg.js；读不到返回空串（由调用方降级）。 */
+    private static String loadMathjax(String themeDir) {
+        try {
+            PathMatchingResourcePatternResolver r = new PathMatchingResourcePatternResolver();
+            Resource rc = r.getResource(
+                "classpath:export-themes/" + themeDir + "/" + MATHJAX_VENDOR);
+            if (!rc.exists() || !rc.isReadable()) return "";
+            String js;
+            try (InputStream in = rc.getInputStream()) {
+                js = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            // 🔴 vendor 里若出现 </script 字面，会把宿主 <script> 提前闭合、后半段 JS 落到 DOM 上
+            //    （卷面糊一堆代码）。MathJax 3 的 tex-svg.js 实测 0 处，这里是断言 + 兜底：
+            //    命中就按本地注入器同款转义（JS 里 <\/ 与 </ 等价，语义不变）。
+            int n = 0;
+            for (int i = js.indexOf("</script"); i >= 0; i = js.indexOf("</script", i + 1)) n++;
+            if (n > 0) {
+                log.warn("[pdf-render] 主题 {} 的 {} 含 {} 处 </script 字面，按本地同款转义",
+                    themeDir, MATHJAX_VENDOR, n);
+                js = js.replace("</script", "<\\/script");
+            }
+            log.info("[pdf-render] 主题 {} MathJax vendor 已缓存（{} 字节，</script {} 处）",
+                themeDir, js.length(), n);
+            return js;
+        } catch (Exception e) {
+            log.error("[pdf-render] 读取 MathJax vendor 失败 theme={}", themeDir, e);
+            return "";
+        }
+    }
+
+    private byte[] renderInWork(Path work, String themeDir, Map<String, Object> data,
                                 String tag, int pages) {
         try {
             String json = om.writeValueAsString(data);
             // 防 </script> 提前闭合注入块（Jackson 默认不转义 /）：转义所有 </ 为 <\/。
             json = json.replace("</", "<\\/");
-            String tpl = Files.readString(work.resolve(themeHtml), StandardCharsets.UTF_8);
-            String html = tpl.replace(DATA_TOKEN, json);
+            String tpl = Files.readString(work.resolve(themeDir + ".html"), StandardCharsets.UTF_8);
+            String html = injectMathjax(themeDir, tpl).replace(DATA_TOKEN, json);
             Path htmlOut = work.resolve("paper-" + tag + ".html");
             Files.writeString(htmlOut, html, StandardCharsets.UTF_8);
             Path pdfOut = work.resolve("paper-" + tag + ".pdf");
