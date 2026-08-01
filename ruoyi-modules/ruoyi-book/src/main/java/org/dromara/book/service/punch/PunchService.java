@@ -107,7 +107,7 @@ public class PunchService {
      * （{@code theme:"flat"}、{@code theme:"../.."}）会让渲染整条挂掉——打卡书的阅读页和导出
      * 一起黑屏。白名单外一律回落缺省 + warn，页面照常出。
      */
-    private static final Set<String> KNOWN_THEMES = Set.of("punch-v1", "flat-v1");
+    private static final Set<String> KNOWN_THEMES = Set.of("punch-v1", "flat-v1", "sections-v1");
 
     /** 天节点 nodeType（D5 定死）。 */
     public static final String NODE_TYPE = "punch_day";

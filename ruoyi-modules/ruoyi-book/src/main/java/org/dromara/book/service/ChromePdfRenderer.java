@@ -45,6 +45,11 @@ public class ChromePdfRenderer {
     private static final String MATHJAX_TOKEN = "<!--__MATHJAX__-->";
     /** 主题目录下的 MathJax vendor 文件名（tex-svg：批0 实测 chtml 内联会静默出坏卷面）。 */
     private static final String MATHJAX_VENDOR = "tex-svg.js";
+    /**
+     * MathJax vendor 的<b>共享事实源</b>主题目录：主题自己目录里没有 vendor 时回落到这里。
+     * 🔴 2.1MB 的第三方产物只进仓一份，别每个主题复制一份（升版必分叉）。
+     */
+    private static final String MATHJAX_SHARED_THEME = "flat-v1";
     /** vendor 内容缓存（2MB 级，按主题读一次；空串 = 该主题没有 vendor，别反复找）。 */
     private static final Map<String, String> MATHJAX_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -186,13 +191,28 @@ public class ChromePdfRenderer {
         return html.replace(MATHJAX_TOKEN, "<script>" + js + "</script>");
     }
 
-    /** 读 classpath 主题目录下的 tex-svg.js；读不到返回空串（由调用方降级）。 */
+    /**
+     * 读 MathJax vendor：先看主题自己的目录，没有就回落到 {@link #MATHJAX_SHARED_THEME}。
+     *
+     * <p>🔴 <b>共享事实源</b>：tex-svg.js 是 2.1MB 的第三方产物，每个主题各存一份 = 仓库里
+     * 若干份大二进制、升版还会漏改成两端分叉。约定只有 {@code export-themes/flat-v1/tex-svg.js}
+     * 这一份进仓（首个用它的主题落的），后来的主题（sections-v1…）目录里不放，靠本回落取用。
+     * 本地注入器 {@code 打卡/_模板/render_punch.py} 的 --mathjax 也一律指这一份，两端同源。
+     *
+     * <p>读不到返回空串（由调用方降级：占位符原样留着，是注释，渲染中性）。
+     */
     private static String loadMathjax(String themeDir) {
         try {
             PathMatchingResourcePatternResolver r = new PathMatchingResourcePatternResolver();
             Resource rc = r.getResource(
                 "classpath:export-themes/" + themeDir + "/" + MATHJAX_VENDOR);
-            if (!rc.exists() || !rc.isReadable()) return "";
+            if (!rc.exists() || !rc.isReadable()) {
+                rc = r.getResource(
+                    "classpath:export-themes/" + MATHJAX_SHARED_THEME + "/" + MATHJAX_VENDOR);
+                if (!rc.exists() || !rc.isReadable()) return "";
+                log.info("[pdf-render] 主题 {} 无自带 {}，回落共享 vendor（{}）",
+                    themeDir, MATHJAX_VENDOR, MATHJAX_SHARED_THEME);
+            }
             String js;
             try (InputStream in = rc.getInputStream()) {
                 js = new String(in.readAllBytes(), StandardCharsets.UTF_8);
