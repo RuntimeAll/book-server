@@ -123,7 +123,32 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
-  function rich(s) { return s == null ? '' : String(s); }   /* 受信富文本：原样进 DOM */
+  /* 富文本最小白名单净化（PRD-017 verifier I-1，2026-08-02 装闸）：
+     载荷虽定位「受信自产」，但 upsertDay 只有登录门禁、iframe 预览无 sandbox、
+     chromium 渲染带 --no-sandbox——任何认证账号写入的 HTML 都会真执行。
+     故净化后再进 DOM：仅放行 span(class=bl)/br/sup/sub/i/b/u，其余标签转义为字面；
+     一切属性剥除（span 只保留 class="bl"）。行内数学不受影响（\( \) 是文本，MathJax 读 textContent）。 */
+  var RICH_OK = { span: 1, br: 1, sup: 1, sub: 1, i: 1, b: 1, u: 1 };
+  var RICH_CLS = { bl: 1, s: 1 };          /* span 允许的 class token：bl 作答横线 / s 短横线变体 */
+  function rich(s) {
+    if (s == null) return '';
+    return String(s).replace(/<\/?([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g,
+      function (m, tag, attrs, slash) {
+        var t = tag.toLowerCase();
+        if (!RICH_OK[t]) return m.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (m.charAt(1) === '/') return '</' + t + '>';
+        var keep = '';
+        if (t === 'span') {
+          var cm = /class\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/.exec(attrs);
+          if (cm) {
+            var toks = (cm[1] || cm[2] || cm[3] || '').split(/\s+/).filter(function (c) { return RICH_CLS[c]; });
+            if (toks.length) keep = ' class="' + toks.join(' ') + '"';
+          }
+        }
+        return '<' + t + keep + (slash ? '/' : '') + '>';
+      })
+      .replace(/<(?![a-zA-Z/])/g, '&lt;');   /* 裸 < 兜底（数学不等式该走 \lt，这里防手滑） */
+  }
 
   /* 序号 → 中文（1..99）：与 punch-v1 / flat-v1 / 本地出卷脚本同口径 */
   function cnNum(v) {
