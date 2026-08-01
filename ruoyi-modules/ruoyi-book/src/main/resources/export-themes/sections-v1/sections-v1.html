@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>每日打卡 · 小节版</title>
+<style>
+/* ═══ sections-v1：打卡「小节」版式（PRD-017 追加战役，唯一版式事实源）═══
+   版式正本 = 举一反三产物/打卡/七上绝对值压轴突破/_源/gen_打卡.py 的 CSS，本文件逐行搬来
+   （PT=10.4 已代入：body 10.40 / h1 15.13 / h2 11.82 / .bar 9.93 / asheet 9.67）。
+   一天一页：六个类型小节，节内填空题并排两栏、解答题独占整行并按 lines 权重吃掉剩余留白
+   （.secbox flex 权重 + .blank flex）→ 页数恒等于天数。
+   消费契约见文件末尾 script 头注释；与 punch-v1 / flat-v1 同机制：载荷占位符注入 + 内联 JS 建 DOM。
+   数学一律 MathJax tex-svg（MathJax 占位符由宿主渲染时内联，PRD-017 批0 D3=b′；
+   本主题目录不放第二份 2.1MB vendor，BE 与本地注入器都回落 flat-v1 目录那份共享事实源）。
+   🔴 两个占位符（数据 / MathJax）在本文件里各只许出现一次，注释里也不许写全称——注入器是全量替换。 */
+  @page { size: A4; margin: 12mm 13mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "SimSun", serif; font-size: 10.40pt; line-height: 1.65; color: #000; }
+  i { font-style: italic; font-family: "Times New Roman", serif; }
+  sup, sub { font-size: 0.72em; }
+  .card { height: 270mm; display: flex; flex-direction: column; padding-bottom: 8mm;
+          page-break-after: always; position: relative; }
+  .card:last-child { page-break-after: auto; }
+  .wm { position: absolute; right: 0; bottom: 0; font-family: "SimHei", sans-serif;
+        font-size: 12pt; color: #525252; letter-spacing: 2px; }
+  .wm img { height: 1.25em; vertical-align: -0.28em; margin-right: 4px; }
+  h1 { font-family: "SimHei", sans-serif; font-size: 15.13pt; text-align: center;
+       letter-spacing: 3px; margin-bottom: 1px; }
+  h2 { font-family: "SimHei", sans-serif; font-size: 11.82pt; text-align: center;
+       font-weight: normal; letter-spacing: 1px; border-bottom: 2px solid #000;
+       padding-bottom: 3px; margin-bottom: 3px; }
+  .bar { display: flex; justify-content: flex-end; font-size: 9.93pt; margin-bottom: 1px; }
+  .bar .tag { font-family: "SimHei", sans-serif; }
+  .bar .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 4.6em; }
+  .secbox { display: flex; flex-direction: column; min-height: 0;
+            page-break-inside: avoid; }   /* 小节整块不被分页切开（节标题不孤行） */
+  .sec { margin-top: 3px; border-bottom: 1px solid #000; padding-bottom: 1px;
+         display: flex; align-items: baseline; gap: .6em; }
+  .sec .nm { font-family: "SimHei", sans-serif; font-size: 1.04em; white-space: nowrap; }
+  .sec .mt { font-size: 0.8em; color: #333; }
+  .g2 { display: grid; grid-template-columns: 1fr 1fr; column-gap: 7mm; }
+  .q { page-break-inside: avoid; margin-top: 3px; }
+  .q.wide { grid-column: 1 / -1; }
+  .qn { font-family: "SimHei", sans-serif; }
+  .opts { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 1px;
+          padding-left: 1.6em; }
+  .bl { display: inline-block; border-bottom: 1px solid #000; min-width: 5.4em;
+        margin: 0 .15em; }
+  .bl.s { min-width: 3.4em; }
+  .blank { min-height: 10mm; }      /* 每道解答题至少留得下三四行 */
+  .ans { font-weight: bold; }
+  /* 数学排版 = MathJax（印刷级）；行内公式不撑乱行距 */
+  mjx-container { margin: 0 !important; }
+  /* 答案卷：不留白、题面淡、答案黑；高度自然流动，允许一天多页 */
+  body.asheet { font-size: 9.67pt; line-height: 1.5; }   /* 答案卷紧排，争取一天一页 */
+  body.asheet .card { height: auto; padding-bottom: 10mm; }
+  body.asheet .blank { display: none; }
+  body.asheet .sec { margin-top: 2px; }
+  body.asheet .q { margin-top: 2px; }
+  body.asheet .stem { color: #555; }
+  body.asheet .g2 { column-gap: 6mm; }
+  body.asheet .bl { min-width: 1.6em; }        /* 答案卷不需要作答长横线 */
+  body.asheet .ans::before { content: "答："; font-family: "SimHei", sans-serif; }
+  body.asheet .ans { margin-left: 1.6em; }
+  /* 被过滤模块的提示行（只在真的丢了模块时出现，正常载荷不占位） */
+  .skip { font-size: 9.5pt; color: #808080; margin-bottom: 1.5mm; }
+</style>
+<script>window.MathJax={tex:{inlineMath:[['\\(','\\)']]},svg:{scale:1.0},startup:{typeset:true}};</script>
+<!--__MATHJAX__--></head>
+<body>
+<script type="application/json" id="paper-data">__PAPER_DATA__</script>
+<script>
+/* ══ 载荷契约（单日渲染，与 punch-v1 / flat-v1 同机制；整册 = 逐日渲再合并，本主题不管合并）══
+   {
+     paper : 'question' | 'answer',           // 卷别；answer 才带答案
+     bookTitle : '绝对值压轴题突破·十天打卡',   // 书名（BE 侧字段名为 title，两者都认）
+     day   : 1,                               // 第几天 → 「第一天」
+     goals : ['今日提醒：绝对值等于正数，一定有两个解'],   // 天目标 → 副标题（第N天 · <目标>）
+     modules : [ { type:'section',
+                   title:'已知绝对值求数',      // 节标题（富文本，可含行内 LaTeX）
+                   tip:'若 \(\left|x\right|=a\ (a>0)\)，则 \(x=\pm a\)',  // 节提示，只印题目卷
+                   // 🔴 下面 q/a 是**杜撰示例**，别抄真题真答案进来：本文件会随题目卷 preview
+                   //    整份发到浏览器，写真答案 = 查看源代码就能读到，还会把答案泄漏扫描搅成噪音。
+                   items:[ { q:'若 \(\left|x-m\right|=n\)，则 \(x=\)<span class="bl"><\/span>。',
+                             a:'\(x=m\pm n\)',
+                             kind:'fill' | 'choice' | 'solve',
+                             lines:0,                      // 解答题留白权重（fill/choice 用 0）
+                             opts:['A．\(m\)', 'B．\(n\)', ...] } ] } ],   // choice 才有
+     layout : { showInfo:true, watermark:'玉米练习册', tip:'…', infoFields:['姓名','日期','用时'],
+                titlePrefix:'', titleSuffix:'', fontPt:10.4 }
+   }
+   🔴 q / a / title / tip 是**受信富文本**：本主题按 innerHTML 注入（题面自带 <span class="bl"> 作答
+      横线、<br> 折行、行内 \(..\) LaTeX，转义了就废）。因此**只接自产 DSL 载荷**
+      （举一反三产物/打卡/<册>/_源/ 的 qbank 生成物），**绝不接用户输入 / 外部抓取内容**——
+      与 flat-v1 的 esc() 全转义路线不同，这条是本主题的使用边界，别顺手拿去渲不可信内容。
+      layout.watermark / infoFields / 书名（bookTitle|title）按纯文本处理，仍走 esc()。
+   🔴 答案字段字面必须叫 a —— BE 的 G5 数据层剥离按通用字段名剥（items[].a / items[].steps），
+      叫别的名字（ans/val…）题目卷会连答案一起注进载荷，查看源代码即得全卷答案。
+   🔴 数据侧 `<\/` 转义（BE renderHtml 与本地注入器都做）对富文本无损：JSON 层 "<\/span>" 与
+      "</span>" 解析结果同一个字符串，DOM 一模一样。
+   layout 缺省：showInfo 开 / watermark='玉米练习册'（传 false 或 '' 关）/
+      infoFields=['姓名','日期','用时'] / tip（覆盖 goals 拼的副标题）/
+      titlePrefix、titleSuffix（缺省空串）/ fontPt（整体字号，缺省 10.4）。
+   🔴 本主题**不用** accent（版式正本的主标题是纯黑无标红段）——书上设了 accent 也不生效，
+      不是 bug；要标红请另立主题，别在这里长第二套标题规则。
+   🔴 经 BE 来的 layout（书 style_meta.punchLayout）由 PunchService.layoutOf 按类归一：
+      watermark 走布尔类 → 只有 开/关 两态，自定义水印文案这条路只有本地注入器能用。 */
+var CORN_DATA_URI = 'data:image/png;base64,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';
+(function () {
+  var D = {};
+  try { D = JSON.parse(document.getElementById('paper-data').textContent) || {}; } catch (e) { D = {}; }
+  var L = D.layout || {};
+  var isAns = D.paper === 'answer';
+  document.body.className = isAns ? 'asheet' : 'qsheet';
+
+  var CN = '零一二三四五六七八九';
+  var CIRC = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
+  var WIDE = 46;          /* 题面纯文本超过这么长就独占整行（版式正本常量） */
+  var BL = '<span class="bl"><' + '/span>';
+  var BLS = '<span class="bl s"><' + '/span>';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function rich(s) { return s == null ? '' : String(s); }   /* 受信富文本：原样进 DOM */
+
+  /* 序号 → 中文（1..99）：与 punch-v1 / flat-v1 / 本地出卷脚本同口径 */
+  function cnNum(v) {
+    var k = parseInt(v, 10);
+    if (!k || k < 1) return '';
+    if (k < 10) return CN.charAt(k);
+    if (k === 10) return '十';
+    if (k < 20) return '十' + CN.charAt(k % 10);
+    var t = CN.charAt(Math.floor(k / 10)) + '十';
+    return k % 10 === 0 ? t : t + CN.charAt(k % 10);
+  }
+
+  /* 题面纯文本长度（版式正本 qbank._plain 的逐条端口，替换表与顺序一字不差）——
+     并排两栏还是独占整行全看它，改一条就是改版式。 */
+  function plainLen(h) {
+    var s = String(h == null ? '' : h);
+    var reps = [['\\left|', '|'], ['\\right|', '|'], ['\\left(', '('], ['\\right)', ')'],
+                ['\\frac', 'frac'], ['\\pm ', '±'], ['\\le ', '≤'], ['\\ge ', '≥'],
+                [BL, '____'], [BLS, '___'], ['<br>', ' '], ['\\(', ''], ['\\)', '']];
+    for (var i = 0; i < reps.length; i++) {
+      s = s.split(reps[i][0]).join(reps[i][1]);   /* 🔴 split/join：replace 只换第一处 */
+    }
+    return s.length;
+  }
+
+  /* 字号可调（缺省 10.4 = 版式正本；只有显式传 fontPt 才覆盖，默认路径不动一像素） */
+  if (L.fontPt) {
+    var pt = parseFloat(L.fontPt), k2 = pt / 11.0;
+    var st = document.createElement('style');
+    st.textContent = 'body{font-size:' + pt.toFixed(2) + 'pt}'
+      + 'body.asheet{font-size:' + (pt * 0.93).toFixed(2) + 'pt}'
+      + 'h1{font-size:' + (16.0 * k2).toFixed(2) + 'pt}'
+      + 'h2{font-size:' + (12.5 * k2).toFixed(2) + 'pt}'
+      + '.bar{font-size:' + (10.5 * k2).toFixed(2) + 'pt}';
+    document.head.appendChild(st);
+  }
+
+  /* 模块：本主题一天 = 若干 section 小节（缺 type 视为 section）。
+     🔴 非 section 型（oral/vertical/stepwise/combine/tree/flat/rotating…）渲不了，只能丢；
+     但**丢得要出声**——静默丢会渲出一张只有页眉的白页，看上去像"这天没录内容"。 */
+  var dropped = [];
+  var mods = (D.modules || []).filter(function (m) {
+    if (!m) return false;
+    if (m.type == null || m.type === 'section') return true;
+    var dt = String(m.type);
+    if (dropped.indexOf(dt) < 0) dropped.push(dt);
+    return false;
+  });
+
+  /* 主标题 = 书名去掉「·…」尾巴、【…】批次标记与「每日打卡」后缀（纯黑，无标红段） */
+  var word = String(D.bookTitle != null ? D.bookTitle : (D.title != null ? D.title : ''));
+  word = word.replace(/【[^】]*】/g, '');
+  var cut = word.search(/[\u00b7\u2027\u30fb]/);
+  if (cut > 0) word = word.slice(0, cut);
+  word = word.replace(/每日打卡/g, '').replace(/打卡$/, '').trim();
+
+  var dayLabel = D.day ? '第' + cnNum(D.day) + '天' : '';
+  var sub = L.tip != null ? String(L.tip)
+          : ((D.goals || []).join('；') || String(D.subtitle == null ? '' : D.subtitle));
+  var wm = (L.watermark === false || L.watermark === '') ? null
+         : (typeof L.watermark === 'string' ? L.watermark : '玉米练习册');
+  var fields = (L.infoFields && L.infoFields.length) ? L.infoFields : ['姓名', '日期', '用时'];
+
+  /* 一道题：题号 + 题面（+ 选项 + 答案）。宽窄规则照搬版式正本 item_html。 */
+  function itemHtml(it, idx) {
+    var kind = String(it.kind == null ? 'fill' : it.kind);
+    var stem = rich(it.q);
+    var wide = (kind !== 'fill' || plainLen(stem) > WIDE || stem.indexOf('<br>') >= 0);
+    var s = '<div class="q' + (wide ? ' wide' : '') + '">';
+    s += '<span class="qn">' + (CIRC.charAt(idx) || (idx + 1) + '.') + '</span>\u3000'
+       + '<span class="stem">' + stem + '</span>';
+    if (kind === 'choice' && it.opts && it.opts.length) {
+      s += '<div class="opts">';
+      for (var i = 0; i < it.opts.length; i++) s += '<span>' + rich(it.opts[i]) + '</span>';
+      s += '</div>';
+    }
+    if (isAns && it.a != null && String(it.a) !== '') {
+      s += '<div class="ans">' + rich(it.a) + '</div>';
+    }
+    s += '</div>';
+    return s;
+  }
+
+  /* 一个小节：连续填空题并排两栏，解答题独占整行并按 lines 权重吃掉剩余留白 */
+  function secHtml(si, m) {
+    var items = m.items || [];
+    var weight = 0;
+    for (var i = 0; i < items.length; i++) weight += (parseInt(items[i].lines, 10) || 0);
+    var s = '<div class="secbox" style="flex:' + (weight ? weight : 'none') + '">';
+    s += '<div class="sec"><span class="nm">' + cnNum(si + 1) + '、' + rich(m.title) + '</span>';
+    if (!isAns && m.tip) s += '<span class="mt">' + rich(m.tip) + '</span>';
+    s += '</div>';
+    var buf = [];
+    function flush() {
+      if (!buf.length) return;
+      /* 落单的短题也占整行，免得右半栏空一块 */
+      var body = buf.length === 1 ? buf[0].replace('class="q"', 'class="q wide"') : buf.join('');
+      s += '<div class="g2">' + body + '</div>';
+      buf = [];
+    }
+    for (var qi = 0; qi < items.length; qi++) {
+      var it = items[qi] || {};
+      if (String(it.kind) === 'solve') {
+        flush();
+        s += '<div class="g2">' + itemHtml(it, qi) + '</div>';
+        s += '<div class="blank" style="flex:' + (parseInt(it.lines, 10) || 0) + '"></div>';
+      } else {
+        buf.push(itemHtml(it, qi));
+      }
+    }
+    flush();
+    s += '</div>';
+    return s;
+  }
+
+  var o = [];
+  o.push('<div class="card">');
+  if (wm) o.push('<div class="wm"><img src="' + CORN_DATA_URI + '"/>' + esc(wm) + '</div>');
+  o.push('<h1>' + esc(L.titlePrefix != null ? L.titlePrefix : '') + esc(word)
+         + esc(L.titleSuffix != null ? L.titleSuffix : '') + '</h1>');
+  o.push('<h2>' + (dayLabel && sub ? esc(dayLabel) + '\u3000\u00b7\u3000' + rich(sub)
+                                   : (esc(dayLabel) || rich(sub))) + '</h2>');
+  if (isAns) {
+    o.push('<div class="bar"><span class="tag">参考答案'
+           + (dayLabel ? ' \u00b7 ' + esc(dayLabel) : '') + '</span></div>');
+  } else if (L.showInfo !== false) {
+    o.push('<div class="bar"><span>');
+    /* 🔴 分隔的全角空格只加在字段之间，末字段后不留（多补一个，卷面右缘会偏） */
+    o.push(fields.map(function (f) { return esc(f) + '：<span class="fill"><' + '/span>'; })
+                 .join('\u3000'));
+    o.push('</span></div>');
+  }
+  /* 被过滤模块提示行：只在真丢了模块时才输出，正常载荷一个字节都不多（版式零影响） */
+  if (dropped.length) {
+    o.push('<div class="skip">（本主题不支持的模块类型已略：' + esc(dropped.join('、')) + '）</div>');
+  }
+  for (var si = 0; si < mods.length; si++) o.push(secHtml(si, mods[si]));
+  o.push('</div>');
+  document.body.insertAdjacentHTML('beforeend', o.join(''));
+})();
+</script>
+</body>
+</html>
