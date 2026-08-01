@@ -43,6 +43,8 @@
   /* 答案卷：不留白，紧排 */
   body.asheet .list { flex: none; grid-auto-rows: auto; }
   body.asheet .q { padding-top: 0; margin-top: 3.2mm; }
+  /* 被过滤模块的提示行（只在真的丢了模块时出现，正常载荷不占位） */
+  .skip { font-size: 9.5pt; color: #808080; margin-bottom: 1.5mm; }
 </style>
 <script>window.MathJax={tex:{inlineMath:[['\\(','\\)']]},svg:{scale:1.0},startup:{typeset:true}};</script>
 <!--__MATHJAX__--></head>
@@ -64,7 +66,16 @@
    layout 缺省：showInfo 开 / qPrefix='计算：' / watermark='玉米练习册'（传 false 或 '' 关）/
       accent 缺省取 bookTitle 里的模块词（去掉「·…」尾巴与「每日打卡」），传 '' 关红字。
       另认 tip（覆盖 goals 拼的提示语）、infoFields（缺省 姓名/日期/用时）、
-      titlePrefix/titleSuffix（缺省「专题：」「专项训练」）、fontPt（整体字号，缺省 11.5）。 */
+      titlePrefix/titleSuffix（缺省「专题：」「专项训练」）、fontPt（整体字号，缺省 11.5）。
+
+   🔴 accent 兜底行为（约定，别当 bug 改）：accent 若<b>不是</b>标题词 word 的子串，
+      整个 word 一起标红（而不是不标）。理由 = 版式主张「标题必有一段红」，宁可全红也不
+      静默变全黑让人以为参数没生效。要完全不标红请显式传 accent=''。
+
+   🔴 经 BE 来的 layout（书 style_meta.punchLayout）由 PunchService.layoutOf 按类归一：
+      watermark 走布尔类 → 只有 开/关 两态，自定义水印文案这条路只有本地注入器能用。
+      accent/qPrefix/tip/titlePrefix/titleSuffix 走字符串类（空串原样保留）、
+      fontPt 走数值类、infoFields 走字符串数组类。白名单外的键 BE 一律丢弃。 */
 var CORN_DATA_URI = 'data:image/png;base64,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';
 (function () {
   var D = {};
@@ -100,8 +111,18 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     document.head.appendChild(st);
   }
 
-  /* 模块：平摊版一天一页，各 flat 模块的题顺次平摊（缺 type 视为 flat） */
-  var mods = (D.modules || []).filter(function (m) { return m && (m.type == null || m.type === 'flat'); });
+  /* 模块：平摊版一天一页，各 flat 模块的题顺次平摊（缺 type 视为 flat）。
+     🔴 非 flat 型（oral/vertical/stepwise/combine/tree/rotating…）本主题渲不了，只能丢；
+     但**丢得要出声**——静默丢会渲出一张只有页眉的白页，看上去像"这天没录内容"，
+     排查要绕一大圈。记下被丢的型，卷面上印一行灰字说明。 */
+  var dropped = [];
+  var mods = (D.modules || []).filter(function (m) {
+    if (!m) return false;
+    if (m.type == null || m.type === 'flat') return true;
+    var dt = String(m.type);
+    if (dropped.indexOf(dt) < 0) dropped.push(dt);
+    return false;
+  });
   var items = [];
   mods.forEach(function (m) { (m.items || []).forEach(function (it) { if (it) items.push(it); }); });
 
@@ -150,6 +171,10 @@ var CORN_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGUAAACGCAYAA
     /* 🔴 分隔的 &emsp; 只加在字段之间，末字段后不留（原型手滑多补一个，卷面右缘会偏） */
     o.push(fields.map(function (f) { return esc(f) + '：<span class="fill"></span>'; }).join('&emsp;'));
     o.push('</span></div>');
+  }
+  /* 被过滤模块提示行：只在真丢了模块时才输出，正常载荷一个字节都不多（版式零影响） */
+  if (dropped.length) {
+    o.push('<div class="skip">（本主题不支持的模块类型已略：' + esc(dropped.join('、')) + '）</div>');
   }
   o.push('<div class="list">');
   items.forEach(function (it, i) {

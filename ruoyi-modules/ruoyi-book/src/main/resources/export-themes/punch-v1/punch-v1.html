@@ -6,7 +6,10 @@
 <style>
 /* ═══ punch-v1：三升四每日一练定版版式（2026-07-30 自 gen_每日一练.py 定版 CSS 移植） ═══
    消费 PRD-013 §10.2 模块 JSON；data.paper=question 题目卷 / answer 解析卷。
-   与 oralcalc-v1 同一约定：__PAPER_DATA__ 注入 + JS 建 DOM。 */
+   与 oralcalc-v1 同一约定：载荷占位符注入 + JS 建 DOM（占位符本体见 body 里的 #paper-data）。
+   🔴 注入是全文 replace：占位符全称在本文件里只许出现那一处，注释里也不许写
+   （原先这行写了全称 → 整份 JSON 被灌进 CSS 注释；只要载荷里出现一个 * 斜杠对，
+   注释就提前闭合、后半段 JSON 变成 CSS 规则，@page 静默失效 A4 变 Letter）。 */
 @page { size: A4; margin: 0; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 210mm; }
