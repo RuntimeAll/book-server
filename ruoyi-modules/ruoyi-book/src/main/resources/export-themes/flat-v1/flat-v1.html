@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>每日打卡 · 平摊开</title>
+<style>
+/* ═══ flat-v1：打卡「平摊开」版式（PRD-017 批1，唯一版式事实源）═══
+   版式正本 = 举一反三产物/打卡/七上实数的运算打卡/_源/gen_打卡.py 的 CSS，本文件逐行搬来（PT=11.5 已代入）。
+   一天一页：单栏平摊，一题一行「N. 计算：<式>＝」，10 行等高平分整页 → 每题下自带作答白。
+   消费契约见文件末尾 script 头注释；与 punch-v1 同机制：载荷占位符注入 + 内联 JS 建 DOM。
+   数学一律 MathJax tex-svg（MathJax 占位符由宿主渲染时内联，PRD-017 批0 D3=b′）。
+   🔴 两个占位符在本文件里各只许出现一次（注释里也不许写全称，注入器是全量替换）。 */
+  @page { size: A4; margin: 13mm 14mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "SimSun", serif; font-size: 11.50pt; line-height: 1.6; color: #000; }
+  .m i, i { font-style: italic; font-family: "Times New Roman", serif; }
+  .card { height: 268mm; display: flex; flex-direction: column;
+          page-break-after: always; position: relative; }
+  .card:last-child { page-break-after: auto; }
+  .wm { position: absolute; right: 1mm; bottom: 0; font-family: "SimHei", sans-serif;
+        font-size: 13pt; color: #525252; letter-spacing: 2px; }
+  .wm img { height: 1.25em; vertical-align: -0.28em; margin-right: 4px; }
+  h1 { font-family: "SimHei", sans-serif; font-size: 16.73pt; text-align: center;
+       letter-spacing: 1px; margin-bottom: 3px; }
+  h1 .ac { color: #c00000; }
+  h2 { font-family: "SimHei", sans-serif; font-size: 13.07pt; text-align: center;
+       font-weight: normal; letter-spacing: 1px; border-bottom: 2px solid #000;
+       padding-bottom: 5px; margin-bottom: 4px; }
+  .bar { display: flex; justify-content: space-between; align-items: baseline;
+         font-size: 10.98pt; margin-bottom: 3px; }
+  .bar .mt { font-family: "SimSun", serif; }
+  .bar .tag { font-family: "SimHei", sans-serif; }
+  .bar .fill { border-bottom: 1px solid #000; display: inline-block; min-width: 4.6em; }
+  /* 平摊开：10 行等高平分剩余版面，题面顶对齐 → 题下即作答区 */
+  .list { flex: 1; display: grid; grid-template-columns: 1fr; grid-auto-rows: 1fr; }
+  .q { page-break-inside: avoid; padding-top: 2mm; align-self: start; }
+  .qn { font-family: "Times New Roman", serif; display: inline-block;
+        min-width: 1.6em; text-align: right; }
+  .lb { font-family: "SimSun", serif; }
+  /* 答案着色：MathJax 输出继承 currentColor，故红色能上到公式（🔴 font-weight 上不去，只保留给纯文本答案） */
+  .ans { color: #c00000; font-weight: bold; }
+  mjx-container { margin: 0 !important; }
+  /* 答案卷：不留白，紧排 */
+  body.asheet .list { flex: none; grid-auto-rows: auto; }
+  body.asheet .q { padding-top: 0; margin-top: 3.2mm; }
+</style>
+<script>window.MathJax={tex:{inlineMath:[['\\(','\\)']]},svg:{scale:1.0},startup:{typeset:true}};</script>
+<!--__MATHJAX__--></head>
+<body>
+<script type="application/json" id="paper-data">__PAPER_DATA__</script>
+<script>
+/* ══ 载荷契约（单日渲染，与 punch-v1 同机制；整册 = 逐日渲再合并，本主题不管合并）══
+   {
+     paper : 'question' | 'answer',          // 卷别；answer 才带答案
+     bookTitle : '实数的运算',                // 书名（BE 侧字段名为 title，两者都认）
+     day   : 1,                              // 第几天 → 「第一天」
+     goals : ['开得尽的开尽；…'],             // 天目标；平摊版拿来当信息栏左侧提示语（可含 LaTeX）
+     modules : [ { type:'flat', title:'专项一 · 实数的混合运算',
+                   items:[ {q:'\\sqrt{9}+…', a:'1-\\sqrt{5}'} ] } ],
+     layout : { showInfo:true, qPrefix:'计算：', watermark:'玉米练习册', accent:'实数的运算' }
+   }
+   🔴 答案字段字面必须叫 a —— BE 的 G5 数据层剥离按通用字段名剥（items[].a / items[].steps），
+      叫别的名字（ans/val…）题目卷会连答案一起注进载荷，查看源代码即得全卷答案。
+   layout 缺省：showInfo 开 / qPrefix='计算：' / watermark='玉米练习册'（传 false 或 '' 关）/
+      accent 缺省取 bookTitle 里的模块词（去掉「·…」尾巴与「每日打卡」），传 '' 关红字。
+      另认 tip（覆盖 goals 拼的提示语）、infoFields（缺省 姓名/日期/用时）、
+      titlePrefix/titleSuffix（缺省「专题：」「专项训练」）、fontPt（整体字号，缺省 11.5）。 */
+var CORN_DATA_URI = 'data:image/png;base64,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';
+(function () {
+  var D = {};
+  try { D = JSON.parse(document.getElementById('paper-data').textContent) || {}; } catch (e) { D = {}; }
+  var L = D.layout || {};
+  var isAns = D.paper === 'answer';
+  document.body.className = isAns ? 'asheet' : 'qsheet';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  /* 天序号 → 中文（1..99）：与 punch-v1 / 本地出卷脚本同口径 */
+  function cnDay(v) {
+    var k = parseInt(v, 10);
+    if (!k || k < 1) return '';
+    var C = '零一二三四五六七八九';
+    if (k < 10) return C.charAt(k);
+    if (k === 10) return '十';
+    if (k < 20) return '十' + C.charAt(k % 10);
+    var t = C.charAt(Math.floor(k / 10)) + '十';
+    return k % 10 === 0 ? t : t + C.charAt(k % 10);
+  }
+
+  /* 字号可调（缺省 11.5 = 版式正本；只有显式传 fontPt 才覆盖，默认路径不动一像素） */
+  if (L.fontPt) {
+    var pt = parseFloat(L.fontPt), k2 = pt / 11.0;
+    var st = document.createElement('style');
+    st.textContent = 'body{font-size:' + pt.toFixed(2) + 'pt}'
+      + 'h1{font-size:' + (16.0 * k2).toFixed(2) + 'pt}'
+      + 'h2{font-size:' + (12.5 * k2).toFixed(2) + 'pt}'
+      + '.bar{font-size:' + (10.5 * k2).toFixed(2) + 'pt}';
+    document.head.appendChild(st);
+  }
+
+  /* 模块：平摊版一天一页，各 flat 模块的题顺次平摊（缺 type 视为 flat） */
+  var mods = (D.modules || []).filter(function (m) { return m && (m.type == null || m.type === 'flat'); });
+  var items = [];
+  mods.forEach(function (m) { (m.items || []).forEach(function (it) { if (it) items.push(it); }); });
+
+  /* 主标题：「专题：<红>模块词</红>专项训练（N道）」。
+     模块词 = bookTitle 去掉「·…」尾巴与「每日打卡」；accent 标出其中要标红的一段（传 '' 关红字）。 */
+  var word = String(D.bookTitle != null ? D.bookTitle : (D.title != null ? D.title : ''));
+  var cut = word.search(/[\u00b7\u2027\u30fb]/);
+  if (cut > 0) word = word.slice(0, cut);
+  word = word.replace(/每日打卡/g, '').replace(/打卡$/, '').trim();
+  var acc;
+  if (L.accent !== undefined && L.accent !== null) acc = String(L.accent);
+  else if (D.accent != null && String(D.accent) && word.indexOf(String(D.accent)) >= 0) acc = String(D.accent);
+  else acc = word;
+  var titleHtml;
+  if (!acc) titleHtml = esc(word);
+  else {
+    var p = word.indexOf(acc);
+    titleHtml = p >= 0
+      ? esc(word.slice(0, p)) + '<span class="ac">' + esc(acc) + '</span>' + esc(word.slice(p + acc.length))
+      : '<span class="ac">' + esc(word) + '</span>';
+  }
+
+  var dayLabel = D.day ? '第' + cnDay(D.day) + '天' : '';
+  var subs = [];
+  mods.forEach(function (m) { if (m.title) subs.push(String(m.title)); });
+  var sub = subs.length ? subs.join('\u3000·\u3000') : String(D.subtitle == null ? '' : D.subtitle);
+  var tip = L.tip != null ? String(L.tip) : (D.goals || []).join('；');
+  var qPrefix = L.qPrefix != null ? String(L.qPrefix) : '计算：';
+  var wm = (L.watermark === false || L.watermark === '') ? null
+         : (typeof L.watermark === 'string' ? L.watermark : '玉米练习册');
+  var fields = (L.infoFields && L.infoFields.length) ? L.infoFields : ['姓名', '日期', '用时'];
+
+  var o = [];
+  o.push('<div class="card">');
+  if (wm) o.push('<div class="wm"><img src="' + CORN_DATA_URI + '"/>' + esc(wm) + '</div>');
+  o.push('<h1>' + esc(L.titlePrefix != null ? L.titlePrefix : '专题：') + titleHtml
+         + esc(L.titleSuffix != null ? L.titleSuffix : '专项训练')
+         + '（' + items.length + '道）</h1>');
+  o.push('<h2>' + (dayLabel && sub ? esc(dayLabel) + '&emsp;·&emsp;' + esc(sub)
+                                    : esc(dayLabel || sub)) + '</h2>');
+  if (isAns) {
+    o.push('<div class="bar"><span class="tag">参考答案' + (dayLabel ? ' · ' + esc(dayLabel) : '')
+           + '</span><span class="mt">' + esc(tip) + '</span></div>');
+  } else if (L.showInfo !== false) {
+    o.push('<div class="bar"><span class="mt">' + esc(tip) + '</span><span>');
+    /* 🔴 分隔的 &emsp; 只加在字段之间，末字段后不留（原型手滑多补一个，卷面右缘会偏） */
+    o.push(fields.map(function (f) { return esc(f) + '：<span class="fill"></span>'; }).join('&emsp;'));
+    o.push('</span></div>');
+  }
+  o.push('<div class="list">');
+  items.forEach(function (it, i) {
+    /* 题面/答案一律 HTML 转义后再交给 MathJax（MathJax 读 textContent）——
+       🔴 不转义时 LaTeX 里的 < 会被当标签吞掉（版式坑，2026-08-01 打卡线已踩） */
+    var core = '\\(' + esc(it.q) + '\\)＝';
+    if (isAns && it.a != null && String(it.a) !== '') {
+      core += '<span class="ans">\\(' + esc(it.a) + '\\)</span>';
+    }
+    o.push('<div class="q"><span class="qn">' + (i + 1) + '.</span>&emsp;'
+           + (qPrefix ? '<span class="lb">' + esc(qPrefix) + '</span>' : '') + core + '</div>');
+  });
+  o.push('</div></div>');
+  document.body.insertAdjacentHTML('beforeend', o.join(''));
+})();
+</script>
+</body>
+</html>
