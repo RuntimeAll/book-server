@@ -327,14 +327,23 @@ public class ShelfService {
      * <p>用途：同一套题换版面。比如「今日目标」这栏对某些册子多余（三上混合运算这种纯计算册，
      * 目标写了也是套话），关掉即可——不必逐天重灌 goals，更不必改主题模板。
      *
-     * <p>开关（{@link PunchService#LAYOUT_KEYS}）：{@code showInfo} 班级/姓名/日期栏、
-     * {@code showGoals} 今日目标、{@code showWrongLog} 解析卷·今日错题记录。
-     * 🔴 <b>缺省全开，只有显式传 false 才隐藏</b>——不传的键不动，老书零影响。
+     * <p>参数分四类（{@link PunchService#LAYOUT_KEYS} = 四类之和）：
+     * <ul>
+     *   <li><b>布尔</b>（{@link PunchService#LAYOUT_BOOL_KEYS}）：{@code showInfo} 信息栏、
+     *       {@code showGoals} 今日目标、{@code showWrongLog} 解析卷·今日错题记录、{@code watermark} 页脚水印</li>
+     *   <li><b>字符串</b>（{@link PunchService#LAYOUT_STR_KEYS}）：{@code qPrefix}/{@code accent}/
+     *       {@code tip}/{@code titlePrefix}/{@code titleSuffix} —— 🔴 空串是有效值（关掉那处文字）</li>
+     *   <li><b>数值</b>（{@link PunchService#LAYOUT_NUM_KEYS}）：{@code fontPt}</li>
+     *   <li><b>字符串数组</b>（{@link PunchService#LAYOUT_LIST_KEYS}）：{@code infoFields}</li>
+     * </ul>
+     * 🔴 <b>布尔类缺省全开，只有显式传 false 才隐藏</b>——不传的键不动，老书零影响。
+     * 🔴 归一必须按类走：早期一刀切按布尔强转，{@code qPrefix:"计算："} 会被存成 {@code true}
+     * （静默毁值，卷面还照渲）。
      *
-     * <p>展示与导出同源（都读 punch-v1 主题的 {@code data.layout}），改一次两边一起变。
+     * <p>展示与导出同源（都读主题的 {@code data.layout}），改一次两边一起变。
      *
      * @param bookId 书 id（写门禁 = {@link #requireOwnedBook}）
-     * @param raw    {@code {showInfo?:bool, showGoals?:bool, showWrongLog?:bool}}；空 = 清空（全恢复默认）
+     * @param raw    版面参数；空 = 清空（全恢复默认）
      * @return {bookId, punchLayout}
      */
     @Transactional(rollbackFor = Exception.class)
@@ -345,15 +354,44 @@ public class ShelfService {
         if (raw != null) {
             for (String k : raw.keySet()) {
                 if (!PunchService.LAYOUT_KEYS.contains(k)) {
-                    throw new ServiceException("未知版面开关：" + k
+                    throw new ServiceException("未知版面参数：" + k
                         + "（只支持 " + String.join("/", PunchService.LAYOUT_KEYS) + "）", 400);
                 }
             }
-            for (String k : PunchService.LAYOUT_KEYS) {
+            for (String k : PunchService.LAYOUT_BOOL_KEYS) {
                 Object v = raw.get(k);
                 if (v != null) {
                     layout.put(k, !Boolean.FALSE.equals(v) && !"false".equals(String.valueOf(v)));
                 }
+            }
+            for (String k : PunchService.LAYOUT_STR_KEYS) {
+                Object v = raw.get(k);
+                if (v != null) layout.put(k, String.valueOf(v));
+            }
+            for (String k : PunchService.LAYOUT_NUM_KEYS) {
+                Object v = raw.get(k);
+                if (v == null) continue;
+                if (v instanceof Number n) {
+                    layout.put(k, n);
+                } else {
+                    try {
+                        layout.put(k, Double.valueOf(String.valueOf(v).trim()));
+                    } catch (NumberFormatException e) {
+                        throw new ServiceException("版面参数 " + k + " 必须是数值，收到：" + v, 400);
+                    }
+                }
+            }
+            for (String k : PunchService.LAYOUT_LIST_KEYS) {
+                Object v = raw.get(k);
+                if (v == null) continue;
+                if (!(v instanceof List<?> l)) {
+                    throw new ServiceException("版面参数 " + k + " 必须是数组，收到：" + v, 400);
+                }
+                List<String> vals = new ArrayList<>();
+                for (Object o : l) {
+                    if (o != null) vals.add(String.valueOf(o));
+                }
+                layout.put(k, vals);
             }
         }
         Map<String, Object> patch = new LinkedHashMap<>();

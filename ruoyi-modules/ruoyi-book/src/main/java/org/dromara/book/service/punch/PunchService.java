@@ -62,7 +62,9 @@ import java.util.stream.Collectors;
  * 预览走 {@link ChromePdfRenderer#renderHtml}（返 HTML 串给 FE iframe）、
  * 导出走 {@link ChromePdfRenderer#render}（同主题渲 PDF）——没有第二套渲染。
  *
- * <p>书 style_meta_json：{@code {accent,subtitle,variantName,rotatingTitle,punchReview}}。
+ * <p>书 style_meta_json：{@code {theme,accent,subtitle,variantName,rotatingTitle,punchLayout,punchReview}}。
+ * {@code theme} = 纸面主题（缺省 punch-v1，见 {@link #themeOf}）、{@code punchLayout} = 版面参数
+ * （见 {@link #layoutOf}）——两者都是零 DDL 落在 style_meta 里的。
  *
  * @author backend-dev (PRD-013 批1-BE)
  */
@@ -91,8 +93,21 @@ public class PunchService {
         this.exportWorker = exportWorker;
     }
 
-    /** 打卡纸面主题（版式=每日一练定版 CSS，单文件自包含）。 */
+    /**
+     * <b>缺省</b>纸面主题（版式=每日一练定版 CSS，单文件自包含）。
+     * 🔴 不再是唯一主题：书可用 {@code style_meta_json.theme} 选别的（见 {@link #themeOf}），
+     * 没设或设了不认识的值都回落到这里 —— 老书零回归。
+     */
     public static final String THEME = "punch-v1";
+
+    /**
+     * 认得的纸面主题白名单（= classpath {@code export-themes/<name>/<name>.html} 实际存在的那些）。
+     *
+     * <p>🔴 必须是白名单不是"有啥用啥"：{@code style_meta_json} 是自由 JSON，脏数据/手滑
+     * （{@code theme:"flat"}、{@code theme:"../.."}）会让渲染整条挂掉——打卡书的阅读页和导出
+     * 一起黑屏。白名单外一律回落缺省 + warn，页面照常出。
+     */
+    private static final Set<String> KNOWN_THEMES = Set.of("punch-v1", "flat-v1");
 
     /** 天节点 nodeType（D5 定死）。 */
     public static final String NODE_TYPE = "punch_day";
@@ -104,8 +119,38 @@ public class PunchService {
     private static final String DEFAULT_ACCENT = "暑假作业";
     private static final String DEFAULT_ROTATING_TITLE = "解决问题";
 
-    /** 版面开关白名单（书 style_meta.punchLayout）：缺省全开，显式 false 才隐藏。 */
-    public static final List<String> LAYOUT_KEYS = List.of("showInfo", "showGoals", "showWrongLog");
+    /**
+     * 版面参数白名单·<b>布尔类</b>：缺省全开，显式 false 才关。
+     * {@code showInfo} 信息栏 / {@code showGoals} 今日目标 / {@code showWrongLog} 解析卷错题记录
+     * （三者 punch-v1）、{@code watermark} 页脚水印（flat-v1）。
+     */
+    public static final List<String> LAYOUT_BOOL_KEYS =
+        List.of("showInfo", "showGoals", "showWrongLog", "watermark");
+
+    /**
+     * 版面参数白名单·<b>字符串类</b>（原样透传）：{@code qPrefix} 题号后的引导词、
+     * {@code accent} 主标题标红段、{@code tip} 信息栏提示语、{@code titlePrefix}/{@code titleSuffix} 主标题前后缀。
+     * 🔴 <b>空串是有效值</b>（= 关掉那处文字，如 {@code accent:""} 取消标红），不能当"没传"丢掉。
+     */
+    public static final List<String> LAYOUT_STR_KEYS =
+        List.of("qPrefix", "accent", "tip", "titlePrefix", "titleSuffix");
+
+    /** 版面参数白名单·<b>数值类</b>：{@code fontPt} 整体字号。 */
+    public static final List<String> LAYOUT_NUM_KEYS = List.of("fontPt");
+
+    /** 版面参数白名单·<b>字符串数组类</b>：{@code infoFields} 信息栏字段（缺省 姓名/日期/用时）。 */
+    public static final List<String> LAYOUT_LIST_KEYS = List.of("infoFields");
+
+    /**
+     * 全部版面参数键（四类之和）——入参校验（{@code ShelfService.savePunchLayout}）用。
+     *
+     * <p>🔴 分类的意义：老版本一刀切按布尔强转，flat-v1 的 {@code qPrefix:"计算："} 会变成
+     * {@code true}、{@code infoFields:[...]} 会变成 {@code true}、{@code accent:""} 会变成 {@code true}
+     * （静默毁值，卷面还照渲，最难查）。归一必须按类走。
+     */
+    public static final List<String> LAYOUT_KEYS = java.util.stream.Stream
+        .of(LAYOUT_BOOL_KEYS, LAYOUT_STR_KEYS, LAYOUT_NUM_KEYS, LAYOUT_LIST_KEYS)
+        .flatMap(List::stream).collect(Collectors.toUnmodifiableList());
 
     // ───────────────── ① 组数据（展示/导出同源） ─────────────────
 
@@ -190,20 +235,76 @@ public class PunchService {
     }
 
     /**
-     * 版面开关（书 style_meta.punchLayout → 主题 data.layout）。
+     * 纸面主题（书 style_meta.theme → classpath {@code export-themes/<theme>/}）。
      *
-     * <p>同一套题换版面，不必重灌内容：{@code showInfo}（班级/姓名/日期栏）、
-     * {@code showGoals}（今日目标）、{@code showWrongLog}（解析卷·今日错题记录）。
-     * 🔴 缺省全开，**只有显式 false 才隐藏**——老书零影响。
+     * <p>版式合一后（PRD-017）主题文件是<b>唯一版式事实源</b>，本地产线与线上导出消费同一份；
+     * 换版式 = 给书设一个 theme，不改代码不改数据。
+     *
+     * <p>🔴 白名单外一律回落 {@link #THEME} 并 warn —— style_meta 是自由 JSON，
+     * 脏值直接抛异常会让整本书的阅读页 + 导出一起挂（版面小事故升级成功能事故）。
      */
+    private String themeOf(Map<String, Object> style) {
+        String t = str(style.get("theme"), "").trim();
+        if (t.isEmpty()) return THEME;
+        if (!KNOWN_THEMES.contains(t)) {
+            log.warn("[punch] 未知主题 theme={}，回落缺省 {}（认得的：{}）", t, THEME, KNOWN_THEMES);
+            return THEME;
+        }
+        return t;
+    }
+
+    /**
+     * 版面参数（书 style_meta.punchLayout → 主题 data.layout）。
+     *
+     * <p>同一套题换版面，不必重灌内容：开关类如 {@code showInfo}（信息栏）、{@code showGoals}
+     * （今日目标）、{@code showWrongLog}（解析卷·今日错题记录）、{@code watermark}（页脚水印）；
+     * 取值类如 {@code qPrefix}（题号引导词）、{@code accent}（标红段）、{@code fontPt}（字号）、
+     * {@code infoFields}（信息栏字段）。全集见 {@link #LAYOUT_KEYS} 四类常量。
+     *
+     * <p>🔴 <b>按类归一，不是一刀切</b>：布尔强转 / 字符串原样（空串保留）/ 数值转 Number /
+     * 数组逐元素转字符串；白名单外的键仍然丢弃（主题只认约定键，别让脏数据进模板）。
+     * 🔴 缺省全开，**只有显式传 false 才隐藏**——老书零影响。
+     */
+    @SuppressWarnings("unchecked")
     private Map<String, Object> layoutOf(Map<String, Object> style) {
         Map<String, Object> out = new LinkedHashMap<>();
         Object raw = style.get("punchLayout");
-        if (raw instanceof Map<?, ?> m) {
-            for (String k : LAYOUT_KEYS) {
-                Object v = ((Map<String, Object>) m).get(k);
-                if (v != null) out.put(k, !Boolean.FALSE.equals(v) && !"false".equals(String.valueOf(v)));
+        if (!(raw instanceof Map<?, ?> m0)) return out;
+        Map<String, Object> m = (Map<String, Object>) m0;
+
+        for (String k : LAYOUT_BOOL_KEYS) {
+            Object v = m.get(k);
+            if (v != null) out.put(k, !Boolean.FALSE.equals(v) && !"false".equals(String.valueOf(v)));
+        }
+        for (String k : LAYOUT_STR_KEYS) {
+            Object v = m.get(k);
+            if (v != null) out.put(k, String.valueOf(v));   // 🔴 空串照传：主题拿它当"关掉这处文字"
+        }
+        for (String k : LAYOUT_NUM_KEYS) {
+            Object v = m.get(k);
+            if (v == null) continue;
+            if (v instanceof Number n) {
+                out.put(k, n);
+            } else {
+                try {
+                    out.put(k, Double.valueOf(String.valueOf(v).trim()));
+                } catch (NumberFormatException e) {
+                    log.warn("[punch] 版面参数 {} 不是数值，已忽略：{}", k, v);
+                }
             }
+        }
+        for (String k : LAYOUT_LIST_KEYS) {
+            Object v = m.get(k);
+            if (v == null) continue;
+            if (!(v instanceof List<?> l)) {
+                log.warn("[punch] 版面参数 {} 不是数组，已忽略：{}", k, v);
+                continue;
+            }
+            List<String> vals = new ArrayList<>();
+            for (Object o : l) {
+                if (o != null) vals.add(String.valueOf(o));
+            }
+            out.put(k, vals);
         }
         return out;
     }
@@ -249,7 +350,10 @@ public class PunchService {
 
     /** 预览 HTML 串（FE iframe 用；与导出 PDF 同 theme+data，构造上 1:1）。 */
     public String previewHtml(Long bookId, int day, String paper) {
-        return renderer.renderHtml(THEME, assembleDay(bookId, day, paper));
+        // 🔴 书取一次即够：主题与内容都从这一份 book 派生（原先 assembleDay(bookId,..) 会再查一次库）
+        BizShelfBook book = requireReadableBook(bookId);
+        return renderer.renderHtml(themeOf(parseMap(book.getStyleMetaJson())),
+            assembleDay(book, day, paper));
     }
 
     /**
@@ -288,12 +392,15 @@ public class PunchService {
             want.add("answer");
         }
         String fmt = normalizeFormat(format);
+        // 🔴 书 + 主题提到循环外：读门禁与 style 解析一次即可（双卷本来要各查一次库）
+        BizShelfBook book = requireReadableBook(bookId);
+        String theme = themeOf(parseMap(book.getStyleMetaJson()));
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("bookId", String.valueOf(bookId));
         r.put("day", day);
         r.put("format", fmt);
         for (String paper : want) {
-            byte[] pdf = renderer.render(THEME, assembleDay(bookId, day, paper), "punch-d" + day + "-" + paper);
+            byte[] pdf = renderer.render(theme, assembleDay(book, day, paper), "punch-d" + day + "-" + paper);
             pdf = trimBlankTailPages(pdf);
             OssClient oss = OssFactory.instance();
             UploadResult up;
@@ -426,11 +533,12 @@ public class PunchService {
     byte[] renderBookMerged(Long bookId, String paper, List<Integer> days) {
         BizShelfBook book = bookMapper.selectById(bookId);
         if (book == null) throw new ServiceException("书不存在", 404);
+        String theme = themeOf(parseMap(book.getStyleMetaJson()));
         org.apache.pdfbox.multipdf.PDFMergerUtility merger = new org.apache.pdfbox.multipdf.PDFMergerUtility();
         java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
         merger.setDestinationStream(bos);
         for (int day : days) {
-            byte[] pdf = renderer.render(THEME, assembleDay(book, day, paper), "punch-book-d" + day + "-" + paper);
+            byte[] pdf = renderer.render(theme, assembleDay(book, day, paper), "punch-book-d" + day + "-" + paper);
             merger.addSource(new java.io.ByteArrayInputStream(trimBlankTailPages(pdf)));
         }
         try {
