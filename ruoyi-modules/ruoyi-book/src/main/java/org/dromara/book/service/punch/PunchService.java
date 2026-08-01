@@ -116,6 +116,19 @@ public class PunchService {
     private static final String KIND_QUESTION = "question";
     private static final String TYPE_ROTATING = "rotating";
 
+    /**
+     * 题目卷必须剥掉的 item 字段（G5 数据层剥离）——<b>按通用字段名剥，不看 type</b>，
+     * 新模块型只要沿用这些字段名就自动被兜住。
+     *
+     * <p>{@code a} 答案 / {@code steps} 分步解析（oral·vertical·stepwise·combine·flat）；
+     * {@code mid}{@code total} = tree 型（三上混合运算特训）树状图的中层/底层填空值，
+     * 🔴 <b>是真答案</b>：punch-v1 题目卷把这两个框渲空、解析卷才填值，但载荷若照带，
+     * 「查看源代码」即得全卷答案（2026-08-01 PRD-017 批0 勘察抓到的现役缺口，非本卡引入）。
+     * 其余模块型没有这两个键，remove 空转，零影响。
+     */
+    private static final List<String> ANSWER_ONLY_ITEM_FIELDS =
+        List.of("a", "steps", "mid", "total");
+
     private static final String DEFAULT_ACCENT = "暑假作业";
     private static final String DEFAULT_ROTATING_TITLE = "解决问题";
 
@@ -207,8 +220,9 @@ public class PunchService {
                 if (modItems instanceof List<?> il) {
                     for (Object o : il) {
                         if (o instanceof Map<?, ?> im) {
-                            ((Map<String, Object>) im).remove("a");
-                            ((Map<String, Object>) im).remove("steps");
+                            for (String f : ANSWER_ONLY_ITEM_FIELDS) {
+                                ((Map<String, Object>) im).remove(f);
+                            }
                         }
                     }
                 }
