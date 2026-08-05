@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.dromara.book.domain.bo.IngestAiBo;
 import org.dromara.book.domain.bo.IngestBookBo;
-import org.dromara.book.domain.bo.IngestKgContentBo;
 import org.dromara.book.domain.bo.IngestKgTreeBo;
 import org.dromara.book.domain.bo.IngestPatternBo;
 import org.dromara.book.domain.bo.IngestQuestionBo;
@@ -20,7 +19,6 @@ import org.dromara.book.domain.entity.BizQuestionKnowledge;
 import org.dromara.book.domain.entity.BizQuestionPattern;
 import org.dromara.book.domain.entity.BizQuestionPatternRel;
 import org.dromara.book.domain.entity.BizSubject;
-import org.dromara.book.domain.entity.BizSubjectContent;
 import org.dromara.book.domain.entity.BizTextContent;
 import org.dromara.book.domain.entity.ImageAsset;
 import org.dromara.book.mapper.BizBookMapper;
@@ -34,7 +32,6 @@ import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizQuestionPatternMapper;
 import org.dromara.book.mapper.BizQuestionPatternRelMapper;
-import org.dromara.book.mapper.BizSubjectContentMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
 import org.dromara.book.mapper.BizTextContentMapper;
 import org.dromara.book.mapper.ImageAssetMapper;
@@ -83,7 +80,6 @@ import java.util.Set;
 public class IngestServiceImpl implements IIngestService {
 
     private final BizSubjectMapper bizSubjectMapper;
-    private final BizSubjectContentMapper bizSubjectContentMapper;
     private final ImageAssetMapper imageAssetMapper;
     private final BizBookMapper bizBookMapper;
     private final BizBookSubjectMapper bizBookSubjectMapper;
@@ -152,41 +148,7 @@ public class IngestServiceImpl implements IIngestService {
         return r;
     }
 
-    @Override
-    public Map<String, Object> upsertKgContent(IngestKgContentBo bo) {
-        if (bo == null || StringUtils.isBlank(bo.getSubjectId())) {
-            throw new ServiceException("subjectId 不能为空");
-        }
-        List<IngestKgContentBo.Block> blocks = bo.getBlocks() == null ? List.of() : bo.getBlocks();
-        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
-            // 幂等：先按 subject_id 清旧内容块再整段重写（重跑等价）
-            bizSubjectContentMapper.delete(new LambdaQueryWrapper<BizSubjectContent>()
-                .eq(BizSubjectContent::getSubjectId, bo.getSubjectId()));
-            int sort = 0;
-            for (IngestKgContentBo.Block b : blocks) {
-                BizSubjectContent row = new BizSubjectContent();
-                row.setSubjectId(bo.getSubjectId());
-                row.setContentType(b.getKind());
-                // 配图 imgUrl 一并序进 content（JSON），无图则存纯文本
-                if (StringUtils.isNotBlank(b.getImgUrl())) {
-                    Map<String, Object> payload = new HashMap<>();
-                    payload.put("text", b.getText());
-                    payload.put("imgUrl", b.getImgUrl());
-                    row.setContent(JsonUtils.toJsonString(payload));
-                } else {
-                    row.setContent(b.getText());
-                }
-                row.setSource("U");
-                row.setSort(sort++);
-                bizSubjectContentMapper.insert(row);
-            }
-            return null;
-        }));
-        Map<String, Object> r = new HashMap<>();
-        r.put("subjectId", bo.getSubjectId());
-        r.put("blocks", blocks.size());
-        return r;
-    }
+    // upsertKgContent 已删（2026-08-05 数据库清理批2：biz_subject_content 幽灵表，206 时代删表未删码）
 
     // ==================== 组2 图资产 ====================
 

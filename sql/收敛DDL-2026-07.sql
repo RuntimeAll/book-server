@@ -1,3 +1,7 @@
+-- 2026-08-05 数据库清理战役：45 张废弃表已从 dev+prod 删除并从本文件剔除
+--   （批1=42 张零引用表；批2=biz_anchor_worklist/biz_exam_paper/biz_exam_paper_item 代码协同清理）
+-- 2026-08-05 数据库清理战役：45 张废弃表已从 dev+prod 删除并从本文件剔除
+--   （批1=42 张零引用表；批2=biz_anchor_worklist/biz_exam_paper/biz_exam_paper_item 代码协同清理）
 -- #####################################################################
 -- ##                                                                 ##
 -- ##   🛑🛑🛑  禁止在有数据的库上执行本文件  🛑🛑🛑                    ##
@@ -31,46 +35,6 @@
 -- 业务字典种子(sys_dict biz_%)附文末,建库后需灌入并 refreshCache。
 -- =====================================================================
 
--- ----- biz_anchor_worklist -----
-DROP TABLE IF EXISTS biz_anchor_worklist;
-CREATE TABLE `biz_anchor_worklist` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `question_id` bigint NOT NULL,
-  `dim1_kp_id` varchar(30) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `issue` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'coarse粗锚(节以上)/empty空锚/dirty脏编码',
-  `note` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `status` char(1) COLLATE utf8mb4_unicode_ci DEFAULT '0' COMMENT '0待处理1已下沉',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_q` (`question_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1720 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='PRD-C-206 P2b 锚定整改工作表:认知包打标管线的首批任务源';
-
--- ----- biz_billing_event -----
-DROP TABLE IF EXISTS biz_billing_event;
-CREATE TABLE `biz_billing_event` (
-  `event_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `request_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '一次请求全链路 ID',
-  `teacher_id` bigint DEFAULT NULL COMMENT '老师 ID(打标任务可空)',
-  `source_type` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'label_job/admin_preview/老师对话(后期)',
-  `source_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'job_id 或 thread_id 等',
-  `provider` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '实际调的 provider',
-  `model` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `prompt_tokens` int DEFAULT '0',
-  `completion_tokens` int DEFAULT '0',
-  `fallback_count` int DEFAULT '0' COMMENT '此次切换了几次 provider',
-  `service_tier` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'base' COMMENT 'base/premium',
-  `is_billable` tinyint(1) DEFAULT '0' COMMENT '是否计入账单',
-  `started_at` datetime(3) DEFAULT NULL,
-  `ended_at` datetime(3) DEFAULT NULL,
-  `duration_ms` int DEFAULT NULL,
-  `status` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'ok/error',
-  `error_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  PRIMARY KEY (`event_id`),
-  KEY `idx_teacher_time` (`teacher_id`,`started_at`),
-  KEY `idx_source` (`source_type`,`source_id`),
-  KEY `idx_provider` (`provider`,`started_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='LLM 调用 / 服务计费埋点(第一期只埋点不扣费)';
-
 -- ----- biz_book -----
 DROP TABLE IF EXISTS biz_book;
 CREATE TABLE `biz_book` (
@@ -92,22 +56,7 @@ CREATE TABLE `biz_book` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='教材版本SSOT(版本年年更替绑此表;年级/学段=稳定维度)';
 
--- ----- biz_book_kp_map -----
-DROP TABLE IF EXISTS biz_book_kp_map;
-CREATE TABLE `biz_book_kp_map` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `book_id` varchar(8) NOT NULL,
-  `book_kp_id` varchar(24) NOT NULL COMMENT '教辅自有KP(biz_book_subject.id)',
-  `master_kp_id` varchar(24) NOT NULL COMMENT '→biz_subject.id(master)',
-  `rel` varchar(8) DEFAULT '等同' COMMENT '等同/细分/合并',
-  `confidence` decimal(4,3) DEFAULT '1.000',
-  `source` varchar(8) DEFAULT 'seed' COMMENT 'seed/LLM/人工',
-  `review_status` tinyint DEFAULT '1' COMMENT '0待评审 1通过',
-  PRIMARY KEY (`id`),
-  KEY `idx_book` (`book_id`),
-  KEY `idx_bkp` (`book_kp_id`),
-  KEY `idx_mkp` (`master_kp_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=256 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='教辅图谱↔主图谱映射(必刷题=种子1:1等同;主图谱靠它对齐生长)';
+主图谱靠它对齐生长)';
 
 -- ----- biz_book_question -----
 DROP TABLE IF EXISTS biz_book_question;
@@ -126,24 +75,6 @@ CREATE TABLE `biz_book_question` (
   KEY `idx_book` (`book_id`),
   KEY `idx_q` (`question_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2069819648940986399 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='教辅对题的摆放(教辅侧拥有;删book级联;题对book零引用)';
-
--- ----- biz_book_section -----
-DROP TABLE IF EXISTS biz_book_section;
-CREATE TABLE `biz_book_section` (
-  `id` varchar(12) NOT NULL COMMENT 'BS0001..',
-  `book_id` varchar(6) DEFAULT NULL COMMENT '教材版本→biz_book.id',
-  `chapter_subject_id` varchar(20) DEFAULT NULL COMMENT '挂的章 biz_subject(L3)',
-  `section_subject_id` varchar(20) DEFAULT NULL COMMENT '挂的小节/课时/知识点 biz_subject(L4/5/6)',
-  `column_type` varchar(16) NOT NULL COMMENT '栏目段类型:刷基础/刷提升/刷易错/刷素养/刷中考',
-  `seq` int NOT NULL COMMENT '?本段在所属小节内的顺序(基础<提升<素养<易错)',
-  `title` varchar(100) DEFAULT NULL COMMENT '段标题(如"刷基础")',
-  `source_book` varchar(64) DEFAULT NULL,
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_chapter` (`chapter_subject_id`),
-  KEY `idx_section_subject` (`section_subject_id`),
-  KEY `idx_column` (`column_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='?正文小节栏目段容器(组书顺序骨架)';
 
 -- ----- biz_book_subject -----
 DROP TABLE IF EXISTS biz_book_subject;
@@ -191,57 +122,6 @@ CREATE TABLE `biz_dna_edit_log` (
   PRIMARY KEY (`id`),
   KEY `idx_teacher_created` (`teacher_id`,`created_at`)
 ) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='PRD-C-100 经验层留痕(只累计不消费)';
-
--- ----- biz_exam_paper -----
-DROP TABLE IF EXISTS biz_exam_paper;
-CREATE TABLE `biz_exam_paper` (
-  `id` varchar(16) NOT NULL COMMENT 'EP01..',
-  `book_id` varchar(6) DEFAULT NULL COMMENT '教材版本→biz_book.id',
-  `kind` tinyint NOT NULL COMMENT '1全章综合训练 2章测',
-  `chapter_subject_id` varchar(20) DEFAULT NULL COMMENT '挂的章 L3',
-  `title` varchar(100) NOT NULL,
-  `total_score` int DEFAULT NULL COMMENT '满分(章测100)',
-  `duration_min` int DEFAULT NULL COMMENT '建议用时(分)',
-  `source_book` varchar(64) DEFAULT NULL,
-  `sort` int DEFAULT '0',
-  `status` char(1) NOT NULL DEFAULT '0',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_kind` (`kind`),
-  KEY `idx_chapter` (`chapter_subject_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='试卷(全章综合/章测)';
-
--- ----- biz_exam_paper_import -----
-DROP TABLE IF EXISTS biz_exam_paper_import;
-CREATE TABLE `biz_exam_paper_import` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `exam_paper_name` varchar(200) NOT NULL,
-  `question_num` int DEFAULT '0',
-  `error_num` int DEFAULT '0',
-  `import_time` datetime DEFAULT NULL,
-  `status` tinyint DEFAULT '1' COMMENT '1成功 0失败',
-  `generated_paper_id` bigint DEFAULT NULL,
-  `create_by` varchar(64) DEFAULT '',
-  `create_time` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_creator_time` (`create_by`,`import_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='试卷导入历史';
-
--- ----- biz_exam_paper_item -----
-DROP TABLE IF EXISTS biz_exam_paper_item;
-CREATE TABLE `biz_exam_paper_item` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `paper_id` varchar(16) NOT NULL COMMENT 'biz_exam_paper.id',
-  `seq` int NOT NULL COMMENT '卷内题序',
-  `question_id` bigint NOT NULL,
-  `section` varchar(8) DEFAULT NULL COMMENT '章测:选择/填空/解答',
-  `exam_point` varchar(64) DEFAULT NULL COMMENT '综合卷:考点1/2/3分组名',
-  `score` int DEFAULT NULL COMMENT '该题分值(章测有)',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_paper_q` (`paper_id`,`question_id`),
-  KEY `idx_question` (`question_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=198 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='卷内题(题序/分值/考点)';
 
 -- ----- biz_export_record -----
 DROP TABLE IF EXISTS biz_export_record;
@@ -408,89 +288,7 @@ CREATE TABLE `biz_label_audit` (
   KEY `idx_time` (`create_time`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2066552299571949571 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='打标写接口审计（所有增删改留痕）';
 
--- ----- biz_label_job -----
-DROP TABLE IF EXISTS biz_label_job;
-CREATE TABLE `biz_label_job` (
-  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'job_id (uuid)',
-  `batch_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `target_filter` json DEFAULT NULL COMMENT '打标范围 SQL where 条件',
-  `total` int DEFAULT '0',
-  `done` int DEFAULT '0',
-  `failed` int DEFAULT '0',
-  `status` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'pending/running/done/error/aborted',
-  `config` json DEFAULT NULL COMMENT 'prompt 版本/模型/参数',
-  `started_at` datetime DEFAULT NULL,
-  `ended_at` datetime DEFAULT NULL,
-  `error_summary` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
-  `create_by` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `create_time` datetime DEFAULT NULL,
-  `update_by` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `update_time` datetime DEFAULT NULL,
-  `remark` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_status_time` (`status`,`started_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='题库打标任务';
-
--- ----- biz_label_lesson -----
-DROP TABLE IF EXISTS biz_label_lesson;
-CREATE TABLE `biz_label_lesson` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `scope` varchar(16) NOT NULL DEFAULT 'question' COMMENT '范围: question单题/dimension某维度/global全局',
-  `ref_id` varchar(32) DEFAULT NULL COMMENT '关联对象（可空）: question_id 等',
-  `dimension` varchar(32) DEFAULT NULL COMMENT '涉及维度: 富文本/主考点/解法/难度/模型/验算…',
-  `failure_mode` varchar(64) DEFAULT NULL COMMENT 'LLM 失效模式（对应失误账 L-xx）',
-  `lesson` varchar(2000) NOT NULL COMMENT '经验/教训正文',
-  `sop_constraint` varchar(1000) DEFAULT NULL COMMENT '该挡住它的 SOP 约束/闸',
-  `author` varchar(64) DEFAULT NULL COMMENT '记录人',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_scope` (`scope`)
-) ENGINE=InnoDB AUTO_INCREMENT=2066525899611713539 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='打标累计经验沉淀（喂回 SOP/失误账）';
-
--- ----- biz_label_prior -----
-DROP TABLE IF EXISTS biz_label_prior;
-CREATE TABLE `biz_label_prior` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `kp_id` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '新树节点id(biz_subject)',
-  `old_knowledge_id` varchar(30) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `old_knowledge_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `tag_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `weight` int DEFAULT '1',
-  `src` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'miskt',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_kp` (`kp_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=528 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='章节标签先验(旧树按名称映射,2026-07-02 定版S2);认知包④注入源';
-
--- ----- biz_label_review -----
-DROP TABLE IF EXISTS biz_label_review;
-CREATE TABLE `biz_label_review` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `target_type` varchar(16) NOT NULL COMMENT '审核对象: question单题/paper试卷报告/model模型',
-  `target_id` varchar(32) NOT NULL COMMENT '对象id: question_id / paper_id / model_id(Mxx)',
-  `verdict` varchar(16) NOT NULL COMMENT '裁决: pass通过/reject打回/doubt存疑；模型: keep/merge/kill',
-  `merge_into` varchar(10) DEFAULT NULL COMMENT '模型 merge 时并入的 Mid',
-  `rework_note` varchar(1000) DEFAULT NULL COMMENT '打回注释（回炉重写/重生的依据）',
-  `reviewer` varchar(64) DEFAULT NULL COMMENT '审核人',
-  `review_round` int NOT NULL DEFAULT '1' COMMENT '审核轮次（多轮轨迹）',
-  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '审核时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_target` (`target_type`,`target_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2066552299488063490 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='打标审核裁决（单题/报告/模型，多轮轨迹）';
-
--- ----- biz_label_vocab -----
-DROP TABLE IF EXISTS biz_label_vocab;
-CREATE TABLE `biz_label_vocab` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `vocab_type` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'scenario/method/key_object',
-  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `aliases` json DEFAULT NULL COMMENT '已并入的近义词',
-  `use_count` int DEFAULT '0',
-  `create_time` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_type_name` (`vocab_type`,`name`),
-  KEY `idx_type` (`vocab_type`)
-) ENGINE=InnoDB AUTO_INCREMENT=1399 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='半开放维受控字典(写库前归一,禁近义)';
+认知包④注入源';
 
 -- ----- biz_paper -----
 DROP TABLE IF EXISTS biz_paper;
@@ -867,19 +665,6 @@ CREATE TABLE `biz_question_pitfall` (
   KEY `idx_pitfall` (`pitfall_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=184 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='题↔易错 M:N';
 
--- ----- biz_region -----
-DROP TABLE IF EXISTS biz_region;
-CREATE TABLE `biz_region` (
-  `code` varchar(12) NOT NULL COMMENT 'GB/T2260 行政码',
-  `name` varchar(40) NOT NULL COMMENT '本级名',
-  `full_name` varchar(60) DEFAULT NULL COMMENT '完整可读名(题首原文)',
-  `parent_code` varchar(12) DEFAULT NULL,
-  `level` tinyint NOT NULL COMMENT '1省 2地区',
-  `sort` int DEFAULT '0',
-  PRIMARY KEY (`code`),
-  KEY `idx_parent` (`parent_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='来源地区维表';
-
 -- ----- biz_solution_model -----
 DROP TABLE IF EXISTS biz_solution_model;
 CREATE TABLE `biz_solution_model` (
@@ -917,45 +702,6 @@ CREATE TABLE `biz_solution_model_kp` (
   KEY `idx_subject` (`subject_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2066211585864527876 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='解题模型↔知识点绑定';
 
--- ----- biz_special_topic -----
-DROP TABLE IF EXISTS biz_special_topic;
-CREATE TABLE `biz_special_topic` (
-  `id` varchar(10) NOT NULL COMMENT 'ST01..',
-  `book_id` varchar(6) DEFAULT NULL COMMENT '教材版本→biz_book.id',
-  `kind` tinyint NOT NULL COMMENT '1重难专题 2大招专题 3项目化学习',
-  `seq` int DEFAULT NULL COMMENT '专题序号(如 重难专题1 / 大招专题1)',
-  `title` varchar(100) NOT NULL COMMENT '专题标题(忠于原文)',
-  `chapter_subject_id` varchar(20) DEFAULT NULL COMMENT '挂的章 biz_subject(L3)',
-  `anchor_kp_id` varchar(20) DEFAULT NULL COMMENT '主知识点(可空)',
-  `intro` varchar(500) DEFAULT NULL COMMENT '专题导语/适用说明',
-  `page_anchor` varchar(32) DEFAULT NULL,
-  `source_book` varchar(64) DEFAULT NULL,
-  `sort` int DEFAULT '0',
-  `status` char(1) NOT NULL DEFAULT '0',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  `topic_type` varchar(16) DEFAULT NULL COMMENT '大招专题/重难专题/项目化学习/全章综合',
-  `granularity` varchar(8) DEFAULT NULL COMMENT '章级(平行小节)/节内(挂小节下)',
-  `anchor_subject_id` varchar(20) DEFAULT NULL COMMENT '挂的章 or 小节(biz_subject.id)',
-  PRIMARY KEY (`id`),
-  KEY `idx_kind` (`kind`),
-  KEY `idx_chapter` (`chapter_subject_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='章末专题(重难/大招/项目化)';
-
--- ----- biz_special_topic_item -----
-DROP TABLE IF EXISTS biz_special_topic_item;
-CREATE TABLE `biz_special_topic_item` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `topic_id` varchar(10) NOT NULL COMMENT 'biz_special_topic.id',
-  `item_kind` varchar(12) NOT NULL DEFAULT '类型' COMMENT '?类型(重难解法分类)/子任务(项目化子问)',
-  `seq` int DEFAULT NULL COMMENT '类型1/2/3 或 子任务序',
-  `name` varchar(100) NOT NULL COMMENT '类型名(如"逆用分配律")/子任务名',
-  `teach_content` text COMMENT '该类型解法讲解 / 子任务说明',
-  `sort` int DEFAULT '0',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  KEY `idx_topic` (`topic_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=72 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='专题子项(重难类型/项目子任务)';
-
 -- ----- biz_subject -----
 DROP TABLE IF EXISTS biz_subject;
 CREATE TABLE `biz_subject` (
@@ -982,32 +728,7 @@ CREATE TABLE `biz_subject` (
   KEY `idx_level` (`level`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='教材-章节-知识点树';
 
--- ----- biz_subject_relation -----
-DROP TABLE IF EXISTS biz_subject_relation;
-CREATE TABLE `biz_subject_relation` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `from_subject_id` varchar(20) NOT NULL,
-  `to_subject_id` varchar(20) NOT NULL,
-  `rel_type` varchar(16) NOT NULL COMMENT '前置/相关(共现)/方法迁移(共享模型)',
-  `source` varchar(16) DEFAULT NULL COMMENT 'code派生 / LLM',
-  `weight` decimal(5,3) DEFAULT NULL COMMENT '强度',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_edge` (`from_subject_id`,`to_subject_id`,`rel_type`),
-  KEY `idx_to` (`to_subject_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=201 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='知识点间关系';
-
--- ----- biz_tag_import -----
-DROP TABLE IF EXISTS biz_tag_import;
-CREATE TABLE `biz_tag_import` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `use_count` int DEFAULT '0',
-  `src` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'miskt',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=5455 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='标签复用池种子(miskt_data2同步,2026-07-02 定版S2);打标注入取 top-N,不直接污染 biz_free_tag';
+打标注入取 top-N,不直接污染 biz_free_tag';
 
 -- ----- biz_teacher_ai_memory -----
 DROP TABLE IF EXISTS biz_teacher_ai_memory;
@@ -1042,70 +763,6 @@ CREATE TABLE `biz_text_content` (
   KEY `idx_question` (`question_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2072375603524366340 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='棰樼洰涓夎?绱犻暱鏂囨湰澶栫疆(棰樺共 S / 绛旀? A / 瑙ｆ瀽 E)';
 
--- ----- biz_ts_base -----
-DROP TABLE IF EXISTS biz_ts_base;
-CREATE TABLE `biz_ts_base` (
-  `id` bigint NOT NULL COMMENT '主键 id (snowflake 19 位 / VO 必须 Long)',
-  `user_id` bigint NOT NULL COMMENT '老师 user_id (sys_user.user_id)',
-  `address_text` varchar(255) NOT NULL COMMENT '地址原文（用户输入）',
-  `lng` decimal(10,6) DEFAULT NULL COMMENT '经度（高德 geocode）',
-  `lat` decimal(10,6) DEFAULT NULL COMMENT '纬度（高德 geocode）',
-  `formatted_address` varchar(255) DEFAULT NULL COMMENT '高德格式化地址',
-  `address_level` varchar(32) DEFAULT NULL COMMENT '高德地址级别（兴趣点/区/市等）',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人 user_id',
-  `create_time` datetime DEFAULT NULL COMMENT '创建时间',
-  `update_time` datetime DEFAULT NULL COMMENT '更新时间',
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_user_id` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='老师全局基点 (C 主线 / MVP)';
-
--- ----- biz_ts_chat_message -----
-DROP TABLE IF EXISTS biz_ts_chat_message;
-CREATE TABLE `biz_ts_chat_message` (
-  `id` bigint NOT NULL COMMENT '主键 id',
-  `session_id` bigint NOT NULL COMMENT '所属会话 id',
-  `role` varchar(16) NOT NULL COMMENT '角色 user / assistant / tool',
-  `content` text COMMENT 'user/assistant 文本内容',
-  `tool_use` text COMMENT 'assistant tool_use block JSON (extract_lessons 入参)',
-  `tool_result` text COMMENT 'tool result block JSON',
-  `create_time` datetime DEFAULT NULL COMMENT '创建时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_session` (`session_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI 对话消息 (C 主线 / MVP)';
-
--- ----- biz_ts_chat_session -----
-DROP TABLE IF EXISTS biz_ts_chat_session;
-CREATE TABLE `biz_ts_chat_session` (
-  `id` bigint NOT NULL COMMENT '主键 id',
-  `user_id` bigint NOT NULL COMMENT '老师 user_id',
-  `status` varchar(16) NOT NULL DEFAULT 'active' COMMENT '会话状态 active / finished / cancelled',
-  `round_count` int NOT NULL DEFAULT '0' COMMENT '已追问轮数（MVP 上限 3）',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人 user_id',
-  `create_time` datetime DEFAULT NULL COMMENT '创建时间',
-  `update_time` datetime DEFAULT NULL COMMENT '更新时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_user_status` (`user_id`,`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI 对话会话 (C 主线 / MVP 多轮追问)';
-
--- ----- biz_ts_lesson -----
-DROP TABLE IF EXISTS biz_ts_lesson;
-CREATE TABLE `biz_ts_lesson` (
-  `id` bigint NOT NULL COMMENT '主键 id',
-  `user_id` bigint NOT NULL COMMENT '老师 user_id',
-  `lesson_date` date NOT NULL COMMENT '日期 YYYY-MM-DD',
-  `start_time` time NOT NULL COMMENT '开始时间 HH:MM:SS',
-  `duration_min` int NOT NULL COMMENT '持续分钟数',
-  `location_text` varchar(255) NOT NULL COMMENT '地点原文',
-  `lng` decimal(10,6) DEFAULT NULL COMMENT '经度（高德 geocode）',
-  `lat` decimal(10,6) DEFAULT NULL COMMENT '纬度（高德 geocode）',
-  `lesson_name` varchar(255) DEFAULT NULL COMMENT '课程名称（自由文本：人/学科/时间/地点）',
-  `create_by` bigint DEFAULT NULL COMMENT '创建人 user_id',
-  `create_time` datetime DEFAULT NULL COMMENT '创建时间',
-  `update_time` datetime DEFAULT NULL COMMENT '更新时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_user_date` (`user_id`,`lesson_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='课程节 (C 主线 / MVP 单天单节)';
-
 -- ----- biz_variant_upload -----
 DROP TABLE IF EXISTS biz_variant_upload;
 CREATE TABLE `biz_variant_upload` (
@@ -1126,22 +783,6 @@ CREATE TABLE `biz_variant_upload` (
   PRIMARY KEY (`id`),
   KEY `idx_user_time` (`create_user`,`create_time`)
 ) ENGINE=InnoDB AUTO_INCREMENT=182 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='举一反三母题图上传留痕';
-
--- ----- biz_variation_method -----
-DROP TABLE IF EXISTS biz_variation_method;
-CREATE TABLE `biz_variation_method` (
-  `code` varchar(16) NOT NULL COMMENT 'VM01..VM09',
-  `name` varchar(40) NOT NULL COMMENT '数值/结构/情境变式/定值化/逆向构造/推广一般化/维度提升/条件增删/分类讨论化',
-  `definition` text COMMENT '定义',
-  `trigger_cond` varchar(500) DEFAULT NULL COMMENT '什么母题适合用它变',
-  `similarity_low` decimal(3,2) DEFAULT NULL,
-  `similarity_high` decimal(3,2) DEFAULT NULL,
-  `vs_dna` varchar(500) DEFAULT NULL COMMENT '与纯DNA克隆的区别',
-  `examples` json DEFAULT NULL COMMENT '本书真实例',
-  `sort` int DEFAULT '0',
-  PRIMARY KEY (`code`),
-  UNIQUE KEY `uk_name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='变式手法库(9算子)';
 
 -- ----- biz_variation_trace -----
 DROP TABLE IF EXISTS biz_variation_trace;

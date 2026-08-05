@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.IngestAiBo;
 import org.dromara.book.domain.bo.IngestBookBo;
 import org.dromara.book.domain.bo.IngestImageBo;
-import org.dromara.book.domain.bo.IngestKgContentBo;
 import org.dromara.book.domain.bo.IngestKgTreeBo;
 import org.dromara.book.domain.bo.IngestPatternBo;
 import org.dromara.book.domain.bo.IngestQuestionBo;
@@ -49,12 +48,7 @@ public class IngestController {
         return ingestService.upsertKgTree(bo);
     }
 
-    /** POST /teacher/ingest/kg/content — upsert biz_subject_content → {subjectId, blocks:n}。 */
-    @SaCheckLogin
-    @PostMapping("/kg/content")
-    public Map<String, Object> kgContent(@RequestBody IngestKgContentBo bo) {
-        return ingestService.upsertKgContent(bo);
-    }
+    // /kg/content 端点已删（2026-08-05 数据库清理批2：biz_subject_content 表 206 时代已不存在，活代码写幽灵表=裸 500）
 
     // ===== 组2 图资产 =====
 

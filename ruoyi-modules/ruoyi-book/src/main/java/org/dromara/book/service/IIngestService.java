@@ -2,7 +2,6 @@ package org.dromara.book.service;
 
 import org.dromara.book.domain.bo.IngestAiBo;
 import org.dromara.book.domain.bo.IngestBookBo;
-import org.dromara.book.domain.bo.IngestKgContentBo;
 import org.dromara.book.domain.bo.IngestKgTreeBo;
 import org.dromara.book.domain.bo.IngestPatternBo;
 import org.dromara.book.domain.bo.IngestQuestionBo;
@@ -22,9 +21,6 @@ public interface IIngestService {
 
     /** 组1：整树 upsert biz_subject，返回 {upserted:n}。 */
     Map<String, Object> upsertKgTree(IngestKgTreeBo bo);
-
-    /** 组1：知识点内容块 upsert biz_subject_content，返回 {subjectId, blocks:n}。 */
-    Map<String, Object> upsertKgContent(IngestKgContentBo bo);
 
     /** 组2：上传图 multipart 分支 → OSS + 去重 image_asset，返回 {assetId, ossUrl, dedup}。 */
     Map<String, Object> uploadImage(MultipartFile file, String assetKind);
