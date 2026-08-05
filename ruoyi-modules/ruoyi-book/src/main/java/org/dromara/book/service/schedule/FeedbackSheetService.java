@@ -98,6 +98,9 @@ public class FeedbackSheetService {
     /**
      * 列表（FE PageResult = {rows,total}）。owner 过滤 + 可选 targetId / keyword / batchKey（PRD-010）
      * / planId（PRD-015 计划过滤）。
+     *
+     * <p>🔄 <b>PRD-018 G9③（2026-08-05）</b>：排序键由 {@code id} / {@code lesson_seq} 换成
+     * <b>{@code (lesson_date, id)}</b> —— 乱序补录（先建 7 月再补 4 月）后，列表与展示序号都按业务日期走。
      */
     public Map<String, Object> page(Long targetId, String keyword, String batchKey, Long planId) {
         Long uid = LoginHelper.getUserId();
@@ -107,10 +110,12 @@ public class FeedbackSheetService {
             .eq(planId != null, BizFeedbackSheet::getPlanId, planId)
             .eq(batchKey != null && !batchKey.isBlank(), BizFeedbackSheet::getBatchKey, batchKey)
             .like(keyword != null && !keyword.isBlank(), BizFeedbackSheet::getTitle, keyword)
-            .orderByDesc(BizFeedbackSheet::getId);
+            .orderByAsc(BizFeedbackSheet::getLessonDate)
+            .orderByAsc(BizFeedbackSheet::getId);
+        Map<Long, Map<Long, Integer>> seqCache = new LinkedHashMap<>();
         List<Map<String, Object>> out = new ArrayList<>();
         for (BizFeedbackSheet e : sheetMapper.selectList(w)) {
-            out.add(brief(e));
+            out.add(brief(e, seqCache));
         }
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("rows", out);
@@ -175,11 +180,12 @@ public class FeedbackSheetService {
             }
             batchKey = latest.getBatchKey();
         }
+        // 🔄 PRD-018 G9③：批次拼图排序同改 (lesson_date, id)，与计划导出/列表同一口径
         List<BizFeedbackSheet> sheets = sheetMapper.selectList(new LambdaQueryWrapper<BizFeedbackSheet>()
             .eq(BizFeedbackSheet::getCreateBy, uid)
             .eq(BizFeedbackSheet::getTargetId, targetId)
             .eq(BizFeedbackSheet::getBatchKey, batchKey)
-            .orderByAsc(BizFeedbackSheet::getLessonSeq)
+            .orderByAsc(BizFeedbackSheet::getLessonDate)
             .orderByAsc(BizFeedbackSheet::getId));
         if (sheets.isEmpty()) {
             throw new ServiceException("批次「" + batchKey + "」下没有反馈单", 400);
@@ -202,36 +208,41 @@ public class FeedbackSheetService {
     }
 
     /**
-     * 按课程计划导出（PRD-015 D7/D13，AC7）：该计划下反馈单按 lesson_seq 升序出图。
+     * 按课程计划导出（PRD-015 D7/D13，AC7）：该计划下反馈单按 <b>{@code (lesson_date, id)}</b> 升序出图。
      *
      * <p>🔴 版式 = 现有导出模板<b>零样式改动</b>（同一 wrapDoc + 同一五列表），只改黄条标题拼法：
      * 「{序号} · {上课日期}」，title 有值则作备注追加其后（D7）。全图不出现"第几次/第 N 节"。
      *
+     * <p>🔄 <b>PRD-018 G9③</b>：排序与黄条序号都改成读取时按业务日期实时排（{@link #displaySeq}），
+     * 不再读写入时定格的 {@code lesson_seq} —— 乱序补录后导出单的序号与屏上列表严格一致。
+     *
      * @param planId 计划 id（必填）
-     * @param mode   'single' = 该计划 lesson_seq 最大的一单单张（缺省）；'long' = 全量升序拼长图
+     * @param mode   'single' = 该计划<b>业务日期最晚</b>的一单单张（缺省）；'long' = 全量升序拼长图
      */
     public Map<String, Object> exportPlanPng(Long planId, String mode) {
         if (planId == null) {
             throw new ServiceException("请选择课程计划（planId 必填）", 400);
         }
         boolean longMode = "long".equalsIgnoreCase(mode == null ? "" : mode.trim());
-        List<BizFeedbackSheet> sheets = sheetMapper.selectList(new LambdaQueryWrapper<BizFeedbackSheet>()
-            .eq(BizFeedbackSheet::getCreateBy, LoginHelper.getUserId())
-            .eq(BizFeedbackSheet::getPlanId, planId)
-            .orderByAsc(BizFeedbackSheet::getLessonSeq)
-            .orderByAsc(BizFeedbackSheet::getId));
+        List<BizFeedbackSheet> sheets = sheetsOfPlan(planId);
         if (sheets.isEmpty()) {
             throw new ServiceException("该课程计划下还没有反馈单", 400);
         }
+        // 🔴 序号在裁成 single 之前先按全量算好，否则单张导出的序号会永远是 1
+        Map<Long, Integer> seqOf = new LinkedHashMap<>();
+        int n = 0;
+        for (BizFeedbackSheet e : sheets) {
+            seqOf.put(e.getId(), ++n);
+        }
         if (!longMode) {
-            // single = 最新一单（升序列表的末位 = lesson_seq 最大；序号并列时取 id 大的）
+            // single = 最新一单（升序列表的末位 = lesson_date 最晚；同日时取 id 大的）
             sheets = List.of(sheets.get(sheets.size() - 1));
         }
         StringBuilder body = new StringBuilder();
         int height = 14;    // 顶部留白（.wrap padding-top），与批次导出同口径
         for (BizFeedbackSheet e : sheets) {
             List<Map<String, Object>> rows = parseRows(e.getRowsJson());
-            body.append(sectionHtml(e.getLessonSeq(), e.getLessonDate(), e.getTitle(), rows));
+            body.append(sectionHtml(seqOf.get(e.getId()), e.getLessonDate(), e.getTitle(), rows));
             height += 88 + estimateContentH(rows) + 16;
         }
         String html = wrapDoc(body.toString());
@@ -367,8 +378,8 @@ public class FeedbackSheetService {
      *
      * <p>🔄 PRD-018 D10（2026-08-05）：结算自动建壳那条路已撤（{@code SettlementService} 不再写反馈域），
      * <b>本方法成为 lesson_seq 的唯一写入处</b>（人工建单不传序号时兜底）。
-     * ⚠️ 挂账：PRD §8/G9③ 提出「lesson_seq 改读取时按 lesson_date 实时排」，属反馈域读侧改造，
-     * 本批（批2）未动 —— 见 progress.md 批2 存疑项。
+     * 🔄 批3（G9③）：读侧已改成实时排（{@link #displaySeq}），本方法退化为<b>纯写侧兜底</b> ——
+     * 列值不再决定任何展示，留着只为老数据与外部直读 SQL 的兼容。
      */
     private int nextLessonSeq(Long planId) {
         int max = 0;
@@ -385,6 +396,13 @@ public class FeedbackSheetService {
     }
 
     private Map<String, Object> brief(BizFeedbackSheet e) {
+        return brief(e, new LinkedHashMap<>());
+    }
+
+    /**
+     * @param seqCache planId → (sheetId → 展示序号)，批量列表时复用，避免逐行重查计划全量单
+     */
+    private Map<String, Object> brief(BizFeedbackSheet e, Map<Long, Map<Long, Integer>> seqCache) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(e.getId()));
         m.put("targetId", e.getTargetId() == null ? null : String.valueOf(e.getTargetId()));
@@ -393,12 +411,53 @@ public class FeedbackSheetService {
         m.put("sessionId", e.getSessionId() == null ? null : String.valueOf(e.getSessionId()));
         m.put("planId", e.getPlanId() == null ? null : String.valueOf(e.getPlanId()));
         m.put("batchKey", e.getBatchKey());
-        m.put("lessonSeq", e.getLessonSeq());
+        // 🔄 PRD-018 G9③：展示序号 = 读取时按 (lesson_date, id) 实时排出的 1..N，不再读 lesson_seq 列。
+        //    散单（无计划）无序号可排 → 回落原列值（通常为 null）。原始列值另出 lessonSeqRaw 供排查。
+        m.put("lessonSeq", displaySeq(e, seqCache));
+        m.put("lessonSeqRaw", e.getLessonSeq());
         m.put("title", e.getTitle());
         m.put("lessonDate", e.getLessonDate() == null ? null : e.getLessonDate().toString());
         m.put("createTime", e.getCreateTime());
         m.put("updateTime", e.getUpdateTime());
         return m;
+    }
+
+    /**
+     * 计划内展示序号（PRD-018 G9③，2026-08-05）：<b>读取时</b>把该计划下的全部反馈单按
+     * {@code (lesson_date, id)} 排一遍，本单的名次即序号（1..N）。
+     *
+     * <p>为什么不读 {@code lesson_seq} 列：那是<b>写入时 max+1 定格</b>的值 —— 先建 7 月的单、
+     * 再补 4 月的单，列值就是「7 月=1、4 月=2」，与业务日期倒挂（预演 L2/L3）。
+     * 派生值读取时算，补录任何一单，其后所有单的序号自动顺移，与台账「剩余实时推导」同一条铁则（D10 ④）。
+     *
+     * <p>散单（{@code plan_id} 为空）不参与排序 → 回落原列值。
+     */
+    private Integer displaySeq(BizFeedbackSheet e, Map<Long, Map<Long, Integer>> seqCache) {
+        if (e.getPlanId() == null || e.getId() == null) {
+            return e.getLessonSeq();
+        }
+        Map<Long, Integer> byId = seqCache.computeIfAbsent(e.getPlanId(), this::planDisplaySeq);
+        Integer seq = byId.get(e.getId());
+        return seq != null ? seq : e.getLessonSeq();
+    }
+
+    /** 一个计划下 sheetId → 展示序号（(lesson_date, id) 升序的名次）。 */
+    private Map<Long, Integer> planDisplaySeq(Long planId) {
+        Map<Long, Integer> m = new LinkedHashMap<>();
+        int i = 0;
+        for (BizFeedbackSheet fb : sheetsOfPlan(planId)) {
+            m.put(fb.getId(), ++i);
+        }
+        return m;
+    }
+
+    /** 计划下全部反馈单，按 {@code (lesson_date, id)} 升序 —— 展示序号与导出拼图的唯一排序口径（G9③）。 */
+    private List<BizFeedbackSheet> sheetsOfPlan(Long planId) {
+        return sheetMapper.selectList(new LambdaQueryWrapper<BizFeedbackSheet>()
+            .eq(BizFeedbackSheet::getCreateBy, LoginHelper.getUserId())
+            .eq(BizFeedbackSheet::getPlanId, planId)
+            .orderByAsc(BizFeedbackSheet::getLessonDate)
+            .orderByAsc(BizFeedbackSheet::getId));
     }
 
     private String targetName(Long targetId) {

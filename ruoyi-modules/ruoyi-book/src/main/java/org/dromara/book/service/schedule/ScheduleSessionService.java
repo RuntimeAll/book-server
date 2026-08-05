@@ -440,6 +440,12 @@ public class ScheduleSessionService {
             if (lid != null) {
                 rebound++;
             } else {
+                // 🔴 全局 updateStrategy=NOT_NULL（common-mybatis.yml:32）→ updateById 跳过 null 字段，
+                //    上面的 setPlanLessonId(null) 一个字都写不进去：返回体 unbound 计了数、库里那些多余场次
+                //    却还绑着旧课次（先于 PRD-018 存在的 bug，批3 顺手修）。置 NULL 必须走 UpdateWrapper。
+                sessionMapper.update(null, new LambdaUpdateWrapper<BizScheduleSession>()
+                    .eq(BizScheduleSession::getId, s.getId())
+                    .set(BizScheduleSession::getPlanLessonId, null));
                 unbound++;
             }
         }

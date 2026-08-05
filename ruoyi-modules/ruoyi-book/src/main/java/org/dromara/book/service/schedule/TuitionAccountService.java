@@ -637,8 +637,13 @@ public class TuitionAccountService {
 
     /**
      * 课时流水单 PNG（D16 / AC14）：标题栏 +（时薪 / 截至 / 当前剩余）meta 行 + 网格表<b>升序</b>
-     * （日期 / 上课时间 / 内容 / 课时变动 / 剩余课时），充值行绿、冲正行红，🔴 无合计行。
-     * 🔴 家长可见物：零内部词。行序与 {@link #ledger} 同源（buildLedgerRows），保证逐行一致。
+     * （日期 / 上课时间 /[学生]/ 内容 / 时长变动 / 剩余），充值行绿、冲正行红，🔴 无合计行。
+     * 🔴 家长可见物：零内部词。行序与 {@link #ledger} 同源（buildLedgerRows），保证逐行一致（AC8）。
+     *
+     * <p>🔄 <b>PRD-018 批3 版式跟随（稿1 FP-9「只换图内版式：补双单位，共享账本自动带学生列」）</b>：
+     * ①单位词全线换轨 —— 表头「课时变动/剩余课时」→「时长变动/剩余」，数值一律带「小时」，
+     * 单绑账本再挂副显「（N 节）」（D1 v2.1 双单位）；共享账本每人每节时长不同 → <b>只按小时不折节</b>（D4 规则②）。
+     * ②共享账本单独出「学生」列（原来是挤在内容列前的 "名 · 内容" 前缀，家长看不清哪列是人）。
      */
     public Map<String, Object> exportLedgerPng(Long accountId) {
         BizTuitionAccount acc = requireOwnedAccount(accountId);
@@ -651,11 +656,14 @@ public class TuitionAccountService {
 
         List<Map<String, Object>> rows = buildLedgerRows(acc);
         String html = buildLedgerHtml(title, subjectLabel, acc, rows);
-        // 高度收边（同 FeedbackSheetService BUG-014 口径）：标题条+meta 行+表头+内边距 ≈ 124px，
-        // 每行 27px，内容列约 30 个中文字换行 → 长内容多算一行不裁切、短行不留白底。
+        // 高度收边（同 FeedbackSheetService BUG-014 口径）：标题条+meta 行+表头+内边距 ≈ 124px，每行 27px。
+        // 🔴 内容列每行字数随列数变：批3 加了「学生」列（共享本）与更宽的双单位列，内容列被挤窄 →
+        //    仍按 30 字/行估会低估行数、把长内容裁掉。宁可多算（底部留点白），绝不少算。
+        boolean sharedBook = links.size() > 1;
+        double perLine = sharedBook ? 18.0 : (links.size() == 1 ? 21.0 : 26.0);
         int rowsH = 0;
         for (Map<String, Object> row : rows) {
-            int lines = Math.max(1, (int) Math.ceil(str(row.get("content")).length() / 30.0));
+            int lines = Math.max(1, (int) Math.ceil(str(row.get("content")).length() / perLine));
             rowsH += lines * 27;
         }
         if (rows.isEmpty()) {
@@ -689,6 +697,7 @@ public class TuitionAccountService {
             .append("vertical-align:middle;word-wrap:break-word}");
         sb.append("table.grid td.c{text-align:center}");
         sb.append("table.grid td.r{text-align:right;font-weight:bold}");
+        sb.append("table.grid td .sub{font-size:10.5px;font-weight:normal;color:#7d928d}");
         sb.append("tr.in td{background:#f2fbf5;color:#15803d}");
         sb.append("tr.rev td{background:#fdf2f2;color:#b91c1c}");
         sb.append("</style></head><body><div class=\"wrap\">");
@@ -713,13 +722,22 @@ public class TuitionAccountService {
             .append(plain(remainAmount)).append("</b> 元</td>");
         sb.append("</tr></table>");
 
+        // 折节基准：单绑账本才有唯一的每节时长；共享本（绑定数≠1）传 null = 只按小时（D4 规则②）
+        List<BizStudentAccountLink> links = linksOf(acc.getId());
+        boolean shared = links.size() > 1;
+        BigDecimal perLesson = links.size() == 1 ? hoursPerLessonOf(links.get(0)) : null;
+
         sb.append("<table class=\"grid\">");
         sb.append("<tr>")
             .append("<th style=\"width:92px\">日期</th>")
-            .append("<th style=\"width:104px\">上课时间</th>")
-            .append("<th>内容</th>")
-            .append("<th style=\"width:88px\">课时变动</th>")
-            .append("<th style=\"width:88px\">剩余课时</th>")
+            .append("<th style=\"width:104px\">上课时间</th>");
+        if (shared) {
+            // 规则①：绑定数>1 才出学生列（纯数据驱动，无开关无特例入口）
+            sb.append("<th style=\"width:74px\">学生</th>");
+        }
+        sb.append("<th>内容</th>")
+            .append("<th style=\"width:").append(perLesson != null ? 106 : 88).append("px\">时长变动</th>")
+            .append("<th style=\"width:").append(perLesson != null ? 106 : 88).append("px\">剩余</th>")
             .append("</tr>");
         for (Map<String, Object> row : rows) {
             String type = String.valueOf(row.get("flowType"));
@@ -727,24 +745,37 @@ public class TuitionAccountService {
             sb.append("<tr").append(cls).append(">");
             sb.append("<td class=\"c\">").append(esc(str(row.get("date")))).append("</td>");
             sb.append("<td class=\"c\">").append(esc(str(row.get("timeRange")))).append("</td>");
-            sb.append("<td>").append(esc(contentCell(row))).append("</td>");
-            sb.append("<td class=\"r\">").append(esc(signed(row.get("hoursDelta")))).append("</td>");
-            sb.append("<td class=\"r\">").append(esc(plainObj(row.get("hoursAfter")))).append("</td>");
+            if (shared) {
+                // 手工行（充值/调整）不属于某个学生 → 留白，别硬安一个名字
+                sb.append("<td class=\"c\">").append(esc(str(row.get("studentName")))).append("</td>");
+            }
+            sb.append("<td>").append(esc(str(row.get("content")))).append("</td>");
+            sb.append("<td class=\"r\">").append(dualCell(row.get("hoursDelta"), perLesson, true)).append("</td>");
+            sb.append("<td class=\"r\">").append(dualCell(row.get("hoursAfter"), perLesson, false)).append("</td>");
             sb.append("</tr>");
         }
         if (rows.isEmpty()) {
-            sb.append("<tr><td class=\"c\" colspan=\"5\" style=\"color:#999;padding:14px\">（暂无记录）</td></tr>");
+            sb.append("<tr><td class=\"c\" colspan=\"").append(shared ? 6 : 5)
+                .append("\" style=\"color:#999;padding:14px\">（暂无记录）</td></tr>");
         }
         // 🔴 D16 明确：无合计行
         sb.append("</table></div></body></html>");
         return sb.toString();
     }
 
-    /** 共享账本的场次行在内容前挂学生名（规则①）。 */
-    private String contentCell(Map<String, Object> row) {
-        String name = str(row.get("studentName"));
-        String content = str(row.get("content"));
-        return name.isBlank() ? content : name + " · " + content;
+    /**
+     * 双单位数值格（D1 v2.1）：「−1.5 小时<span>（1 节）</span>」。
+     * {@code perLesson} 为 null（共享账本，基准不唯一）时只出小时，不折节（D4 规则②）。
+     */
+    private String dualCell(Object hours, BigDecimal perLesson, boolean signed) {
+        BigDecimal h = scale2(dec(hours));
+        String main = (signed ? signed(hours) : plain(h)) + " 小时";
+        if (perLesson == null || perLesson.signum() <= 0) {
+            return esc(main);
+        }
+        BigDecimal lessons = scale2(h.divide(perLesson, 6, RoundingMode.HALF_UP));
+        String sub = (signed && lessons.signum() > 0 ? "+" : "") + plain(lessons) + " 节";
+        return esc(main) + "<span class=\"sub\">（" + esc(sub) + "）</span>";
     }
 
     // ─────────────────────────── helpers ───────────────────────────
