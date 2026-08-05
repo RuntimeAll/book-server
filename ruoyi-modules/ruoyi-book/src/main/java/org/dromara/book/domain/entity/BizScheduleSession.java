@@ -75,4 +75,12 @@ public class BizScheduleSession extends BaseEntity {
 
     /** 备注 */
     private String note;
+
+    /**
+     * 这节课实际讲了什么（PRD-018 ③，≤200 字）。
+     *
+     * <p>写入口两处：PUT /session/{id}（改场次）与 POST /settle 的 item.content（结算时顺手记）。
+     * 台账「内容」列取值链 = 本列 → 课次标题 → 「正课」（{@code TuitionAccountService.contentOf}）。
+     */
+    private String content;
 }

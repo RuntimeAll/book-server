@@ -555,7 +555,11 @@ public class TuitionAccountService {
                 date = localDate(f.getCreateTime());
             }
             // ② 同日次序：手工行(0) 排当日最前（先交钱后上课，M7）；场次行(1) 按 start_time
-            int group = s == null ? 0 : 1;
+            // 🔴 P3：场次行按 flow_type 判（'2' 扣课 / '3' 冲正 = 场次行），不按「selectById 查得到」判——
+            //    场次被硬删（DELETE /session/{id} 是物理删）后 s==null，按旧口径这行会被当成手工行
+            //    窜到当日最前，台账行序错乱。流水类型是不会被删的事实。
+            boolean sessionRow = FLOW_DEDUCT.equals(f.getFlowType()) || FLOW_REVERSE.equals(f.getFlowType());
+            int group = sessionRow ? 1 : 0;
             String time = s == null ? "" : nvl(trimSec(s.getStartTime()));
             keyed.add(new Object[]{nvl(date), group, time, nvl(f.getFlowType()), f.getId() == null ? 0L : f.getId(), f, s});
         }
@@ -599,12 +603,30 @@ public class TuitionAccountService {
         return out;
     }
 
-    /** 台账「内容」列：场次行取课次标题（冲正带原因备注），手工行取备注。 */
+    /** 场次被硬删后，其扣课/冲正流水行的内容列兜底（P3；家长可见物，不写内部词）。 */
+    private static final String SESSION_GONE = "（场次已删除）";
+
+    /**
+     * 台账「内容」列。
+     *
+     * <p>🔴 <b>取值链（PRD-018 D5/G7）</b>：{@code session.content}（这节实际讲了什么）
+     * → 课次标题 {@code sessionTitle} → 「正课」兜底；手工行（充值/调整）取流水备注。
+     * 冲正行在内容后挂原因（如「一元一次方程（请假冲正）」）。
+     *
+     * <p>P3：场次被硬删（{@code DELETE /session/{id}} 物理删）时 s==null，但流水行还在 ——
+     * 扣课/冲正行给「{@value #SESSION_GONE}」兜底，别掉成空白列或串成手工行备注。
+     */
     private String contentOf(BizTuitionFlow f, BizScheduleSession s) {
+        boolean sessionRow = FLOW_DEDUCT.equals(f.getFlowType()) || FLOW_REVERSE.equals(f.getFlowType());
         if (s == null) {
-            return f.getNote();
+            if (!sessionRow) {
+                return f.getNote();
+            }
+            return (f.getNote() == null || f.getNote().isBlank())
+                ? SESSION_GONE : SESSION_GONE + "（" + f.getNote() + "）";
         }
-        String title = sessionTitle(s);
+        // content 优先：老师结算时记的「这节讲了什么」比课次标题更贴实际
+        String title = s.getContent() == null || s.getContent().isBlank() ? sessionTitle(s) : s.getContent().trim();
         if (FLOW_REVERSE.equals(f.getFlowType())) {
             return (f.getNote() == null || f.getNote().isBlank()) ? title : title + "（" + f.getNote() + "）";
         }
@@ -676,12 +698,19 @@ public class TuitionAccountService {
             sb.append("（").append(esc(subjectLabel)).append("）");
         }
         sb.append("</div>");
-        BigDecimal remain = nz(acc.getHoursRemain());
+        // 🔴 P4：「当前剩余」取<b>台账末行的推导值</b>，不再吃 acc.hours_remain 缓存 ——
+        //    缓存与逐行累加一旦漂移（历史裸 UPDATE / 手工改库），家长手上的单子会自相矛盾：
+        //    最后一行写着 8.5，头部却写 10.5。单一事实源 = 流水本身。
+        //    金额同口径取末行 amountAfter（AC9：导出金额 = 逐行派生后求和，不是 余额×时薪 再算一次）。
+        BigDecimal remain = rows.isEmpty() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+            : scale2(dec(rows.get(rows.size() - 1).get("hoursAfter")));
+        BigDecimal remainAmount = rows.isEmpty() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+            : scale2(dec(rows.get(rows.size() - 1).get("amountAfter")));
         sb.append("<table class=\"meta\"><tr>");
         sb.append("<td>单价 <b>").append(plain(nz(acc.getPricePerHour()))).append("</b> 元/小时</td>");
         sb.append("<td>截至 <b>").append(LocalDate.now()).append("</b></td>");
         sb.append("<td>当前剩余 <b>").append(plain(remain)).append("</b> 小时 · <b>")
-            .append(plain(scale2(remain.multiply(nz(acc.getPricePerHour()))))).append("</b> 元</td>");
+            .append(plain(remainAmount)).append("</b> 元</td>");
         sb.append("</tr></table>");
 
         sb.append("<table class=\"grid\">");

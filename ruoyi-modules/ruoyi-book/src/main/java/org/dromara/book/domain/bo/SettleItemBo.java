@@ -24,4 +24,12 @@ public class SettleItemBo {
 
     /** 实际上课时间备注（如「09:05-10:40」），写入扣课流水 note。 */
     private String timeNote;
+
+    /**
+     * 这节课实际讲了什么（PRD-018 ③，≤200 字，可选）。
+     *
+     * <p>结算时顺手记 → 写进 {@code session.content}，台账「内容」列优先取它
+     * （content → 课次标题 → 「正课」）。不传 = 不动原值。
+     */
+    private String content;
 }

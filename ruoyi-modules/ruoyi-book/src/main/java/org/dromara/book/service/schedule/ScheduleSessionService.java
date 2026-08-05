@@ -2,6 +2,7 @@ package org.dromara.book.service.schedule;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.ConflictCheckBo;
 import org.dromara.book.domain.bo.SessionBatchBo;
@@ -40,8 +41,8 @@ import java.util.Objects;
 /**
  * 排课 Service（PRD-C-213 /teacher/schedule/session + calendar + stat + prep/todo）。
  *
- * <p>batch+autoBind、conflict-check（老师/学生撞场）、leave/cancel 顺延（契约§五-2，locked 跳过、
- * overflow 提示）、改期不触发顺延、mark-done/lock/unlock、14 天细备窗口。
+ * <p>batch+autoBind、conflict-check（老师/学生撞场）、leave/cancel（🔄 PRD-018 D6 <b>顺延已删</b>，
+ * 只改本场状态 + 释放课次回池 M8）、销假 revoke-leave、改期、mark-done/lock/unlock、14 天细备窗口。
  *
  * @author backend-dev
  */
@@ -258,17 +259,27 @@ public class ScheduleSessionService {
         return r;
     }
 
-    // ─────────────────────── 顺延（leave/cancel） ───────────────────────
+    // ─────────────────────── 请假 / 取消 / 销假 ───────────────────────
 
     /**
-     * 请假/取消 + 触发顺延（契约§五-2）+ <b>结算冲正</b>（PRD-015 AC6）。newStatus='2' 请假 / '3' 取消。
+     * 请假/取消（🔄 <b>PRD-018 D6：自动顺延已整段删除</b>）+ <b>结算冲正</b>（PRD-015 AC6）。
+     * newStatus='2' 请假 / '3' 取消。
      *
-     * <p>R1b BUG-003 防重入闸：仅「已排」('0') 场次可操作——已取消/已上场次重复触发会把顺延链再跑一遍腐蚀数据。
+     * <p>🔴 <b>D6 删顺延</b>（PRD §2 减法清单，「标题错位事故元凶」）：取消/请假<b>只改本场状态</b>，
+     * 绝不动其它场次的 plan_lesson_id。返回体 {@code deferred}/{@code overflow} 保留为空值
+     * （FE/MCP 契约兼容位，批 3/4 各端跟随后可删）。
+     *
+     * <p>🔴 <b>M8 补位</b>：置 '2'/'3' 时把本场 {@code plan_lesson_id} <b>置空</b>——课次释放回池，
+     * 之后 {@code batch(autoBind)} / {@code rebindPlan} 能重新排到它（两处 bound/occupied 口径都按
+     * 「plan_lesson_id 非空」取，不看场次状态，不置空就等于这一课次被永久跳过）。
+     * 原顺延块里唯一的 overflow 提示由「计划详情 unscheduledLessons」接住
+     * （{@code CoursePlanService.detail}）。
+     * ⚠️ 代价：销假恢复时原课次绑定<b>无法还原</b>（可能已被排给别的场次），需要时手工改绑。
+     *
+     * <p>R1b BUG-003 防重入闸：仅「已排」('0') 场次可操作。
      * 🔴 PRD-015 放行一类：<b>已结算</b>（session_status='1' 且 settle_status='1'）的场次可改请假/取消，
-     * 此时同事务内走冲正（返还该场实扣课时课费 + settle_status='2' + 空反馈壳删除）。
+     * 此时同事务内走冲正（返还该场实扣课时课费 + settle_status='2'）。
      * 冲完 session_status 变 '2'/'3'、settle_status 变 '2' → 再点一次被本闸挡住，绝不双冲（G4 反性自检）。
-     *
-     * <p>🔴 顺延改绑（下方 lessonQueue 段）与归档联动取消<b>不产生任何流水</b>：钱只在显式结算/显式冲正动。
      */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> leaveOrCancel(Long sessionId, String newStatus) {
@@ -282,66 +293,81 @@ public class ScheduleSessionService {
         Map<String, Object> reversal = settlementService.reverseIfSettled(event,
             "2".equals(newStatus) ? "请假冲正" : "取消冲正");
         event.setSessionStatus(newStatus);
-        sessionMapper.updateById(event);
-
-        List<Map<String, Object>> deferred = new ArrayList<>();
-        List<String> overflow = new ArrayList<>();
-
+        // M8：课次释放回池（本场不再占着它），备课态随之归零
         Long freedLesson = event.getPlanLessonId();
-        if (freedLesson != null && event.getPlanId() != null) {
-            // 范围锁：该对象该计划、日期在其后、status='0'，按日期+开始时间排序
-            List<BizScheduleSession> future = sessionMapper.selectList(new LambdaQueryWrapper<BizScheduleSession>()
-                    .eq(BizScheduleSession::getTargetType, event.getTargetType())
-                    .eq(BizScheduleSession::getTargetId, event.getTargetId())
-                    .eq(BizScheduleSession::getPlanId, event.getPlanId())
-                    .eq(BizScheduleSession::getSessionStatus, "0")
-                    .gt(BizScheduleSession::getSessionDate, event.getSessionDate()))
-                .stream()
-                .sorted(Comparator.comparing(BizScheduleSession::getSessionDate)
-                    .thenComparing(x -> x.getStartTime() == null ? "" : x.getStartTime()))
-                .toList();
-
-            // 非锁定场次 = 可续排槽位；锁定场次保持原课次并被跳过
-            List<BizScheduleSession> nonLocked = future.stream()
-                .filter(x -> !"1".equals(x.getLessonLocked())).toList();
-
-            // lessonQueue = [freedLesson] + 各非锁定场次原课次
-            List<Long> lessonQueue = new ArrayList<>();
-            lessonQueue.add(freedLesson);
-            for (BizScheduleSession s : nonLocked) lessonQueue.add(s.getPlanLessonId());
-
-            // R1b S3 遗留补丁：顺延换绑后 prep_status 按新课次包状态回填（无包/置空 → '0'）
-            Map<Long, String> packStatus = lessonPackStatus(lessonQueue);
-
-            for (int i = 0; i < nonLocked.size(); i++) {
-                BizScheduleSession s = nonLocked.get(i);
-                Long newLesson = lessonQueue.get(i);
-                if (!Objects.equals(s.getPlanLessonId(), newLesson)) {
-                    s.setPlanLessonId(newLesson);
-                    s.setPrepStatus(newLesson == null ? "0" : packStatus.getOrDefault(newLesson, "0"));
-                    sessionMapper.updateById(s);
-                    Map<String, Object> d = new LinkedHashMap<>();
-                    d.put("sessionId", String.valueOf(s.getId()));
-                    d.put("newLessonId", newLesson == null ? null : String.valueOf(newLesson));
-                    deferred.add(d);
-                }
-            }
-            // 末位课次悬空 → overflow
-            Long leftover = lessonQueue.get(lessonQueue.size() - 1);
-            if (leftover != null) {
-                BizCoursePlanLesson ll = lessonMapper.selectById(leftover);
-                if (ll != null) {
-                    overflow.add("第" + ll.getLessonSeq() + "次·" + (ll.getTitle() == null ? "" : ll.getTitle()) + " 需补排");
-                }
-            }
+        if (freedLesson != null) {
+            event.setPlanLessonId(null);
+            event.setPrepStatus("0");
+        }
+        sessionMapper.updateById(event);
+        if (freedLesson != null) {
+            // 🔴 全局 updateStrategy=NOT_NULL（common-mybatis.yml:32）→ updateById 对 null 字段
+            //    直接跳过，setPlanLessonId(null) 一个字都写不进去（实测 G6-e 挂在这）。
+            //    置 NULL 必须走 UpdateWrapper 显式 set。
+            sessionMapper.update(null, new LambdaUpdateWrapper<BizScheduleSession>()
+                .eq(BizScheduleSession::getId, event.getId())
+                .set(BizScheduleSession::getPlanLessonId, null));
         }
 
         Map<String, Object> r = new LinkedHashMap<>();
-        r.put("deferred", deferred);
-        r.put("overflow", overflow);
+        // 🔄 D6：顺延已死，两个键恒空（契约兼容位）
+        r.put("deferred", new ArrayList<>());
+        r.put("overflow", new ArrayList<>());
+        // M8 additive：本场释放掉的课次 id（FE 可提示「该课次已回池可重新排」）
+        r.put("freedLessonId", freedLesson == null ? null : String.valueOf(freedLesson));
         // PRD-015 additive：冲正明细 {hours, amount, deletedShells, keptShells}；未结算场次为 null
         r.put("reversal", reversal);
         return r;
+    }
+
+    /**
+     * 销假（PRD-018 AC5 / G5）：把<b>请假('2') / 取消('3')</b> 的场次一键恢复成「已上 + 未结」，
+     * 并删掉该场的 '2' 扣课与 '3' 冲正流水对 → uk(session_id, flow_type) 释放，可正常重新结算。
+     *
+     * <p>🔴 <b>余额不变</b>：流水对净额恒为零（冲正 = 扣课取负），删掉两行 hours_remain 仍是对的
+     * （见 {@link SettlementService#dropSessionFlows}）。
+     *
+     * <p>幂等/守卫：非请假非取消（'0' 已排 / '1' 已上）→ 友好 400，重复销假第二次即被此闸挡住；
+     * 已结算未冲正的场次（有 '2' 无 '3'）→ 400，避免删掉扣课行凭空还钱。
+     *
+     * <p>⚠️ 不恢复 plan_lesson_id：请假时课次已释放回池（M8），可能已被排给别的场次，需要时手工改绑。
+     *
+     * @return {sessionId, sessionStatus, settleStatus, removedFlows, freedLessonRestored:false}
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> revokeLeave(Long sessionId) {
+        BizScheduleSession s = requireOwnedSession(sessionId);
+        String st = s.getSessionStatus();
+        if (!"2".equals(st) && !"3".equals(st)) {
+            throw new ServiceException("该场次未请假/取消，无需销假（当前状态："
+                + ("0".equals(st) ? "已排" : "1".equals(st) ? "已上" : st) + "）", 400);
+        }
+        int removed = settlementService.dropSessionFlows(s.getId());
+        s.setSessionStatus("1");
+        s.setSettleStatus("0");
+        sessionMapper.updateById(s);
+
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("sessionId", String.valueOf(s.getId()));
+        r.put("sessionStatus", s.getSessionStatus());
+        r.put("settleStatus", s.getSettleStatus());
+        r.put("removedFlows", removed);
+        // 课次绑定不还原（M8 释放回池后可能已被别的场次占用），FE 据此提示需要时手工改绑
+        r.put("planLessonId", s.getPlanLessonId() == null ? null : String.valueOf(s.getPlanLessonId()));
+        return r;
+    }
+
+    /** 场次归属校验（不存在/无权同一文案，防存在性探测；同 SettlementService 口径）。 */
+    private BizScheduleSession requireOwnedSession(Long id) {
+        BizScheduleSession s = sessionMapper.selectById(id);
+        if (s == null) {
+            throw new ServiceException("场次不存在或无权访问", 403);
+        }
+        Long uid = LoginHelper.getUserId();
+        if (uid != null && s.getCreateBy() != null && !uid.equals(s.getCreateBy())) {
+            throw new ServiceException("场次不存在或无权访问", 403);
+        }
+        return s;
     }
 
     // ─────────────────────── 换绑计划（R1a·简版真做） ───────────────────────
@@ -441,7 +467,10 @@ public class ScheduleSessionService {
         sessionMapper.updateById(s);
     }
 
-    /** 通用改：改期(改时间不触发顺延)/note/rebind(改绑只改本场，plan_id 随课次同步 = R1b S4)。 */
+    /**
+     * 通用改：改期/note/content/rebind(改绑只改本场，plan_id 随课次同步 = R1b S4)。
+     * 🔄 PRD-018：改期<b>不触发顺延</b>（顺延本身已删）；新增 content = 这节课实际讲了什么（≤200 字）。
+     */
     public void update(Long id, SessionUpdateBo bo) {
         BizScheduleSession s = require(id);
         // trim 口径同批量排课（PRD-015 顺手修）
@@ -449,6 +478,13 @@ public class ScheduleSessionService {
         if (bo.getStart() != null) s.setStartTime(bo.getStart());
         if (bo.getEnd() != null) s.setEndTime(bo.getEnd());
         if (bo.getNote() != null) s.setNote(bo.getNote());
+        // PRD-018 ③：传空串 = 清空（老师撤回写错的内容）；超 200 字截断，别让 1406 把整次改期连坐
+        boolean clearContent = false;
+        if (bo.getContent() != null) {
+            String c = bo.getContent().trim();
+            clearContent = c.isEmpty();
+            s.setContent(clearContent ? null : (c.length() > 200 ? c.substring(0, 200) : c));
+        }
         if (bo.getSubject() != null) s.setSubject(EduTermUtil.normalizeSubject(bo.getSubject()));
         if (bo.getPlanLessonId() != null) {
             // R1b S4：改绑课次时由 lesson 反查 plan_id 同步，杜绝 plan_lesson_id 与 plan_id 漂移
@@ -464,6 +500,12 @@ public class ScheduleSessionService {
             s.setPrepStatus(pack == null ? "0" : pack.getStatus());
         }
         sessionMapper.updateById(s);
+        if (clearContent) {
+            // 同 leaveOrCancel：全局 updateStrategy=NOT_NULL，置 NULL 必须走 UpdateWrapper
+            sessionMapper.update(null, new LambdaUpdateWrapper<BizScheduleSession>()
+                .eq(BizScheduleSession::getId, s.getId())
+                .set(BizScheduleSession::getContent, null));
+        }
     }
 
     private BizScheduleSession require(Long id) {
@@ -615,6 +657,8 @@ public class ScheduleSessionService {
         m.put("subjectLabel", EduTermUtil.subjectLabel(subj));
         m.put("externalTitle", s.getExternalTitle());
         m.put("note", s.getNote());
+        // PRD-018 ③ additive：这节课实际讲了什么（台账「内容」列首选取值）
+        m.put("content", s.getContent());
         m.put("createTime", s.getCreateTime());
         m.put("updateTime", s.getUpdateTime());
         return m;

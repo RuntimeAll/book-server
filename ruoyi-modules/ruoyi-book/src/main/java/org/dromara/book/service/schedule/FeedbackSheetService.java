@@ -364,7 +364,11 @@ public class FeedbackSheetService {
 
     /**
      * 计划内下一个反馈序号（D7）= 该计划下现有反馈的 max(lesson_seq)+1，全为空时按行数+1。
-     * 🔴 与 {@code SettlementService.createFeedbackShell} 同口径（结算自动建壳走那条，人工建单走这条）。
+     *
+     * <p>🔄 PRD-018 D10（2026-08-05）：结算自动建壳那条路已撤（{@code SettlementService} 不再写反馈域），
+     * <b>本方法成为 lesson_seq 的唯一写入处</b>（人工建单不传序号时兜底）。
+     * ⚠️ 挂账：PRD §8/G9③ 提出「lesson_seq 改读取时按 lesson_date 实时排」，属反馈域读侧改造，
+     * 本批（批2）未动 —— 见 progress.md 批2 存疑项。
      */
     private int nextLessonSeq(Long planId) {
         int max = 0;

@@ -100,6 +100,17 @@ public class ScheduleSessionController {
         return R.ok(sessionService.leaveOrCancel(id, "3"));
     }
 
+    /**
+     * 销假（PRD-018 AC5/G5）：请假('2')/取消('3') 的场次一键恢复「已上 + 未结」，
+     * 并删掉该场 '2' 扣课 + '3' 冲正流水对（净额为零 → 余额不变）→ 幂等键释放，可重新结算。
+     * 🔴 非请假/取消的场次给友好 400（重复销假第二次即被挡）。
+     */
+    @SaCheckLogin
+    @PostMapping("/session/{id}/revoke-leave")
+    public R<Map<String, Object>> revokeLeave(@PathVariable Long id) {
+        return R.ok(sessionService.revokeLeave(id));
+    }
+
     @SaCheckLogin
     @PostMapping("/session/{id}/mark-done")
     public R<Void> markDone(@PathVariable Long id) {
@@ -148,8 +159,11 @@ public class ScheduleSessionController {
     }
 
     /**
-     * 一键结算（AC5）：{items:[{sessionId,hours?,timeNote?}], genFeedback}。
-     * 逐场独立事务 → {settled, feedbackSheetIds, skipped:[{sessionId,reason}]}。
+     * 一键结算（AC5）：{items:[{sessionId, hours?, timeNote?, content?}]}。
+     * 逐场独立事务 → {settled, feedbackSheetIds(🔄 恒空), skipped:[{sessionId,reason}]}。
+     *
+     * <p>🔄 PRD-018 D10：结算<b>不再建反馈壳</b>（入参 genFeedback 保留但忽略）；
+     * 无账本/账本停用<b>不报错</b>，场次照常标已上、扣课跳过进 skipped 待补扣。
      */
     @SaCheckLogin
     @PostMapping("/settle")

@@ -19,8 +19,10 @@ public class SettleBo {
     private List<SettleItemBo> items;
 
     /**
-     * 是否同时生成反馈壳（D12，弹窗默认勾选）。
-     * 🔴 不传 = true（与 FE 默认勾选一致）；仅显式 false 才不建壳。
+     * ⛔ <b>已废弃且被忽略</b>（PRD-018 D10 域间解耦，2026-08-05）：结算不再副作用式建反馈壳，
+     * 反馈单独立建单。字段保留只为让旧 FE/H5/机器人继续传值时<b>不报错</b>（M5 兼容），
+     * 传 true / false / 不传，行为完全一致。批 3/4 各端跟随后可删。
      */
+    @Deprecated
     private Boolean genFeedback;
 }

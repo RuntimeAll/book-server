@@ -46,15 +46,11 @@ public class CoursePlanService {
     private final BizClassMapper classMapper;
     private final ScheduleRenderUtil renderUtil;
     private final PaperSlotService paperSlotService;
-    /** PRD-015：学科归属校验（学生×学科账户 = 学科绑定的物理载体，D3）。 */
-    private final TuitionAccountService accountService;
 
     @Transactional(rollbackFor = Exception.class)
     public Long upsertPlan(CoursePlanBo bo) {
         BizCoursePlan p = bo.getId() == null ? new BizCoursePlan() : planMapper.selectById(bo.getId());
         if (p == null) throw new ServiceException("计划不存在");
-        // PRD-015 学科归属校验用：记录改动前的学科（不变则不重复校验，老计划照旧可编辑）
-        String oldSubject = p.getSubject();
         if (bo.getName() != null) p.setName(bo.getName());
         if (bo.getTargetType() != null) p.setTargetType(bo.getTargetType());
         if (bo.getTargetId() != null) p.setTargetId(bo.getTargetId());
@@ -79,30 +75,17 @@ public class CoursePlanService {
                 throw new ServiceException("建计划必须指定归属对象 targetId（S1）", 400);
             }
             requireTarget(p.getTargetType(), p.getTargetId());
-            requireSubjectAccount(p, oldSubject);
             planMapper.insert(p);
         } else {
-            requireSubjectAccount(p, oldSubject);
             planMapper.updateById(p);
         }
         return p.getId();
     }
 
-    /**
-     * PRD-015 学科归属校验（D3「开户即绑定学科」）：学生对象的计划，其学科必须已开通课时账户。
-     *
-     * <p>只在<b>学科真的变了</b>（建计划 / 改学科）时校验——不变则放行，存量老计划照旧可编辑。
-     * 🔴 班级（target_type='1'）跳过：班课收费模型未拍，账户仅学生对象（PRD-015 §9 边界）。
-     */
-    private void requireSubjectAccount(BizCoursePlan p, String oldSubject) {
-        if ("1".equals(p.getTargetType())) return;
-        String subject = p.getSubject();
-        if (subject == null || subject.isBlank()) return;
-        if (subject.equals(oldSubject)) return;
-        if (!accountService.hasAccount(p.getTargetId(), subject)) {
-            throw new ServiceException("先为学生开通" + EduTermUtil.subjectLabel(subject) + "账户", 400);
-        }
-    }
+    // 🔄 requireSubjectAccount 已整段删除（PRD-018 D10 域间解耦，2026-08-05）：
+    //    「建计划前必须先开课时账户」是收费域对教务域的硬闸，违反 D10 ①「任一域缺失，其余三域
+    //    必须能独立完成自己的写入」。无账户学生现在可自由建计划/改学科；钱在结算那一步单独补
+    //    （SettlementService.settleOne 无账本 → 标已上待补扣）。
 
     /** S1：归属对象存在性校验。 */
     private void requireTarget(String targetType, Long targetId) {
@@ -153,7 +136,7 @@ public class CoursePlanService {
         return m;
     }
 
-    /** 详情含 lessons 全量。 */
+    /** 详情含 lessons 全量 + 未排课次数（PRD-018 M8）。 */
     public Map<String, Object> detail(Long id) {
         BizCoursePlan p = planMapper.selectById(id);
         if (p == null) throw new ServiceException("计划不存在");
@@ -164,7 +147,30 @@ public class CoursePlanService {
         for (BizCoursePlanLesson l : lessons) ls.add(lessonVo(l, p.getDefaultPaperSlots()));
         m.put("lessons", ls);
         m.put("lessonCount", ls.size());
+        // 🔄 PRD-018 M8 补位：删顺延后原 overflow 提示（「第 N 次课需补排」）由本字段接住
+        m.put("unscheduledLessons", countUnscheduled(id, lessons));
         return m;
+    }
+
+    /**
+     * 未排课次数（M8）：该计划下<b>没有任何场次绑着</b>的课次数，含请假/取消时被释放回池的。
+     *
+     * <p>🔴 口径与 {@code ScheduleSessionService.batch} 的 autoBind bound 集合<b>严格一致</b>——
+     * 「plan_id 命中 && plan_lesson_id 非空」即算占用，不看场次状态。两处不一致的话，这里报的数
+     * 就会和 autoBind 实际能排到的课次对不上（M8 的老坑正是「看起来还有课次，autoBind 却永远跳过」）。
+     * 请假/取消已在 {@code leaveOrCancel} 里把 plan_lesson_id 置空 → 天然回池被计入本数。
+     */
+    private int countUnscheduled(Long planId, List<BizCoursePlanLesson> lessons) {
+        if (lessons == null || lessons.isEmpty()) return 0;
+        List<Long> bound = sessionMapper.selectList(new LambdaQueryWrapper<BizScheduleSession>()
+                .eq(BizScheduleSession::getPlanId, planId)
+                .isNotNull(BizScheduleSession::getPlanLessonId))
+            .stream().map(BizScheduleSession::getPlanLessonId).toList();
+        int n = 0;
+        for (BizCoursePlanLesson l : lessons) {
+            if (!bound.contains(l.getId())) n++;
+        }
+        return n;
     }
 
     /**
