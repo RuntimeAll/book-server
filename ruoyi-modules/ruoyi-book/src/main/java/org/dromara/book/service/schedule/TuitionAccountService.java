@@ -563,8 +563,8 @@ public class TuitionAccountService {
             .comparing((Object[] k) -> (String) k[0])                 // 业务日期
             .thenComparingInt(k -> (Integer) k[1])                    // 手工行在当日最前
             .thenComparing(k -> (String) k[2])                        // 场次起始时间
-            .thenComparing(k -> (String) k[3])                        // '2' 扣课 在 '3' 冲正 前
-            .thenComparingLong(k -> (Long) k[4]));                    // 同日多条手工行按 id 升序
+            .thenComparingLong(k -> (Long) k[4])                      // 同日多条手工行按 id 升序（§4；同场次 '2' 先插 '3' 后插，id 天然使 '2' 在前）
+            .thenComparing(k -> (String) k[3]));                      // flowType 纯兜底
 
         List<Map<String, Object>> out = new ArrayList<>();
         BigDecimal runHours = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);

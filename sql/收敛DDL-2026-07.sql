@@ -1100,6 +1100,7 @@ CREATE TABLE `biz_schedule_session` (
   `prep_status` char(1) NOT NULL DEFAULT '0' COMMENT '场次备课态:0未备/1备课中/2已备好',
   `lesson_locked` char(1) NOT NULL DEFAULT '0' COMMENT '内容锁定:0否/1是(顺延跳过锁定场次)',
   `external_title` varchar(100) DEFAULT NULL COMMENT '外部占位标题',
+  `content` varchar(200) DEFAULT NULL COMMENT '这节课实际讲了什么 (PRD-018 D5)',
   `note` varchar(200) DEFAULT NULL COMMENT '备注',
   `create_dept` bigint DEFAULT NULL COMMENT '创建部门',
   `create_by` bigint DEFAULT NULL COMMENT '归属老师(sys_user.id;老师撞场口径按此)',
@@ -1411,40 +1412,65 @@ ALTER TABLE `biz_course_plan_lesson`
 -- 🔴 prod RDS(ai_lesson_prep) 必须**先于 BE 镜像**手工同步，否则教务域整体 500。
 -- ============================================================
 
--- ① 账户（开户即学生×学科绑定，D2/D3；余额可负=欠费不拦截）
+-- ① 账本（🔄 PRD-018 v3 2026-08-05：蜕变为独立「账本」实体，学生经 link 表绑定；
+--    student_id/subject 放宽 NULL=退役中老绑定（批4 四线+prod 全换新 jar 后删列并删 uk_student_subject）；
+--    lesson_price/amount_remain 同批退役；一本账一个时薪 price_per_hour）
 CREATE TABLE IF NOT EXISTS `biz_tuition_account` (
-  `id`            bigint        NOT NULL COMMENT '雪花',
-  `student_id`    bigint        NOT NULL COMMENT 'biz_student.id',
-  `subject`       varchar(20)   NOT NULL COMMENT '学科字典码 biz_edu_subject',
-  `lesson_price`  decimal(10,2) NOT NULL DEFAULT 0 COMMENT '每课时单价(元)',
-  `hours_remain`  decimal(7,2)  NOT NULL DEFAULT 0 COMMENT '剩余课时(可负=欠费;两位小数,D5 实扣 0.67 等)',
-  `amount_remain` decimal(10,2) NOT NULL DEFAULT 0 COMMENT '剩余金额(元)',
-  `status`        char(1)       NOT NULL DEFAULT '0' COMMENT '0正常/1停用',
-  `note`          varchar(255)  DEFAULT NULL,
-  `create_by`     bigint        DEFAULT NULL,
-  `create_time`   datetime      DEFAULT NULL,
-  `update_time`   datetime      DEFAULT NULL,
+  `id`             bigint         NOT NULL COMMENT '雪花',
+  `name`           varchar(30)    DEFAULT NULL COMMENT '账本标签(纯展示,如「俊羽家」) PRD-018',
+  `student_id`     bigint         DEFAULT NULL COMMENT '(退役中)老绑定 biz_student.id',
+  `subject`        varchar(20)    DEFAULT NULL COMMENT '(退役中)老绑定学科字典码',
+  `lesson_price`   decimal(10,2)  NOT NULL DEFAULT 0 COMMENT '(退役中)每课时单价(元),新码不写',
+  `price_per_hour` decimal(10,4)  DEFAULT NULL COMMENT '时薪(元/小时) 233.3333 PRD-018 M9',
+  `hours_remain`   decimal(7,2)   NOT NULL DEFAULT 0 COMMENT '剩余小时(纯缓存,可由流水全量重算;可负=欠费)',
+  `amount_remain`  decimal(10,2)  NOT NULL DEFAULT 0 COMMENT '(退役中)剩余金额,新码不写=金额全派生',
+  `status`         char(1)        NOT NULL DEFAULT '0' COMMENT '0正常/1停用',
+  `note`           varchar(255)   DEFAULT NULL,
+  `create_by`      bigint         DEFAULT NULL,
+  `create_time`    datetime       DEFAULT NULL,
+  `update_time`    datetime       DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_student_subject` (`student_id`,`subject`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课时课费账户(学生x学科, PRD-015; 开户=学科绑定)';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课时账本(PRD-015 建 / PRD-018 v3 独立实体化)';
 
--- ② 流水（充值/扣课/冲正/调整一张账，D1；uk(session_id,flow_type)=防重复扣/重复冲）
+-- ①b 学生绑账本（PRD-018 v3 核心：学生×学科 → 账本 n:1；一本账一个时薪，「节」按本人 hours_per_lesson 换算）
+CREATE TABLE IF NOT EXISTS `biz_student_account_link` (
+  `id`                bigint       NOT NULL COMMENT '主键',
+  `student_id`        bigint       NOT NULL COMMENT '学生(教学对象)ID',
+  `subject`           varchar(30)  NOT NULL COMMENT '学科字典值',
+  `account_id`        bigint       NOT NULL COMMENT '账本ID',
+  `hours_per_lesson`  decimal(6,2) NOT NULL DEFAULT 1.00 COMMENT '每节时长(小时);俊羽1.50 好好1.00;必须>0(M1)',
+  `create_by`         bigint       DEFAULT NULL,
+  `create_time`       datetime     DEFAULT NULL,
+  `update_time`       datetime     DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_student_subject_link` (`student_id`,`subject`),
+  KEY `idx_account` (`account_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='学生×学科→账本绑定(PRD-018 v3)';
+
+-- ② 流水（充值/扣课/冲正/调整一张账，D1；uk(session_id,flow_type)=防重复扣/重复冲；
+--    🔄 PRD-018 2026-08-05：+occur_date(业务日期,台账排序键)/+amount_paid(实收冻结)/+rel_flow_id(transfer 对手方)；
+--    hours_after/amount_after/amount_delta 退役中，新码不写，批4 删列）
 CREATE TABLE IF NOT EXISTS `biz_tuition_flow` (
   `id`           bigint        NOT NULL,
   `account_id`   bigint        NOT NULL COMMENT 'biz_tuition_account.id',
   `flow_type`    char(1)       NOT NULL COMMENT '1充值/2扣课/3冲正/4调整',
-  `hours_delta`  decimal(7,2)  NOT NULL DEFAULT 0 COMMENT '课时增减(扣为负;两位小数=实扣课时)',
-  `amount_delta` decimal(10,2) NOT NULL DEFAULT 0 COMMENT '金额增减(扣为负)',
-  `hours_after`  decimal(7,2)  DEFAULT NULL COMMENT '本笔后剩余课时快照(台账"剩余"列,写入时定格)',
-  `amount_after` decimal(10,2) DEFAULT NULL COMMENT '本笔后剩余金额快照',
+  `occur_date`   date          DEFAULT NULL COMMENT '业务日期(台账排序键;批4 收紧 NOT NULL) PRD-018',
+  `hours_delta`  decimal(7,2)  NOT NULL DEFAULT 0 COMMENT '小时增减(扣为负;单位=小时 PRD-018 D1)',
+  `amount_delta` decimal(10,2) NOT NULL DEFAULT 0 COMMENT '(退役中)金额增减,新码不写',
+  `amount_paid`  decimal(10,2) DEFAULT NULL COMMENT '实收/冻结金额(充值调整=入参原样;扣课冲正=当时派生;与hours_delta同向) PRD-018 A1+B2',
+  `rel_flow_id`  bigint        DEFAULT NULL COMMENT '对手方流水ID(transfer 一对4调整行互指) PRD-018 M6',
+  `hours_after`  decimal(7,2)  DEFAULT NULL COMMENT '(退役中)剩余快照,新码不写=实时推导',
+  `amount_after` decimal(10,2) DEFAULT NULL COMMENT '(退役中)剩余金额快照,新码不写',
   `session_id`   bigint        DEFAULT NULL COMMENT '关联场次(扣课/冲正必填=幂等键)',
   `note`         varchar(255)  DEFAULT NULL,
   `create_by`    bigint        DEFAULT NULL,
-  `create_time`  datetime      DEFAULT NULL,
+  `create_time`  datetime      DEFAULT NULL COMMENT '纯审计,不参与台账排序',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_session_type` (`session_id`,`flow_type`),
-  KEY `idx_account_time` (`account_id`,`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课时课费流水(PRD-015; uk(session_id,flow_type)=防重复扣/重复冲)';
+  KEY `idx_account_time` (`account_id`,`create_time`),
+  KEY `idx_occur` (`account_id`,`occur_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='课时流水(PRD-015; PRD-018 小时本位+occur_date+amount_paid)';
 
 -- ③ 场次结算态（D4 只提醒不自动扣：过点未结进待结算清单，老师一键确认才动账）
 ALTER TABLE `biz_schedule_session`
