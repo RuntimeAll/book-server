@@ -288,18 +288,9 @@ public class TuitionAccountService {
         }
     }
 
-    /**
-     * 学生是否已绑定该学科账本（计划学科归属校验用，PRD-015 §9 班级跳过）。
-     * 🔴 bug 批 BUG-3/A：<b>停用账本不算开通</b>。签名不变，底层从账户表换成绑定表，调用方零改动。
-     */
-    public boolean hasAccount(Long studentId, String subject) {
-        BizStudentAccountLink l = findLink(studentId, subject);
-        if (l == null) {
-            return false;
-        }
-        BizTuitionAccount a = accountMapper.selectById(l.getAccountId());
-        return a != null && !STATUS_DISABLED.equals(a.getStatus());
-    }
+    // 🗑️ PRD-018 批4 删死代码 hasAccount(studentId, subject)：唯一调用方
+    // CoursePlanService.requireSubjectAccount 已随批2 D10 摘除建计划开户硬闸一并删除，
+    // 批2/批3 两轮复核确认零调用方。需要「是否绑本」判断走 findLink(...) != null。
 
     /**
      * 停用 / 启用账本（bug 批 BUG-3/A）。停用 = 该学科不再出现在建计划下拉、结算取不到账本；

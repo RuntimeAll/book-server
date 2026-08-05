@@ -173,6 +173,9 @@ public class SettlementService {
         m.put("accountStatus", any == null ? null : any.getStatus());
         // additive（PRD-018 D10）：'0' 未上待结 / '1' 已上待补扣（结算时无账本跳过了扣课）
         m.put("sessionStatus", s.getSessionStatus());
+        // additive（PRD-018 批4）：回显该场次已写的「这节讲了什么」——
+        // 二次结算/补扣时结算弹窗能带出上次写的内容，不必空起重写（批3 挂账 3）
+        m.put("content", s.getContent());
         return m;
     }
 
@@ -470,14 +473,20 @@ public class SettlementService {
 
     // ─────────────────────────── helpers ───────────────────────────
 
-    /** 场次归属校验（不区分不存在/无权，防存在性探测；同 TuitionAccountService 口径）。 */
+    /**
+     * 场次归属校验（不区分不存在/无权，防存在性探测；同 ScheduleSessionService 口径）。
+     *
+     * <p>🔴 PRD-018 批4 收紧：<b>{@code create_by IS NULL} 视为无权</b>（原先放行）。
+     * 归属未知的历史行不该被任意登录用户结算/改动；{@code uid == null}（内部无门禁口，
+     * 如异步导出线程无 SaToken 上下文）仍照旧放行。
+     */
     private BizScheduleSession requireOwnedSession(Long id) {
         BizScheduleSession s = sessionMapper.selectById(id);
         if (s == null) {
             throw new ServiceException("场次不存在或无权访问", 403);
         }
         Long uid = LoginHelper.getUserId();
-        if (uid != null && s.getCreateBy() != null && !uid.equals(s.getCreateBy())) {
+        if (uid != null && !uid.equals(s.getCreateBy())) {
             throw new ServiceException("场次不存在或无权访问", 403);
         }
         return s;

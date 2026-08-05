@@ -357,14 +357,19 @@ public class ScheduleSessionService {
         return r;
     }
 
-    /** 场次归属校验（不存在/无权同一文案，防存在性探测；同 SettlementService 口径）。 */
+    /**
+     * 场次归属校验（不存在/无权同一文案，防存在性探测；同 SettlementService 口径）。
+     *
+     * <p>🔴 PRD-018 批4 收紧：<b>{@code create_by IS NULL} 视为无权</b>（原先放行）。
+     * 归属未知的历史行不该被任意登录用户销假/改动；{@code uid == null}（内部无门禁口）仍照旧放行。
+     */
     private BizScheduleSession requireOwnedSession(Long id) {
         BizScheduleSession s = sessionMapper.selectById(id);
         if (s == null) {
             throw new ServiceException("场次不存在或无权访问", 403);
         }
         Long uid = LoginHelper.getUserId();
-        if (uid != null && s.getCreateBy() != null && !uid.equals(s.getCreateBy())) {
+        if (uid != null && !uid.equals(s.getCreateBy())) {
             throw new ServiceException("场次不存在或无权访问", 403);
         }
         return s;
