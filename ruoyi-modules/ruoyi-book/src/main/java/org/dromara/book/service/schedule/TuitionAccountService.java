@@ -373,7 +373,7 @@ public class TuitionAccountService {
         if (bo.getAmount() != null) {
             BigDecimal price = nz(acc.getPricePerHour());
             if (price.signum() <= 0) {
-                throw new ServiceException("该账本还没有设置时薪，无法按金额换算课时", 400);
+                throw new ServiceException("该账本还没有设置课时单价，无法按金额换算", 400);
             }
             return scale2(bo.getAmount().divide(price, 6, RoundingMode.HALF_UP));
         }
@@ -706,17 +706,35 @@ public class TuitionAccountService {
             : scale2(dec(rows.get(rows.size() - 1).get("hoursAfter")));
         BigDecimal remainAmount = rows.isEmpty() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
             : scale2(dec(rows.get(rows.size() - 1).get("amountAfter")));
-        sb.append("<table class=\"meta\"><tr>");
-        sb.append("<td>单价 <b>").append(plain(nz(acc.getPricePerHour()))).append("</b> 元/小时</td>");
-        sb.append("<td>截至 <b>").append(LocalDate.now()).append("</b></td>");
-        sb.append("<td>当前剩余 <b>").append(plain(remain)).append("</b> 小时 · <b>")
-            .append(plain(remainAmount)).append("</b> 元</td>");
-        sb.append("</tr></table>");
-
         // 折节基准：单绑账本才有唯一的每节时长；共享本（绑定数≠1）传 null = 只按小时（D4 规则②）
         List<BizStudentAccountLink> links = linksOf(acc.getId());
         boolean shared = links.size() > 1;
         BigDecimal perLesson = links.size() == 1 ? hoursPerLessonOf(links.get(0)) : null;
+
+        sb.append("<table class=\"meta\"><tr>");
+        // 🔴 D11：对外只有「课时」概念——单价一律「元/节」，禁「时薪/元/小时」。
+        //    单绑本 = 每节时长 × 内部计价参数；共享本逐绑定各报各的；零绑定不显示单价格。
+        if (!links.isEmpty()) {
+            StringBuilder price = new StringBuilder();
+            for (BizStudentAccountLink l : links) {
+                BigDecimal hpl = hoursPerLessonOf(l);
+                BigDecimal perLessonPrice = scale2(hpl.multiply(nz(acc.getPricePerHour())));
+                if (price.length() > 0) {
+                    price.append("　");
+                }
+                if (shared) {
+                    BizStudent st = studentMapper.selectById(l.getStudentId());
+                    price.append(esc(st == null ? "学生" + l.getStudentId() : st.getName())).append(" ");
+                }
+                price.append("每节 <b>").append(plain(hpl)).append("</b> 小时 · <b>")
+                    .append(plain(perLessonPrice)).append("</b> 元/节");
+            }
+            sb.append("<td>").append(price).append("</td>");
+        }
+        sb.append("<td>截至 <b>").append(LocalDate.now()).append("</b></td>");
+        sb.append("<td>当前剩余 <b>").append(plain(remain)).append("</b> 小时 · <b>")
+            .append(plain(remainAmount)).append("</b> 元</td>");
+        sb.append("</tr></table>");
 
         sb.append("<table class=\"grid\">");
         sb.append("<tr>")
