@@ -9,6 +9,7 @@ import org.dromara.book.domain.entity.BizCoursePlanLesson;
 import org.dromara.book.domain.entity.BizFeedbackSheet;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.domain.entity.BizStudent;
+import org.dromara.book.domain.entity.BizStudentAccountLink;
 import org.dromara.book.domain.entity.BizTuitionAccount;
 import org.dromara.book.domain.entity.BizTuitionFlow;
 import org.dromara.book.mapper.BizCoursePlanLessonMapper;
@@ -39,9 +40,17 @@ import java.util.Map;
  * 场次结算 Service（PRD-015 D4/D5/D12 + AC5/AC6，/teacher/schedule/settle**）。
  *
  * <p><b>一条线</b>（D1）：场次 = 交点。过点未结场次进「待结算」清单 → 老师一键确认 → 一次事务内
- * ①扣课流水（'2'，hours_delta=-实扣、amount_delta=-实扣×单价，含 after 快照）+ 更新余额
+ * ①扣课流水（'2'，hours_delta=-实扣小时、amount_paid=-实扣×时薪）+ 更新余额缓存
  * ②场次 session_status='1' + settle_status='1' ③按需建反馈壳（绑 session_id/plan_id，
  * lesson_seq=该计划现有反馈 max+1）。
+ *
+ * <p>🔄 <b>PRD-018 拍板 D-a（扣多少）</b>：默认实扣 = {@code link.hours_per_lesson}（与家长约定的计价单位），
+ * <b>不是</b> 场次起止时长——排课时段是日程，改期/拖拽/接送缓冲格子永不影响钱。
+ * {@code pendingRow} 带 {@code plannedHours}，与 {@link #settleOne} 走<b>同一个</b>
+ * {@link #plannedHours} 函数算出，FE/机器人默认值只认它（L4）；settle item 的 hours 参数保留人工覆盖。
+ *
+ * <p>🔄 <b>拍板 B2（历史金额冻结）</b>：扣课/冲正行把结算当时派生的金额写进 {@code flow.amount_paid}，
+ * 之后改时薪不重算历史。冲正行 {@code occur_date} = 所冲场次日期（不是「今天」，M4）。
  *
  * <p><b>只提醒不自动扣</b>（D4）：本类<b>没有任何定时任务</b>，pending 是读时查询；扣费唯一触发点 =
  * {@link #settle(SettleBo)}。改期、批量排课、归档联动取消（{@code ScheduleTargetService.cancelFutureSessions}
@@ -64,9 +73,6 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class SettlementService {
-
-    /** 默认实扣课时（D5：一场一课时）。 */
-    private static final BigDecimal DEFAULT_HOURS = BigDecimal.ONE;
 
     private final BizScheduleSessionMapper sessionMapper;
     private final BizCoursePlanMapper planMapper;
@@ -122,9 +128,11 @@ public class SettlementService {
     /** 待结算一行（键名对齐 FE 契约 PendingSettlementVO；subjectLabel 为 additive 展示字段）。 */
     private Map<String, Object> pendingRow(BizScheduleSession s) {
         String subject = resolveSubject(s);
-        BizTuitionAccount any = findAnyAccount(s.getTargetId(), subject);
+        BizStudentAccountLink link = accountService.findLink(s.getTargetId(), subject);
+        BizTuitionAccount any = link == null ? null : accountMapper.selectById(link.getAccountId());
         boolean disabled = any != null && TuitionAccountService.STATUS_DISABLED.equals(any.getStatus());
         BizTuitionAccount acc = disabled ? null : any;
+        BigDecimal hpl = accountService.hoursPerLessonOf(link);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("sessionId", String.valueOf(s.getId()));
         m.put("date", String.valueOf(s.getSessionDate()));
@@ -134,12 +142,28 @@ public class SettlementService {
         m.put("subject", subject);
         m.put("subjectLabel", EduTermUtil.subjectLabel(subject));
         m.put("planLessonTitle", lessonTitle(s.getPlanLessonId()));
-        // 🔴 无账户 = null（不是 0）：FE 据此提示「先开户」，别显示成 0 元误导
-        m.put("price", acc == null ? null : num(acc.getLessonPrice()));
+        // 🔴 无账本 = null（不是 0）：FE 据此提示「先开户」，别显示成 0 元误导
+        // 🔄 M5 过渡兼容：price 仍是「元/节」派生值 = 时薪 × 每节时长；新字段 pricePerHour 是时薪
+        m.put("price", acc == null ? null : num(scale2(nz(acc.getPricePerHour()).multiply(hpl))));
+        m.put("pricePerHour", acc == null ? null : num(nz(acc.getPricePerHour())));
+        m.put("hoursPerLesson", link == null ? null : num(hpl));
+        // 🔴 L4：预计实扣，与 settleOne 同一个函数算出——FE/机器人默认值只认它，杜绝「看到的预扣≠真实扣款」
+        m.put("plannedHours", num(plannedHours(link)));
+        m.put("plannedAmount", acc == null ? null
+            : num(scale2(plannedHours(link).multiply(nz(acc.getPricePerHour())))));
+        m.put("accountId", any == null ? null : String.valueOf(any.getId()));
         // additive（bug 批 BUG-3/A）：null=没开户 / '0'=在用 / '1'=已停用——
         // 让 FE 把「没开户」和「停用了」两种 price=null 说清楚，别一律劝人去开户
         m.put("accountStatus", any == null ? null : any.getStatus());
         return m;
+    }
+
+    /**
+     * 预计实扣小时（拍板 D-a，<b>settleOne 与 pendingRow 唯一共用口径</b>）= 该绑定的每节时长。
+     * 无绑定时退回 1.00（占位展示；真结算会先在取账本那一步 skipped）。
+     */
+    private BigDecimal plannedHours(BizStudentAccountLink link) {
+        return accountService.hoursPerLessonOf(link);
     }
 
     // ─────────────────────────── 一键结算 ───────────────────────────
@@ -224,24 +248,27 @@ public class SettlementService {
         }
 
         String subject = resolveSubject(s);
-        BizTuitionAccount acc = findAccount(s.getTargetId(), subject);
+        BizStudentAccountLink link = accountService.findLink(s.getTargetId(), subject);
+        BizTuitionAccount any = link == null ? null : accountMapper.selectById(link.getAccountId());
+        BizTuitionAccount acc = any != null
+            && TuitionAccountService.STATUS_DISABLED.equals(any.getStatus()) ? null : any;
         if (acc == null) {
             // 「没开户」与「开了但停用」是两回事，skipped 里得说准（bug 批 BUG-3/A）
-            BizTuitionAccount any = findAnyAccount(s.getTargetId(), subject);
             if (any != null) {
-                throw new ServiceException("「" + EduTermUtil.subjectLabel(subject) + "」课时账户已停用，请先启用再结算");
+                throw new ServiceException("「" + EduTermUtil.subjectLabel(subject) + "」课时账本已停用，请先启用再结算");
             }
-            throw new ServiceException("未开通「" + EduTermUtil.subjectLabel(subject) + "」课时账户，请先开户再结算");
+            throw new ServiceException("未开通「" + EduTermUtil.subjectLabel(subject) + "」课时账本，请先开户再结算");
         }
-        BigDecimal hours = scale2(it.getHours() == null ? DEFAULT_HOURS : it.getHours());
+        // 🔄 D-a：缺省扣时 = 每节时长（不是场次起止时长）；hours 入参仍可人工覆盖
+        BigDecimal hours = scale2(it.getHours() == null ? plannedHours(link) : it.getHours());
         if (hours.signum() <= 0) {
             throw new ServiceException("实扣课时需大于 0", 400);
         }
-        BigDecimal amount = scale2(hours.multiply(nz(acc.getLessonPrice())));
+        BigDecimal amount = scale2(hours.multiply(nz(acc.getPricePerHour())));
 
-        // ① 扣课流水（唯一余额写入口，含 after 快照）
+        // ① 扣课流水（唯一余额写入口）：occur_date=场次日期；amount_paid=当时派生金额（冻结，B2）
         accountService.applyFlow(acc, TuitionAccountService.FLOW_DEDUCT,
-            hours.negate(), amount.negate(), s.getId(), noteOf(it));
+            hours.negate(), s.getId(), noteOf(it), s.getSessionDate(), amount.negate());
         // ② 场次：已上 + 已结
         s.setSessionStatus("1");
         s.setSettleStatus("1");
@@ -331,12 +358,18 @@ public class SettlementService {
             s.setSettleStatus("2");
             return null;
         }
+        // 🔴 按 deduct.accountId 回<b>原账本</b>（不走 link）：学生可能已改绑别的账本，
+        //    但退款必须退回当初扣钱那一本，否则钱在两本账之间凭空搬家。
         BizTuitionAccount acc = accountMapper.selectById(deduct.getAccountId());
         BigDecimal hours = nz(deduct.getHoursDelta()).negate();     // 实扣为负 → 返还为正
-        BigDecimal amount = nz(deduct.getAmountDelta()).negate();
+        // 金额取「原扣课行冻结的派生金额」取负（B2：不按当前时薪重算历史）
+        BigDecimal amount = deduct.getAmountPaid() == null
+            ? scale2(hours.multiply(acc == null ? BigDecimal.ZERO : nz(acc.getPricePerHour())))
+            : nz(deduct.getAmountPaid()).negate();
         if (acc != null) {
+            // occur_date = 所冲场次日期（M4：不是「今天」，否则冲正行会跳到台账最后）
             accountService.applyFlow(acc, TuitionAccountService.FLOW_REVERSE,
-                hours, amount, s.getId(), reason);
+                hours, s.getId(), reason, s.getSessionDate(), amount);
         }
         s.setSettleStatus("2");
 
@@ -378,9 +411,14 @@ public class SettlementService {
             .eq(BizTuitionFlow::getFlowType, TuitionAccountService.FLOW_DEDUCT)
             .last("LIMIT 1"));
         if (f == null) return null;
+        BizTuitionAccount acc = accountMapper.selectById(f.getAccountId());
+        BigDecimal hours = nz(f.getHoursDelta()).negate();
+        BigDecimal amount = f.getAmountPaid() == null
+            ? scale2(hours.multiply(acc == null ? BigDecimal.ZERO : nz(acc.getPricePerHour())))
+            : nz(f.getAmountPaid()).negate();
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("hours", num(nz(f.getHoursDelta()).negate()));
-        m.put("amount", num(nz(f.getAmountDelta()).negate()));
+        m.put("hours", num(hours));
+        m.put("amount", num(amount));
         return m;
     }
 
@@ -397,26 +435,6 @@ public class SettlementService {
             throw new ServiceException("场次不存在或无权访问", 403);
         }
         return s;
-    }
-
-    /**
-     * 学生×学科<b>在用</b>账户（owner 过滤 + 排除停用）；无账户或已停用返 null。
-     * 🔴 bug 批 BUG-3/A：停用账户不参与结算取价与扣费——要继续上课先启用回来。
-     * （冲正走 {@code accountMapper.selectById(deduct.accountId)}，不经这里，停用后旧账仍能退。）
-     */
-    private BizTuitionAccount findAccount(Long studentId, String subject) {
-        BizTuitionAccount a = findAnyAccount(studentId, subject);
-        return a != null && TuitionAccountService.STATUS_DISABLED.equals(a.getStatus()) ? null : a;
-    }
-
-    /** 学生×学科账户（含停用，owner 过滤）——用于把「没开户」与「已停用」两种情况分开说。 */
-    private BizTuitionAccount findAnyAccount(Long studentId, String subject) {
-        if (studentId == null || subject == null || subject.isBlank()) return null;
-        return accountMapper.selectOne(new LambdaQueryWrapper<BizTuitionAccount>()
-            .eq(BizTuitionAccount::getCreateBy, LoginHelper.getUserId())
-            .eq(BizTuitionAccount::getStudentId, studentId)
-            .eq(BizTuitionAccount::getSubject, subject)
-            .last("LIMIT 1"));
     }
 
     /**

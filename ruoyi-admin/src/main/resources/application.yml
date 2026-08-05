@@ -243,6 +243,8 @@ tenant:
     - biz_ingest_job_item
     # PRD-004 课后反馈单（无 tenant_id，同上单租户约定；Mapper 已 @InterceptorIgnore 双保险）
     - biz_feedback_sheet
+    # PRD-018 学生×学科→账本绑定（无 tenant_id，同上单租户约定；Mapper 已 @InterceptorIgnore 双保险）
+    - biz_student_account_link
 
 # MyBatisPlus配置
 # https://baomidou.com/config/

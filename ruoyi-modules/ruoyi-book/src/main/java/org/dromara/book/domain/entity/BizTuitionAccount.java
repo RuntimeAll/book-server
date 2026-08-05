@@ -13,10 +13,18 @@ import java.math.BigDecimal;
 import java.util.Date;
 
 /**
- * 课时课费账户实体（biz_tuition_account，PRD-015 D2/D3）。
+ * 课时账本实体（biz_tuition_account，PRD-018 v3 D3 换血）。
  *
- * <p>一行 = 一个「学生 × 学科」绑定（uk_student_subject）——<b>开户即绑定学科</b>，
- * 不另建 student_subject 关系表；余额可为 0 或负数（欠费不拦截，老师最高权限）。
+ * <p>🔄 v3 语义：一行 = 一本<b>独立账本</b>，<b>不知道学生</b>。学生×学科挂哪本账在
+ * {@link BizStudentAccountLink}（n:1，共享账本 = 两条绑定同 account_id）。
+ * 铁则：<b>一本账一个时薪</b>（price_per_hour），时薪不同就分本。
+ *
+ * <p>🔴 退役字段（DB 列仍在，代码不再读写，删列是批 4 的事）：
+ * {@code student_id} / {@code subject}（绑定移到 link 表）、{@code lesson_price}（→ price_per_hour）、
+ * {@code amount_remain}（金额全派生 = 小时 × price_per_hour，不落库）。
+ *
+ * <p>{@code hours_remain} 降级为<b>纯缓存</b>：唯一写入口仍是
+ * {@code TuitionAccountService.applyFlow}，可由流水全量重算；台账「剩余」列改实时推导（D2）。
  *
  * <p>🔴 不继承 BaseEntity：本表按 PRD-015 §10.1 只有 create_by/create_time/update_time 三个审计列
  * （无 create_dept/update_by/remark），继承 BaseEntity 会让 MP 拼出不存在的列。
@@ -37,20 +45,14 @@ public class BizTuitionAccount implements Serializable {
     @TableId(value = "id", type = IdType.ASSIGN_ID)
     private Long id;
 
-    /** 学生 id（biz_student.id）。 */
-    private Long studentId;
+    /** 账本标签（可选，如「俊羽家」，纯展示）。 */
+    private String name;
 
-    /** 学科字典码（biz_edu_subject：1数学/2科学/3语文/4英语）。 */
-    private String subject;
+    /** 时薪（元/小时），DECIMAL(10,4)：233.3333 使 1.5h 精确派生 350.00、15h 派生 3500.00。 */
+    private BigDecimal pricePerHour;
 
-    /** 每课时单价（元）。 */
-    private BigDecimal lessonPrice;
-
-    /** 剩余课时（可负=欠费；两位小数，D5 实扣 0.67 等）。 */
+    /** 剩余小时（纯缓存，可负=欠费；两位小数）。 */
     private BigDecimal hoursRemain;
-
-    /** 剩余金额（元；可负）。 */
-    private BigDecimal amountRemain;
 
     /** 状态：'0' 正常 / '1' 停用。 */
     private String status;

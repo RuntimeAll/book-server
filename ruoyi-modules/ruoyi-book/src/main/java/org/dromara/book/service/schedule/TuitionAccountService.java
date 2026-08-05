@@ -4,13 +4,16 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.TuitionAccountBo;
 import org.dromara.book.domain.bo.TuitionFlowBo;
+import org.dromara.book.domain.bo.TuitionTransferBo;
 import org.dromara.book.domain.entity.BizCoursePlanLesson;
 import org.dromara.book.domain.entity.BizScheduleSession;
 import org.dromara.book.domain.entity.BizStudent;
+import org.dromara.book.domain.entity.BizStudentAccountLink;
 import org.dromara.book.domain.entity.BizTuitionAccount;
 import org.dromara.book.domain.entity.BizTuitionFlow;
 import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizScheduleSessionMapper;
+import org.dromara.book.mapper.BizStudentAccountLinkMapper;
 import org.dromara.book.mapper.BizStudentMapper;
 import org.dromara.book.mapper.BizTuitionAccountMapper;
 import org.dromara.book.mapper.BizTuitionFlowMapper;
@@ -33,21 +36,32 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 课时课费账户 Service（PRD-015 D2/D3/D16，/teacher/schedule/account/**）。
+ * 课时账本 Service（PRD-015 D2/D3/D16 + <b>PRD-018 v3 换血</b>，/teacher/schedule/account/**）。
  *
- * <p><b>模型</b>：一行账户 = 一个「学生 × 学科」绑定（开户即绑定学科，uk_student_subject）；
- * 余额可为负（欠费不拦截，老师最高权限）。全部余额变动<b>只经流水行</b>产生（审计线，D1 铁律），
- * 每笔定格 hours_after / amount_after 快照 = 台账「剩余」列，历史行不随后续变动漂移。
+ * <p><b>模型（v3 D3）</b>：{@link BizTuitionAccount} = 独立<b>账本</b>（不知道学生，一本账一个时薪）；
+ * {@link BizStudentAccountLink} = 「学生 × 学科 → 账本」绑定（n:1，共享账本 = 两条绑定同一本，
+ * 每人各自的 hours_per_lesson）。普通学生开户 = 同一事务「建本 + 建绑定」，对老师无感知。
+ * 余额可为负（欠费不拦截，老师最高权限）。
  *
- * <p><b>归属</b>：create_by = 登录老师，查/改/流水/导出一律 owner 过滤，防水平越权（同 FeedbackSheetService）。
+ * <p><b>单位（D1 v2.1）</b>：底账只记<b>小时</b>；「节」= 小时 ÷ 绑定的每节时长，展示层换算；
+ * <b>金额全派生</b> = 小时 × price_per_hour，只有「实收/冻结」落 flow.amount_paid（M9/拍板 A1+B2）。
  *
- * <p><b>台账</b>（ledger）= 流水 join 场次的统一时间线：扣课/冲正行取场次日期+起止+课次标题，
- * 充值/调整行取流水时间+备注，倒序分页——直接渲染手抄课时本五列语义。
+ * <p><b>台账实时推导（D2，本卡灵魂）</b> —— 口径逐条写死在 {@link #buildLedgerRows}：
+ * <ol>
+ *   <li>排序键 = {@code COALESCE(occur_date, DATE(create_time))} 正序（兼容换轨中间态 NULL 行）；</li>
+ *   <li>🔴 带 session_id 的行，日期与同日次序<b>以 session.session_date + start_time 为准</b>
+ *       （单一事实源 = 场次，改期后台账自动跟随，M4 甲案）；</li>
+ *   <li>同日：手工行（充值/调整）排<b>当日最前</b>（先交钱后上课，M7）→ 同日多手工行按 id 升序；
+ *       同场次 '2' 扣课在前、'3' 冲正在后（flow_type 码序）；</li>
+ *   <li>剩余 = 该账本<b>全量流水从头累加</b>，分页/区间只在累加之后切片，区间/分页带
+ *       {@code openingBalance} 期初（M10）；台账默认落到<b>最后一页</b>（页内正序，能到最新行，L1）。</li>
+ * </ol>
  *
- * <p><b>流水单 PNG</b>（D16）= Excel 风格格式化表格（标题栏 + meta 行 + 网格表升序，
- * 充值行绿 / 冲正行红，🔴 无合计行），复用 {@link ScheduleRenderUtil#renderToPng}
- * （HTML→openhtmltopdf→pdfbox 光栅化，纯 Java 进程内，同反馈单导出链）。
- * 🔴 家长可见物：零内部词。
+ * <p><b>归属</b>：account.create_by = 登录老师，查/改/流水/导出一律 owner 过滤，防水平越权。
+ *
+ * <p>🔴 <b>过渡期契约兼容（M5）</b>：VO 继续回吐 {@code studentId/subject/lessonPrice/amountRemain/
+ * hoursAfter/amountAfter/amountDelta} 等旧字段的<b>派生值</b>，让旧 FE/H5/机器人在批 3/4 前不断粮；
+ * flow BO 带旧 {@code amountDelta} 静默忽略不报错。
  *
  * @author backend-dev
  */
@@ -61,14 +75,17 @@ public class TuitionAccountService {
     public static final String FLOW_REVERSE = "3";
     public static final String FLOW_ADJUST = "4";
 
-    /** 账户状态码：'0' 正常 / '1' 停用（停用 = 不再参与建计划学科下拉与结算取账户）。 */
+    /** 账本状态码：'0' 正常 / '1' 停用（停用 = 不再参与建计划学科下拉与结算取账本）。 */
     public static final String STATUS_ACTIVE = "0";
     public static final String STATUS_DISABLED = "1";
+
+    /** 每节时长缺省（小时）。 */
+    public static final BigDecimal DEFAULT_HOURS_PER_LESSON = new BigDecimal("1.00");
 
     /**
      * 「未停用」条件（PRD-015 bug 批 BUG-3/A）：status 不是 '1' 就算在用。
      * 🔴 用 isNull().or().ne() 而不是裸 ne——SQL 里 {@code NULL <> '1'} 求值为 NULL（不成立），
-     * 存量行若 status 为 NULL 会被整条过滤掉，账户凭空消失。
+     * 存量行若 status 为 NULL 会被整条过滤掉，账本凭空消失。
      */
     public static void notDisabled(LambdaQueryWrapper<BizTuitionAccount> w) {
         w.and(x -> x.isNull(BizTuitionAccount::getStatus).or().ne(BizTuitionAccount::getStatus, STATUS_DISABLED));
@@ -76,33 +93,93 @@ public class TuitionAccountService {
 
     private final BizTuitionAccountMapper accountMapper;
     private final BizTuitionFlowMapper flowMapper;
+    private final BizStudentAccountLinkMapper linkMapper;
     private final BizStudentMapper studentMapper;
     private final BizScheduleSessionMapper sessionMapper;
     private final BizCoursePlanLessonMapper lessonMapper;
     private final ScheduleRenderUtil renderUtil;
 
-    // ─────────────────────────── 账户 CRUD ───────────────────────────
+    // ─────────────────────────── 绑定查询（对外 helper） ───────────────────────────
 
-    /** 某学生的全部学科账户（owner 过滤，按学科码升序）。 */
+    /**
+     * 学生 × 学科的绑定行（owner 过滤经账本 create_by）；未绑定或无权返 null。
+     * 🔴 结算取账本、取缺省扣时的唯一入口（v3 后账本表已无 student_id/subject 列）。
+     */
+    public BizStudentAccountLink findLink(Long studentId, String subject) {
+        if (studentId == null || subject == null || subject.isBlank()) {
+            return null;
+        }
+        BizStudentAccountLink l = linkMapper.selectOne(new LambdaQueryWrapper<BizStudentAccountLink>()
+            .eq(BizStudentAccountLink::getStudentId, studentId)
+            .eq(BizStudentAccountLink::getSubject, subject)
+            .last("LIMIT 1"));
+        if (l == null) {
+            return null;
+        }
+        BizTuitionAccount a = accountMapper.selectById(l.getAccountId());
+        if (a == null || !ownedBy(a)) {
+            return null;
+        }
+        return l;
+    }
+
+    /** 学生 × 学科绑定到的账本（含停用；无绑定/无权返 null）。 */
+    public BizTuitionAccount findAccountOf(Long studentId, String subject) {
+        BizStudentAccountLink l = findLink(studentId, subject);
+        return l == null ? null : accountMapper.selectById(l.getAccountId());
+    }
+
+    /** 该绑定的每节时长（缺省 1.00，永不返 0/负 —— 缺省扣时与折节分母都靠它）。 */
+    public BigDecimal hoursPerLessonOf(BizStudentAccountLink link) {
+        BigDecimal v = link == null ? null : link.getHoursPerLesson();
+        return v == null || v.signum() <= 0 ? DEFAULT_HOURS_PER_LESSON : scale2(v);
+    }
+
+    // ─────────────────────────── 账本 CRUD ───────────────────────────
+
+    /** 某学生的全部学科账本（走绑定表反查，owner 过滤，按学科码升序）。 */
     public List<Map<String, Object>> listAccounts(Long studentId) {
         if (studentId == null) {
             throw new ServiceException("请指定学生（studentId 必填）", 400);
         }
-        List<BizTuitionAccount> list = accountMapper.selectList(new LambdaQueryWrapper<BizTuitionAccount>()
-            .eq(BizTuitionAccount::getCreateBy, LoginHelper.getUserId())
-            .eq(BizTuitionAccount::getStudentId, studentId)
-            .orderByAsc(BizTuitionAccount::getSubject));
+        List<BizStudentAccountLink> links = linkMapper.selectList(new LambdaQueryWrapper<BizStudentAccountLink>()
+            .eq(BizStudentAccountLink::getStudentId, studentId)
+            .orderByAsc(BizStudentAccountLink::getSubject));
         List<Map<String, Object>> out = new ArrayList<>();
-        for (BizTuitionAccount a : list) {
-            out.add(accountVo(a));
+        for (BizStudentAccountLink l : links) {
+            BizTuitionAccount a = accountMapper.selectById(l.getAccountId());
+            if (a == null || !ownedBy(a)) continue;
+            out.add(accountVo(a, l));
         }
         return out;
     }
 
     /**
-     * 开户 / 改单价。uk(student_id, subject) 冲突 = <b>改单价语义</b>（不报错、不动余额）。
+     * 我的全部账本（M6 必做入口）：按 create_by 列本人所有账本，<b>含零绑定账本</b> ——
+     * 改绑后旧本的冲正退款永远查得到、不会变成任何页面都看不到的孤儿。
+     * 每本带绑定的学生名列表（共享本会有多个）。
+     */
+    public List<Map<String, Object>> listMyAccounts() {
+        List<BizTuitionAccount> accounts = accountMapper.selectList(new LambdaQueryWrapper<BizTuitionAccount>()
+            .eq(BizTuitionAccount::getCreateBy, LoginHelper.getUserId())
+            .orderByAsc(BizTuitionAccount::getId));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (BizTuitionAccount a : accounts) {
+            out.add(accountBookVo(a));
+        }
+        return out;
+    }
+
+    /**
+     * 开户 / 改绑 / 改本（v3 D3）：<b>建账本 + 建绑定同一事务</b>，普通学生无感知。
      *
-     * @return 账户 id
+     * <p>冲突语义按<b>绑定</b>判：uk(student_id, subject) 命中 = 改该绑定的每节时长 + 该账本时薪
+     * （不报错、不动余额）。传 {@code accountId} = 绑到已有账本（换本 / 共享账本）。
+     *
+     * <p>🔴 改绑守卫（M6-3）：改绑后原账本零绑定且 hours_remain≠0 → 400，
+     * 免得余额留在一本没人看得见的账里。
+     *
+     * @return 账本 id
      */
     @Transactional(rollbackFor = Exception.class)
     public Long upsertAccount(TuitionAccountBo bo) {
@@ -117,55 +194,115 @@ public class TuitionAccountService {
         if (stu == null) {
             throw new ServiceException("学生不存在：" + bo.getStudentId(), 400);
         }
-        BigDecimal price = scale2(bo.getLessonPrice());
+        BigDecimal hpl = bo.getHoursPerLesson() == null ? DEFAULT_HOURS_PER_LESSON : scale2(bo.getHoursPerLesson());
+        if (hpl.signum() <= 0) {
+            throw new ServiceException("每节时长必须大于 0（小时）", 400);
+        }
+        BigDecimal price = resolvePricePerHour(bo, hpl);
         if (price.signum() < 0) {
             throw new ServiceException("课时单价不能为负", 400);
         }
-        // uk 是全局唯一（不含 create_by），先按 uk 查再判归属，避免撞唯一索引抛裸 500
-        BizTuitionAccount exist = accountMapper.selectOne(new LambdaQueryWrapper<BizTuitionAccount>()
-            .eq(BizTuitionAccount::getStudentId, bo.getStudentId())
-            .eq(BizTuitionAccount::getSubject, subject)
+
+        // uk(student_id, subject) 是全局唯一（不含 create_by），先按 uk 查再判归属，避免撞唯一索引抛裸 500
+        BizStudentAccountLink link = linkMapper.selectOne(new LambdaQueryWrapper<BizStudentAccountLink>()
+            .eq(BizStudentAccountLink::getStudentId, bo.getStudentId())
+            .eq(BizStudentAccountLink::getSubject, subject)
             .last("LIMIT 1"));
-        if (exist != null) {
-            requireOwned(exist);
-            exist.setLessonPrice(price);
-            if (bo.getNote() != null) {
-                exist.setNote(bo.getNote());
+        if (link != null) {
+            BizTuitionAccount cur = requireOwnedAccount(link.getAccountId());
+            Long target = bo.getAccountId();
+            if (target != null && !target.equals(link.getAccountId())) {
+                // 改绑：先守卫原账本，再改指向
+                requireOwnedAccount(target);
+                guardLeavingAccount(cur, link.getId());
+                link.setAccountId(target);
+                cur = requireOwnedAccount(target);
             }
-            accountMapper.updateById(exist);
-            return exist.getId();
+            link.setHoursPerLesson(hpl);
+            linkMapper.updateById(link);
+            applyBookFields(cur, bo, price);
+            accountMapper.updateById(cur);
+            return cur.getId();
         }
-        BizTuitionAccount e = new BizTuitionAccount();
-        e.setStudentId(bo.getStudentId());
-        e.setSubject(subject);
-        e.setLessonPrice(price);
-        e.setHoursRemain(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        e.setAmountRemain(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        e.setStatus("0");
-        e.setNote(bo.getNote());
-        e.setCreateBy(LoginHelper.getUserId());
-        accountMapper.insert(e);
-        return e.getId();
+
+        BizTuitionAccount acc;
+        if (bo.getAccountId() != null) {
+            // 绑到已有账本（共享账本 / 换本入口）：不新建本，只建绑定
+            acc = requireOwnedAccount(bo.getAccountId());
+            if (bo.getPricePerHour() != null || bo.getLessonPrice() != null || bo.getName() != null
+                || bo.getNote() != null) {
+                applyBookFields(acc, bo, price);
+                accountMapper.updateById(acc);
+            }
+        } else {
+            acc = new BizTuitionAccount();
+            acc.setName(bo.getName());
+            acc.setPricePerHour(price);
+            acc.setHoursRemain(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
+            acc.setStatus(STATUS_ACTIVE);
+            acc.setNote(bo.getNote());
+            acc.setCreateBy(LoginHelper.getUserId());
+            accountMapper.insert(acc);
+        }
+        BizStudentAccountLink l = new BizStudentAccountLink();
+        l.setStudentId(bo.getStudentId());
+        l.setSubject(subject);
+        l.setAccountId(acc.getId());
+        l.setHoursPerLesson(hpl);
+        l.setCreateBy(LoginHelper.getUserId());
+        linkMapper.insert(l);
+        return acc.getId();
+    }
+
+    /** 时薪口径：pricePerHour 优先；只给旧 lessonPrice（元/节）时按每节时长折算（M5 兼容）。 */
+    private BigDecimal resolvePricePerHour(TuitionAccountBo bo, BigDecimal hoursPerLesson) {
+        if (bo.getPricePerHour() != null) {
+            return scale4(bo.getPricePerHour());
+        }
+        if (bo.getLessonPrice() != null) {
+            return scale4(bo.getLessonPrice().divide(hoursPerLesson, 6, RoundingMode.HALF_UP));
+        }
+        return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
+    }
+
+    private void applyBookFields(BizTuitionAccount acc, TuitionAccountBo bo, BigDecimal price) {
+        if (bo.getPricePerHour() != null || bo.getLessonPrice() != null) {
+            acc.setPricePerHour(price);
+        }
+        if (bo.getName() != null) {
+            acc.setName(bo.getName());
+        }
+        if (bo.getNote() != null) {
+            acc.setNote(bo.getNote());
+        }
+    }
+
+    /** 改绑/解绑守卫（M6-3）：离开后原账本零绑定且余额不为 0 → 阻断。 */
+    private void guardLeavingAccount(BizTuitionAccount acc, Long leavingLinkId) {
+        long left = linkMapper.selectCount(new LambdaQueryWrapper<BizStudentAccountLink>()
+            .eq(BizStudentAccountLink::getAccountId, acc.getId())
+            .ne(leavingLinkId != null, BizStudentAccountLink::getId, leavingLinkId));
+        if (left == 0 && nz(acc.getHoursRemain()).signum() != 0) {
+            throw new ServiceException("原账本还剩 " + plain(nz(acc.getHoursRemain()))
+                + " 小时且改绑后就没有学生了；请先把余额转到新账本（账本转移）再改绑", 400);
+        }
     }
 
     /**
-     * 学生是否已开通该学科账户（计划学科归属校验用，PRD-015 §9 班级跳过）。
-     * 🔴 bug 批 BUG-3/A：<b>停用账户不算开通</b>——停用后该学科不再出现在建计划下拉里。
+     * 学生是否已绑定该学科账本（计划学科归属校验用，PRD-015 §9 班级跳过）。
+     * 🔴 bug 批 BUG-3/A：<b>停用账本不算开通</b>。签名不变，底层从账户表换成绑定表，调用方零改动。
      */
     public boolean hasAccount(Long studentId, String subject) {
-        if (studentId == null || subject == null || subject.isBlank()) {
+        BizStudentAccountLink l = findLink(studentId, subject);
+        if (l == null) {
             return false;
         }
-        LambdaQueryWrapper<BizTuitionAccount> w = new LambdaQueryWrapper<BizTuitionAccount>()
-            .eq(BizTuitionAccount::getCreateBy, LoginHelper.getUserId())
-            .eq(BizTuitionAccount::getStudentId, studentId)
-            .eq(BizTuitionAccount::getSubject, subject);
-        notDisabled(w);
-        return accountMapper.selectCount(w) > 0;
+        BizTuitionAccount a = accountMapper.selectById(l.getAccountId());
+        return a != null && !STATUS_DISABLED.equals(a.getStatus());
     }
 
     /**
-     * 停用 / 启用账户（bug 批 BUG-3/A）。停用 = 该学科不再出现在建计划下拉、结算取不到账户；
+     * 停用 / 启用账本（bug 批 BUG-3/A）。停用 = 该学科不再出现在建计划下拉、结算取不到账本；
      * 余额与流水<b>原样保留</b>（停用不是删除，账不能凭空消失），随时可启用回来。
      */
     @Transactional(rollbackFor = Exception.class)
@@ -180,9 +317,8 @@ public class TuitionAccountService {
     }
 
     /**
-     * 删户（硬删，bug 批 BUG-3/A 拍板口径）：<b>仅零流水账户可删</b>。
-     * 🔴 有任何一条流水就只能停用——扣费/冲正只经流水行产生是审计线铁律（D1），
-     * 删掉账户会让台账与已结场次对不上账，比留一行停用账户危险得多。
+     * 删本（硬删，bug 批 BUG-3/A 拍板口径）：<b>仅零流水账本可删</b>，连带删掉它的绑定行。
+     * 🔴 有任何一条流水就只能停用——扣费/冲正只经流水行产生是审计线铁律（D1）。
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteAccount(Long accountId) {
@@ -190,15 +326,19 @@ public class TuitionAccountService {
         long flows = flowMapper.selectCount(new LambdaQueryWrapper<BizTuitionFlow>()
             .eq(BizTuitionFlow::getAccountId, accountId));
         if (flows > 0) {
-            throw new ServiceException("该账户已有 " + flows + " 条课时记录，不能删除；如不再使用请改为「停用」", 400);
+            throw new ServiceException("该账本已有 " + flows + " 条课时记录，不能删除；如不再使用请改为「停用」", 400);
         }
+        linkMapper.delete(new LambdaQueryWrapper<BizStudentAccountLink>()
+            .eq(BizStudentAccountLink::getAccountId, accountId));
         accountMapper.deleteById(accountId);
     }
 
     // ─────────────────────────── 手工流水（充值 / 调整） ───────────────────────────
 
     /**
-     * 手工流水：充值('1') / 调整('4')。事务内「插流水（含 after 快照） + 更新账户余额」。
+     * 手工流水：充值('1') / 调整('4')。三档输入任给其一（小时 / 节 / 金额，D9），
+     * 服务端换算成<b>小时</b>落库；occur_date 由入参给（默认今天，补录可回填历史）；
+     * amount_paid = 实收金额原样落库（M9）。
      * 🔴 '2' 扣课 / '3' 冲正 只能由结算链产生（幂等键 uk(session_id,flow_type) 守门），此处拒收。
      *
      * @return 流水 id
@@ -210,145 +350,285 @@ public class TuitionAccountService {
         if (!FLOW_RECHARGE.equals(type) && !FLOW_ADJUST.equals(type)) {
             throw new ServiceException("手工流水只支持 '1' 充值 / '4' 调整（扣课/冲正由结算链产生）", 400);
         }
-        BigDecimal hours = scale2(bo.getHoursDelta());
-        BigDecimal amount = scale2(bo.getAmountDelta());
-        if (hours.signum() == 0 && amount.signum() == 0) {
-            throw new ServiceException("课时与金额不能同时为 0", 400);
+        BigDecimal hours = resolveHours(acc, bo);
+        if (hours.signum() == 0) {
+            throw new ServiceException("请填写小时 / 节数 / 金额（三选一，且不能为 0）", 400);
         }
-        BizTuitionFlow f = applyFlow(acc, type, hours, amount, null, bo.getNote());
+        LocalDate occur = parseDate(bo.getOccurDate());
+        BigDecimal paid = bo.getAmountPaid() != null ? scale2(bo.getAmountPaid())
+            : (bo.getAmount() != null ? scale2(bo.getAmount()) : null);
+        BizTuitionFlow f = applyFlow(acc, type, hours, null, bo.getNote(), occur, paid);
         return f.getId();
     }
 
     /**
-     * 记一笔流水并同步账户余额（<b>唯一的余额写入口</b>，禁止别处裸 UPDATE 余额列）。
-     * 扣课/冲正走结算链时也调本方法（批 3），故此处不限制类型。
+     * 三档输入 → 小时（D9）。优先级：hours（含旧 hoursDelta）→ lessons → amount。
+     * 🔴 lessons 档需要「每节时长」：单绑账本取该绑定；共享账本（绑定数&gt;1）基准不唯一，明确拒绝。
+     */
+    private BigDecimal resolveHours(BizTuitionAccount acc, TuitionFlowBo bo) {
+        BigDecimal h = bo.getHours() != null ? bo.getHours() : bo.getHoursDelta();
+        if (h != null) {
+            return scale2(h);
+        }
+        if (bo.getLessons() != null) {
+            List<BizStudentAccountLink> links = linksOf(acc.getId());
+            if (links.size() != 1) {
+                throw new ServiceException(links.isEmpty()
+                    ? "该账本还没有绑定学生，无法按「节」换算，请改用小时或金额"
+                    : "共享账本每人每节时长不同，无法按「节」换算，请改用小时或金额", 400);
+            }
+            return scale2(bo.getLessons().multiply(hoursPerLessonOf(links.get(0))));
+        }
+        if (bo.getAmount() != null) {
+            BigDecimal price = nz(acc.getPricePerHour());
+            if (price.signum() <= 0) {
+                throw new ServiceException("该账本还没有设置时薪，无法按金额换算课时", 400);
+            }
+            return scale2(bo.getAmount().divide(price, 6, RoundingMode.HALF_UP));
+        }
+        return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 记一笔流水并同步账本 hours_remain 缓存（<b>唯一的余额写入口</b>，禁止别处裸 UPDATE 余额列）。
+     * 扣课/冲正走结算链时也调本方法，故此处不限制类型。
      *
-     * @param acc       账户（调用方已做归属校验）
-     * @param flowType  '1' 充值 / '2' 扣课 / '3' 冲正 / '4' 调整
-     * @param hours     课时增量（扣为负）
-     * @param amount    金额增量（扣为负）
-     * @param sessionId 关联场次（扣课/冲正必填=幂等键；手工流水传 null）
-     * @param note      备注
-     * @return 落库后的流水行（含 after 快照）
+     * <p>🔄 v3：不再写 amount_delta / hours_after / amount_after（金额派生 + 台账实时推导）。
+     *
+     * @param acc        账本（调用方已做归属校验）
+     * @param flowType   '1' 充值 / '2' 扣课 / '3' 冲正 / '4' 调整
+     * @param hours      小时增量（扣为负）
+     * @param sessionId  关联场次（扣课/冲正必填=幂等键；手工流水传 null）
+     * @param note       备注
+     * @param occurDate  业务日期（null = 今天）
+     * @param amountPaid 实收/冻结金额（可空；符号与 hours 同向）
+     * @return 落库后的流水行
      */
     @Transactional(rollbackFor = Exception.class)
     public BizTuitionFlow applyFlow(BizTuitionAccount acc, String flowType, BigDecimal hours,
-                                    BigDecimal amount, Long sessionId, String note) {
+                                    Long sessionId, String note, LocalDate occurDate, BigDecimal amountPaid) {
         BigDecimal h = scale2(hours);
-        BigDecimal a = scale2(amount);
-        BigDecimal hoursAfter = scale2(nz(acc.getHoursRemain()).add(h));
-        BigDecimal amountAfter = scale2(nz(acc.getAmountRemain()).add(a));
-
         BizTuitionFlow f = new BizTuitionFlow();
         f.setAccountId(acc.getId());
         f.setFlowType(flowType);
+        f.setOccurDate(occurDate == null ? LocalDate.now() : occurDate);
         f.setHoursDelta(h);
-        f.setAmountDelta(a);
-        f.setHoursAfter(hoursAfter);
-        f.setAmountAfter(amountAfter);
+        f.setAmountPaid(amountPaid == null ? null : scale2(amountPaid));
         f.setSessionId(sessionId);
         f.setNote(note);
         f.setCreateBy(LoginHelper.getUserId());
         flowMapper.insert(f);
 
-        acc.setHoursRemain(hoursAfter);
-        acc.setAmountRemain(amountAfter);
+        // hours_remain = 纯缓存（可由流水全量重算）；台账「剩余」列走实时推导，不再吃这里的快照
+        acc.setHoursRemain(scale2(nz(acc.getHoursRemain()).add(h)));
         accountMapper.updateById(acc);
         return f;
     }
 
-    // ─────────────────────────── 台账（消耗记录） ───────────────────────────
+    /**
+     * 账本间转账（M6-2）：一个事务产一对 '4' 调整行（转出为负 / 转入为正）并互写 rel_flow_id，
+     * 让换本 / 拆本在台账上是<b>一笔可解释的动作</b>。
+     *
+     * @return {fromFlowId, toFlowId, hours}
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> transfer(TuitionTransferBo bo) {
+        if (bo == null || bo.getFromAccountId() == null || bo.getToAccountId() == null) {
+            throw new ServiceException("请选择转出与转入账本（fromAccountId / toAccountId 必填）", 400);
+        }
+        if (bo.getFromAccountId().equals(bo.getToAccountId())) {
+            throw new ServiceException("转出与转入不能是同一本账", 400);
+        }
+        BigDecimal hours = scale2(bo.getHours());
+        if (hours.signum() <= 0) {
+            throw new ServiceException("转移小时数需大于 0", 400);
+        }
+        BizTuitionAccount from = requireOwnedAccount(bo.getFromAccountId());
+        BizTuitionAccount to = requireOwnedAccount(bo.getToAccountId());
+        LocalDate occur = parseDate(bo.getOccurDate());
+        String note = bo.getNote() == null || bo.getNote().isBlank() ? "账本转移" : bo.getNote().trim();
+
+        BizTuitionFlow out = applyFlow(from, FLOW_ADJUST, hours.negate(), null,
+            note + "（转出至 " + bookLabel(to) + "）", occur, null);
+        BizTuitionFlow in = applyFlow(to, FLOW_ADJUST, hours, null,
+            note + "（转入自 " + bookLabel(from) + "）", occur, null);
+        out.setRelFlowId(in.getId());
+        in.setRelFlowId(out.getId());
+        flowMapper.updateById(out);
+        flowMapper.updateById(in);
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("fromFlowId", String.valueOf(out.getId()));
+        m.put("toFlowId", String.valueOf(in.getId()));
+        m.put("hours", num(hours));
+        return m;
+    }
+
+    /** 账本可读标签：name → 绑定学生名 → 「账本 #id」。 */
+    private String bookLabel(BizTuitionAccount a) {
+        if (a.getName() != null && !a.getName().isBlank()) {
+            return a.getName();
+        }
+        String names = String.join("+", studentNamesOf(a.getId()));
+        return names.isBlank() ? "账本 #" + a.getId() : names;
+    }
+
+    // ─────────────────────────── 台账（实时推导） ───────────────────────────
 
     /**
-     * 消耗台账（AC4）：流水 join 场次的统一时间线，倒序分页。
-     * 行 = {date, timeRange, content, flowType, hoursDelta, hoursAfter, amountAfter}——
-     * 扣课/冲正取场次日期+起止+课次标题；充值/调整取流水时间+备注（timeRange=null）。
+     * 消耗台账（AC1/AC4/D2）：全量流水按业务日期正序累加出<b>逐行剩余</b>，再做区间/分页切片。
+     * 🔴 默认落到<b>最后一页</b>（最近的行），页内正序 —— 正序 + 第 1 页会让老师首屏永远是最旧记录（L1）。
+     *
+     * @return {rows, total, pageNum, pageSize, pages, openingBalance, openingAmount, shared, hoursRemain, ...}
      */
     public Map<String, Object> ledger(Long accountId, String startDate, String endDate,
                                       Integer pageNum, Integer pageSize) {
-        requireOwnedAccount(accountId);
-        List<BizTuitionFlow> flows = flowMapper.selectList(new LambdaQueryWrapper<BizTuitionFlow>()
-            .eq(BizTuitionFlow::getAccountId, accountId)
-            .orderByDesc(BizTuitionFlow::getCreateTime)
-            .orderByDesc(BizTuitionFlow::getId));
+        BizTuitionAccount acc = requireOwnedAccount(accountId);
+        List<Map<String, Object>> all = buildLedgerRows(acc);
+
+        // 区间切片（剩余已在全量累加阶段算完，区间不影响任何一行的剩余值，M10）
         LocalDate from = parseDate(startDate);
         LocalDate to = parseDate(endDate);
-        List<Map<String, Object>> all = new ArrayList<>();
-        for (BizTuitionFlow f : flows) {
-            Map<String, Object> row = ledgerRow(f);
+        List<Map<String, Object>> filtered = new ArrayList<>();
+        for (Map<String, Object> row : all) {
             LocalDate d = parseDate((String) row.get("date"));
             if (from != null && d != null && d.isBefore(from)) continue;
             if (to != null && d != null && d.isAfter(to)) continue;
-            all.add(row);
+            filtered.add(row);
         }
-        int pn = pageNum == null || pageNum < 1 ? 1 : pageNum;
+
         int ps = pageSize == null || pageSize < 1 ? 100 : pageSize;
-        int fromIdx = Math.min((pn - 1) * ps, all.size());
-        int toIdx = Math.min(fromIdx + ps, all.size());
+        int pages = Math.max(1, (int) Math.ceil(filtered.size() / (double) ps));
+        // pageNum 缺省 = 最后一页（最近的行）；显式给了就按给的走
+        int pn = pageNum == null || pageNum < 1 ? pages : Math.min(pageNum, pages);
+        int fromIdx = Math.min((pn - 1) * ps, filtered.size());
+        int toIdx = Math.min(fromIdx + ps, filtered.size());
+        List<Map<String, Object>> slice = new ArrayList<>(filtered.subList(fromIdx, toIdx));
+
+        // 期初 = 本页第一行之前的累计（含被区间过滤掉的行）
+        BigDecimal openingHours = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal openingAmount = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        if (!slice.isEmpty()) {
+            Object firstId = slice.get(0).get("id");
+            for (Map<String, Object> row : all) {
+                if (String.valueOf(firstId).equals(String.valueOf(row.get("id")))) break;
+                openingHours = scale2(openingHours.add(dec(row.get("hoursDelta"))));
+                openingAmount = scale2(openingAmount.add(dec(row.get("amount"))));
+            }
+        }
+
         Map<String, Object> r = new LinkedHashMap<>();
-        r.put("rows", new ArrayList<>(all.subList(fromIdx, toIdx)));
-        r.put("total", all.size());
+        r.put("rows", slice);
+        r.put("total", filtered.size());
+        r.put("pageNum", pn);
+        r.put("pageSize", ps);
+        r.put("pages", pages);
+        r.put("openingBalance", num(openingHours));
+        r.put("openingAmount", num(openingAmount));
+        r.put("account", accountBookVo(acc));
+        r.put("shared", linksOf(acc.getId()).size() > 1);
         return r;
     }
 
-    /** 台账一行（对齐 FE LedgerRowVO）。 */
-    private Map<String, Object> ledgerRow(BizTuitionFlow f) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        String date = null;
-        String timeRange = null;
-        String content = f.getNote();
-        if (f.getSessionId() != null) {
-            BizScheduleSession s = sessionMapper.selectById(f.getSessionId());
-            if (s != null) {
-                date = s.getSessionDate() == null ? null : s.getSessionDate().toString();
-                timeRange = timeRange(s);
-                String title = sessionTitle(s);
-                // 冲正行内容带上原因备注（如「请假」），扣课行优先课次标题
-                if (FLOW_REVERSE.equals(f.getFlowType())) {
-                    content = (f.getNote() == null || f.getNote().isBlank()) ? title : title + "（" + f.getNote() + "）";
-                } else {
-                    content = (title == null || title.isBlank()) ? f.getNote() : title;
-                }
+    /**
+     * 台账全量行（正序 + 逐行推导剩余）—— <b>PRD-018 §4 台账推导口径的唯一实现处</b>。
+     * ledger / exportLedgerPng 共用，保证屏上与导出单逐行一致（AC8）。
+     */
+    private List<Map<String, Object>> buildLedgerRows(BizTuitionAccount acc) {
+        List<BizTuitionFlow> flows = flowMapper.selectList(new LambdaQueryWrapper<BizTuitionFlow>()
+            .eq(BizTuitionFlow::getAccountId, acc.getId()));
+        List<BizStudentAccountLink> links = linksOf(acc.getId());
+        boolean shared = links.size() > 1;
+        BigDecimal price = nz(acc.getPricePerHour());
+
+        List<Object[]> keyed = new ArrayList<>();
+        for (BizTuitionFlow f : flows) {
+            BizScheduleSession s = f.getSessionId() == null ? null : sessionMapper.selectById(f.getSessionId());
+            // ① 日期：带 session 的行以场次日期为准（单一事实源，改期自动跟随，M4 甲案）；
+            //    否则 COALESCE(occur_date, DATE(create_time))（换轨中间态兜底，M2）
+            String date = null;
+            if (s != null && s.getSessionDate() != null) {
+                date = s.getSessionDate().toString();
+            } else if (f.getOccurDate() != null) {
+                date = f.getOccurDate().toString();
+            } else {
+                date = localDate(f.getCreateTime());
             }
+            // ② 同日次序：手工行(0) 排当日最前（先交钱后上课，M7）；场次行(1) 按 start_time
+            int group = s == null ? 0 : 1;
+            String time = s == null ? "" : nvl(trimSec(s.getStartTime()));
+            keyed.add(new Object[]{nvl(date), group, time, nvl(f.getFlowType()), f.getId() == null ? 0L : f.getId(), f, s});
         }
-        if (date == null) {
-            date = localDate(f.getCreateTime());
+        keyed.sort(Comparator
+            .comparing((Object[] k) -> (String) k[0])                 // 业务日期
+            .thenComparingInt(k -> (Integer) k[1])                    // 手工行在当日最前
+            .thenComparing(k -> (String) k[2])                        // 场次起始时间
+            .thenComparing(k -> (String) k[3])                        // '2' 扣课 在 '3' 冲正 前
+            .thenComparingLong(k -> (Long) k[4]));                    // 同日多条手工行按 id 升序
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        BigDecimal runHours = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal runAmount = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        for (Object[] k : keyed) {
+            BizTuitionFlow f = (BizTuitionFlow) k[5];
+            BizScheduleSession s = (BizScheduleSession) k[6];
+            BigDecimal h = nz(f.getHoursDelta());
+            // 金额：实收/冻结优先（M9/B2），否则按当前时薪派生
+            BigDecimal amount = f.getAmountPaid() != null ? scale2(f.getAmountPaid()) : scale2(h.multiply(price));
+            runHours = scale2(runHours.add(h));
+            runAmount = scale2(runAmount.add(amount));
+
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", f.getId() == null ? null : String.valueOf(f.getId()));
+            m.put("date", k[0]);
+            m.put("timeRange", s == null ? null : timeRange(s));
+            m.put("content", contentOf(f, s));
+            m.put("flowType", f.getFlowType());
+            m.put("hoursDelta", num(h));
+            m.put("amount", num(amount));
+            m.put("amountPaid", num(f.getAmountPaid()));
+            m.put("hoursAfter", num(runHours));       // 🔄 推导值（旧字段名保留，M5 过渡兼容）
+            m.put("amountAfter", num(runAmount));     // 🔄 逐行派生后求和（AC9 口径）
+            m.put("amountDelta", num(amount));        // 🔄 旧契约兼容：等于本行金额
+            m.put("sessionId", f.getSessionId() == null ? null : String.valueOf(f.getSessionId()));
+            m.put("relFlowId", f.getRelFlowId() == null ? null : String.valueOf(f.getRelFlowId()));
+            // 规则①：共享账本（绑定数>1）流水行显示学生名；手工行无归属 → null（展示层兜底「—」）
+            m.put("studentName", shared && s != null ? studentName(s.getTargetId()) : null);
+            out.add(m);
         }
-        m.put("id", f.getId() == null ? null : String.valueOf(f.getId()));
-        m.put("date", date);
-        m.put("timeRange", timeRange);
-        m.put("content", content);
-        m.put("flowType", f.getFlowType());
-        m.put("hoursDelta", num(f.getHoursDelta()));
-        m.put("amountDelta", num(f.getAmountDelta()));
-        m.put("hoursAfter", num(f.getHoursAfter()));
-        m.put("amountAfter", num(f.getAmountAfter()));
-        return m;
+        return out;
+    }
+
+    /** 台账「内容」列：场次行取课次标题（冲正带原因备注），手工行取备注。 */
+    private String contentOf(BizTuitionFlow f, BizScheduleSession s) {
+        if (s == null) {
+            return f.getNote();
+        }
+        String title = sessionTitle(s);
+        if (FLOW_REVERSE.equals(f.getFlowType())) {
+            return (f.getNote() == null || f.getNote().isBlank()) ? title : title + "（" + f.getNote() + "）";
+        }
+        return (title == null || title.isBlank()) ? f.getNote() : title;
     }
 
     // ─────────────────────────── 流水单导出 PNG（D16） ───────────────────────────
 
     /**
-     * 课时流水单 PNG（D16 / AC14）：标题栏 +（单价 / 截至 / 当前剩余）meta 行 + 网格表<b>升序</b>
+     * 课时流水单 PNG（D16 / AC14）：标题栏 +（时薪 / 截至 / 当前剩余）meta 行 + 网格表<b>升序</b>
      * （日期 / 上课时间 / 内容 / 课时变动 / 剩余课时），充值行绿、冲正行红，🔴 无合计行。
-     * 🔴 家长可见物：零内部词。
+     * 🔴 家长可见物：零内部词。行序与 {@link #ledger} 同源（buildLedgerRows），保证逐行一致。
      */
     public Map<String, Object> exportLedgerPng(Long accountId) {
         BizTuitionAccount acc = requireOwnedAccount(accountId);
-        BizStudent stu = studentMapper.selectById(acc.getStudentId());
-        String stuName = stu == null ? "学生" : stu.getName();
-        String subjectLabel = EduTermUtil.subjectLabel(acc.getSubject());
-
-        // 升序（对账阅读序），复用台账行构造
-        List<BizTuitionFlow> flows = flowMapper.selectList(new LambdaQueryWrapper<BizTuitionFlow>()
-            .eq(BizTuitionFlow::getAccountId, accountId));
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (BizTuitionFlow f : flows) {
-            rows.add(ledgerRow(f));
+        List<BizStudentAccountLink> links = linksOf(accountId);
+        String title = String.join("+", studentNamesOf(accountId));
+        if (title.isBlank()) {
+            title = acc.getName() == null || acc.getName().isBlank() ? "课时账本" : acc.getName();
         }
-        rows.sort(Comparator.comparing(x -> String.valueOf(x.get("date") == null ? "" : x.get("date"))));
+        String subjectLabel = links.size() == 1 ? EduTermUtil.subjectLabel(links.get(0).getSubject()) : null;
 
-        String html = buildLedgerHtml(stuName, subjectLabel, acc, rows);
+        List<Map<String, Object>> rows = buildLedgerRows(acc);
+        String html = buildLedgerHtml(title, subjectLabel, acc, rows);
         // 高度收边（同 FeedbackSheetService BUG-014 口径）：标题条+meta 行+表头+内边距 ≈ 124px，
         // 每行 27px，内容列约 30 个中文字换行 → 长内容多算一行不裁切、短行不留白底。
         int rowsH = 0;
@@ -391,13 +671,17 @@ public class TuitionAccountService {
         sb.append("tr.rev td{background:#fdf2f2;color:#b91c1c}");
         sb.append("</style></head><body><div class=\"wrap\">");
 
-        sb.append("<div class=\"bar\">课时流水单 · ").append(esc(stuName))
-            .append("（").append(esc(subjectLabel == null ? "课程" : subjectLabel)).append("）</div>");
+        sb.append("<div class=\"bar\">课时流水单 · ").append(esc(stuName));
+        if (subjectLabel != null && !subjectLabel.isBlank()) {
+            sb.append("（").append(esc(subjectLabel)).append("）");
+        }
+        sb.append("</div>");
+        BigDecimal remain = nz(acc.getHoursRemain());
         sb.append("<table class=\"meta\"><tr>");
-        sb.append("<td>单价 <b>").append(plain(acc.getLessonPrice())).append("</b> 元/课时</td>");
+        sb.append("<td>单价 <b>").append(plain(nz(acc.getPricePerHour()))).append("</b> 元/小时</td>");
         sb.append("<td>截至 <b>").append(LocalDate.now()).append("</b></td>");
-        sb.append("<td>当前剩余 <b>").append(plain(acc.getHoursRemain())).append("</b> 课时 · <b>")
-            .append(plain(acc.getAmountRemain())).append("</b> 元</td>");
+        sb.append("<td>当前剩余 <b>").append(plain(remain)).append("</b> 小时 · <b>")
+            .append(plain(scale2(remain.multiply(nz(acc.getPricePerHour()))))).append("</b> 元</td>");
         sb.append("</tr></table>");
 
         sb.append("<table class=\"grid\">");
@@ -414,7 +698,7 @@ public class TuitionAccountService {
             sb.append("<tr").append(cls).append(">");
             sb.append("<td class=\"c\">").append(esc(str(row.get("date")))).append("</td>");
             sb.append("<td class=\"c\">").append(esc(str(row.get("timeRange")))).append("</td>");
-            sb.append("<td>").append(esc(str(row.get("content")))).append("</td>");
+            sb.append("<td>").append(esc(contentCell(row))).append("</td>");
             sb.append("<td class=\"r\">").append(esc(signed(row.get("hoursDelta")))).append("</td>");
             sb.append("<td class=\"r\">").append(esc(plainObj(row.get("hoursAfter")))).append("</td>");
             sb.append("</tr>");
@@ -427,40 +711,130 @@ public class TuitionAccountService {
         return sb.toString();
     }
 
+    /** 共享账本的场次行在内容前挂学生名（规则①）。 */
+    private String contentCell(Map<String, Object> row) {
+        String name = str(row.get("studentName"));
+        String content = str(row.get("content"));
+        return name.isBlank() ? content : name + " · " + content;
+    }
+
     // ─────────────────────────── helpers ───────────────────────────
 
-    /** 账户 VO（对齐 FE TuitionAccountVO）。 */
-    private Map<String, Object> accountVo(BizTuitionAccount a) {
+    /** 该账本的全部绑定（按学生 id 升序）。 */
+    private List<BizStudentAccountLink> linksOf(Long accountId) {
+        return linkMapper.selectList(new LambdaQueryWrapper<BizStudentAccountLink>()
+            .eq(BizStudentAccountLink::getAccountId, accountId)
+            .orderByAsc(BizStudentAccountLink::getStudentId));
+    }
+
+    private List<String> studentNamesOf(Long accountId) {
+        List<String> names = new ArrayList<>();
+        for (BizStudentAccountLink l : linksOf(accountId)) {
+            String n = studentName(l.getStudentId());
+            if (n != null && !names.contains(n)) {
+                names.add(n);
+            }
+        }
+        return names;
+    }
+
+    private String studentName(Long studentId) {
+        BizStudent st = studentId == null ? null : studentMapper.selectById(studentId);
+        return st == null ? null : st.getName();
+    }
+
+    /**
+     * 「学生视角」账本 VO（listAccounts / roster accounts 角标同源）。
+     * 🔴 M5 过渡兼容：studentId/subject/lessonPrice/amountRemain 全部照旧回吐（派生值），旧 FE 不断粮。
+     */
+    private Map<String, Object> accountVo(BizTuitionAccount a, BizStudentAccountLink l) {
+        BigDecimal price = nz(a.getPricePerHour());
+        BigDecimal hpl = hoursPerLessonOf(l);
+        BigDecimal remain = nz(a.getHoursRemain());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", String.valueOf(a.getId()));
-        m.put("studentId", a.getStudentId() == null ? null : String.valueOf(a.getStudentId()));
-        m.put("subject", a.getSubject());
-        m.put("subjectLabel", EduTermUtil.subjectLabel(a.getSubject()));
-        m.put("lessonPrice", num(a.getLessonPrice()));
-        m.put("hoursRemain", num(a.getHoursRemain()));
-        m.put("amountRemain", num(a.getAmountRemain()));
+        m.put("accountId", String.valueOf(a.getId()));
+        m.put("name", a.getName());
+        m.put("studentId", l.getStudentId() == null ? null : String.valueOf(l.getStudentId()));
+        m.put("subject", l.getSubject());
+        m.put("subjectLabel", EduTermUtil.subjectLabel(l.getSubject()));
+        m.put("pricePerHour", num(price));
+        m.put("hoursPerLesson", num(hpl));
+        m.put("hoursRemain", num(remain));
+        m.put("lessonsRemain", num(scale2(remain.divide(hpl, 6, RoundingMode.HALF_UP))));
+        // 🔄 旧契约派生值（M5）：节价 = 时薪 × 每节时长；剩余金额 = 剩余小时 × 时薪
+        m.put("lessonPrice", num(scale2(price.multiply(hpl))));
+        m.put("amountRemain", num(scale2(remain.multiply(price))));
+        m.put("shared", linksOf(a.getId()).size() > 1);
         m.put("status", a.getStatus());
         m.put("note", a.getNote());
         return m;
     }
 
-    /** 账户归属校验（不区分不存在/无权，防存在性探测；同 FeedbackSheetService 口径）。 */
+    /** 「账本视角」VO（我的全部账本 / 台账头部）：带绑定学生列表，含零绑定账本。 */
+    private Map<String, Object> accountBookVo(BizTuitionAccount a) {
+        BigDecimal price = nz(a.getPricePerHour());
+        BigDecimal remain = nz(a.getHoursRemain());
+        List<BizStudentAccountLink> links = linksOf(a.getId());
+        List<Map<String, Object>> bindings = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (BizStudentAccountLink l : links) {
+            Map<String, Object> b = new LinkedHashMap<>();
+            String n = studentName(l.getStudentId());
+            b.put("studentId", l.getStudentId() == null ? null : String.valueOf(l.getStudentId()));
+            b.put("studentName", n);
+            b.put("subject", l.getSubject());
+            b.put("subjectLabel", EduTermUtil.subjectLabel(l.getSubject()));
+            b.put("hoursPerLesson", num(hoursPerLessonOf(l)));
+            bindings.add(b);
+            if (n != null && !names.contains(n)) {
+                names.add(n);
+            }
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", String.valueOf(a.getId()));
+        m.put("name", a.getName());
+        m.put("pricePerHour", num(price));
+        m.put("hoursRemain", num(remain));
+        m.put("amountRemain", num(scale2(remain.multiply(price))));
+        m.put("status", a.getStatus());
+        m.put("note", a.getNote());
+        m.put("bindingCount", links.size());
+        m.put("shared", links.size() > 1);
+        m.put("studentNames", names);
+        m.put("bindings", bindings);
+        // 单绑账本可折节展示；共享本基准不唯一，只报小时（规则②）
+        if (links.size() == 1) {
+            BigDecimal hpl = hoursPerLessonOf(links.get(0));
+            m.put("hoursPerLesson", num(hpl));
+            m.put("lessonsRemain", num(scale2(remain.divide(hpl, 6, RoundingMode.HALF_UP))));
+            m.put("lessonPrice", num(scale2(price.multiply(hpl))));
+        }
+        return m;
+    }
+
+    /** 账本归属校验（不区分不存在/无权，防存在性探测；同 FeedbackSheetService 口径）。 */
     public BizTuitionAccount requireOwnedAccount(Long id) {
         if (id == null) {
-            throw new ServiceException("账户 id 必填", 400);
+            throw new ServiceException("账本 id 必填", 400);
         }
         BizTuitionAccount a = accountMapper.selectById(id);
         if (a == null) {
-            throw new ServiceException("账户不存在或无权访问", 403);
+            throw new ServiceException("账本不存在或无权访问", 403);
         }
         requireOwned(a);
         return a;
     }
 
     private void requireOwned(BizTuitionAccount a) {
-        if (!LoginHelper.getUserId().equals(a.getCreateBy())) {
-            throw new ServiceException("账户不存在或无权访问", 403);
+        if (!ownedBy(a)) {
+            throw new ServiceException("账本不存在或无权访问", 403);
         }
+    }
+
+    private boolean ownedBy(BizTuitionAccount a) {
+        Long uid = LoginHelper.getUserId();
+        return uid != null && uid.equals(a.getCreateBy());
     }
 
     /** 场次起止（09:00-10:30）。 */
@@ -504,9 +878,20 @@ public class TuitionAccountService {
         return v == null ? BigDecimal.ZERO : v;
     }
 
+    private String nvl(String s) {
+        return s == null ? "" : s;
+    }
+
+    private BigDecimal dec(Object v) {
+        if (v == null) return BigDecimal.ZERO;
+        if (v instanceof BigDecimal d) return d;
+        if (v instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
+        return BigDecimal.ZERO;
+    }
+
     /**
      * 🔴 JSON 数值口径：全局 JacksonConfig 把 BigDecimal 序列化成<b>字符串</b>（ToStringSerializer），
-     * 而契约正本 account.ts 里 lessonPrice/hoursRemain/hoursDelta… 全是 number。
+     * 而契约正本 account.ts 里 pricePerHour/hoursRemain/hoursDelta… 全是 number。
      * 故 VO 出参统一过本方法转 Double（两位小数，double 表达无损），保证 FE 拿到的是数字不是 "300.00"。
      */
     private Double num(BigDecimal v) {
@@ -515,6 +900,10 @@ public class TuitionAccountService {
 
     private BigDecimal scale2(BigDecimal v) {
         return nz(v).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal scale4(BigDecimal v) {
+        return nz(v).setScale(4, RoundingMode.HALF_UP);
     }
 
     /** 去尾零显示（1.00→1，0.67→0.67）。 */

@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckLogin;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.TuitionAccountBo;
 import org.dromara.book.domain.bo.TuitionFlowBo;
+import org.dromara.book.domain.bo.TuitionTransferBo;
 import org.dromara.book.service.schedule.TuitionAccountService;
 import org.dromara.common.core.domain.R;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -34,14 +35,31 @@ public class TuitionAccountController {
 
     private final TuitionAccountService accountService;
 
-    /** 某学生的全部学科账户 → [{id,studentId,subject,lessonPrice,hoursRemain,amountRemain,status}]。 */
+    /**
+     * 某学生的全部学科账本（走绑定表反查）
+     * → [{id,accountId,studentId,subject,pricePerHour,hoursPerLesson,hoursRemain,lessonsRemain,
+     * lessonPrice(派生),amountRemain(派生),shared,status}]。
+     */
     @SaCheckLogin
     @GetMapping("/list")
     public R<List<Map<String, Object>>> list(@RequestParam Long studentId) {
         return R.ok(accountService.listAccounts(studentId));
     }
 
-    /** 开户 / 改单价（uk(student_id,subject) 冲突 = 改单价语义）→ {id}。 */
+    /**
+     * 我的全部账本（PRD-018 M6，additive）：按 create_by 列本人所有账本，<b>含零绑定账本</b>——
+     * 改绑后旧本的冲正退款永远查得到，不会变成任何页面都看不到又删不掉的孤儿。
+     */
+    @SaCheckLogin
+    @GetMapping("/all")
+    public R<List<Map<String, Object>>> all() {
+        return R.ok(accountService.listMyAccounts());
+    }
+
+    /**
+     * 开户 / 改绑 / 改本（v3：建账本 + 建绑定同一事务，普通学生无感知）→ {id}（账本 id）。
+     * uk(student_id,subject) 命中 = 改该绑定的每节时长 + 该账本时薪（不报错、不动余额）。
+     */
     @SaCheckLogin
     @PostMapping
     public R<Map<String, Object>> upsert(@RequestBody TuitionAccountBo bo) {
@@ -49,6 +67,16 @@ public class TuitionAccountController {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("id", String.valueOf(id));
         return R.ok(r);
+    }
+
+    /**
+     * 账本转移（PRD-018 M6-2，additive）：一个事务产一对 '4' 调整行并互写 rel_flow_id，
+     * 让换本/拆本在台账上是一笔可解释的动作 → {fromFlowId,toFlowId,hours}。
+     */
+    @SaCheckLogin
+    @PostMapping("/transfer")
+    public R<Map<String, Object>> transfer(@RequestBody TuitionTransferBo bo) {
+        return R.ok(accountService.transfer(bo));
     }
 
     /**
@@ -73,7 +101,10 @@ public class TuitionAccountController {
         return R.ok();
     }
 
-    /** 手工流水（'1' 充值 / '4' 调整）→ {id}（流水 id）。事务内插流水 + 更新余额。 */
+    /**
+     * 手工流水（'1' 充值 / '4' 调整）→ {id}（流水 id）。事务内插流水 + 更新余额缓存。
+     * 三档输入任给其一（hours / lessons / amount，D9）+ occurDate（默认今天，补录可回填历史）。
+     */
     @SaCheckLogin
     @PostMapping("/{id}/flow")
     public R<Map<String, Object>> flow(@PathVariable Long id, @RequestBody TuitionFlowBo bo) {
@@ -83,7 +114,10 @@ public class TuitionAccountController {
         return R.ok(r);
     }
 
-    /** 消耗台账（流水 join 场次，倒序分页）→ {rows,total}。 */
+    /**
+     * 消耗台账（PRD-018 D2 实时推导）→ {rows,total,pageNum,pageSize,pages,openingBalance,openingAmount,account,shared}。
+     * 🔴 全量流水按业务日期<b>正序</b>累加出逐行剩余，再切片；pageNum 不传 = 最后一页（最近的行）。
+     */
     @SaCheckLogin
     @GetMapping("/{id}/ledger")
     public R<Map<String, Object>> ledger(@PathVariable Long id,
