@@ -470,23 +470,17 @@ public class TuitionAccountService {
      * 消耗台账（AC1/AC4/D2）：全量流水按业务日期正序累加出<b>逐行剩余</b>，再做区间/分页切片。
      * 🔴 默认落到<b>最后一页</b>（最近的行），页内正序 —— 正序 + 第 1 页会让老师首屏永远是最旧记录（L1）。
      *
-     * @return {rows, total, pageNum, pageSize, pages, openingBalance, openingAmount, shared, hoursRemain, ...}
+     * @param mode 切片口径（D13）：{@code cycle} = 最近重置周期；其余/不传 = 全量。
+     *             🔴 显式给了 startDate/endDate 时 mode 失效走区间。<b>页面浏览默认仍是全量</b>
+     *             （只有导出默认吃 cycle），别在这里改默认值。
+     * @return {rows, total, pageNum, pageSize, pages, openingBalance, openingAmount, mode, cycleStart, shared, ...}
      */
-    public Map<String, Object> ledger(Long accountId, String startDate, String endDate,
+    public Map<String, Object> ledger(Long accountId, String startDate, String endDate, String mode,
                                       Integer pageNum, Integer pageSize) {
         BizTuitionAccount acc = requireOwnedAccount(accountId);
         List<Map<String, Object>> all = buildLedgerRows(acc);
-
-        // 区间切片（剩余已在全量累加阶段算完，区间不影响任何一行的剩余值，M10）
-        LocalDate from = parseDate(startDate);
-        LocalDate to = parseDate(endDate);
-        List<Map<String, Object>> filtered = new ArrayList<>();
-        for (Map<String, Object> row : all) {
-            LocalDate d = parseDate((String) row.get("date"));
-            if (from != null && d != null && d.isBefore(from)) continue;
-            if (to != null && d != null && d.isAfter(to)) continue;
-            filtered.add(row);
-        }
+        LedgerSlice sl = sliceRows(all, startDate, endDate, mode);
+        List<Map<String, Object>> filtered = sl.rows;
 
         int ps = pageSize == null || pageSize < 1 ? 100 : pageSize;
         int pages = Math.max(1, (int) Math.ceil(filtered.size() / (double) ps));
@@ -516,9 +510,98 @@ public class TuitionAccountService {
         r.put("pages", pages);
         r.put("openingBalance", num(openingHours));
         r.put("openingAmount", num(openingAmount));
+        // D13 additive：本次生效的切片口径 + 本周期起始日（FE 用来出「本周期」筛选态与期初行）
+        r.put("mode", sl.mode);
+        r.put("cycleStart", sl.cycleStart);
         r.put("account", accountBookVo(acc));
         r.put("shared", linksOf(acc.getId()).size() > 1);
         return r;
+    }
+
+    /** 切片结果（D13）：行 + 期初 + 生效口径，ledger 与 exportLedgerPng 共用同一把刀。 */
+    private static final class LedgerSlice {
+        List<Map<String, Object>> rows;
+        BigDecimal openingHours = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal openingAmount = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        /** 生效口径：all / cycle / range */
+        String mode = "all";
+        /** 本周期起始日（mode=cycle 且找到充值行时才有值） */
+        String cycleStart;
+        /** 切片是否一直取到台账末行（决定导出 meta 写「当前剩余」还是「期末剩余」） */
+        boolean toEnd = true;
+        /** 是否从中间切起（决定要不要渲期初行） */
+        boolean sliced;
+    }
+
+    /**
+     * 台账切片（<b>D13 唯一实现处</b>）：全量行 → 最近重置周期 / 日期区间 / 全量。
+     *
+     * <p>🔴 <b>重置周期</b> = 展示排序后的<b>最后一笔充值行</b>（{@link #FLOW_RECHARGE}）起（含该行）到末行。
+     * 定位必须在 {@link #buildLedgerRows} 排完序之后倒着找 —— <b>不是按 create_time</b>：
+     * 补录的历史充值 create_time 最新、业务日期最旧，按写入时间找会把周期切到几个月前那一笔上。
+     *
+     * <p>🔴 显式给了 startDate/endDate → 区间优先，mode 失效（老师明确指定的时间范围压过默认口径）。
+     * 🔴 账本一笔充值都没有（纯调整/纯扣课）→ 退化为全量，绝不返空表。
+     *
+     * <p>剩余值不受切片影响：每行的 hoursAfter 在全量累加阶段就算完了（M10），
+     * 切片只决定「展示哪几行 + 期初是多少」。
+     */
+    private LedgerSlice sliceRows(List<Map<String, Object>> all, String startDate, String endDate, String mode) {
+        LedgerSlice sl = new LedgerSlice();
+        LocalDate from = parseDate(startDate);
+        LocalDate to = parseDate(endDate);
+
+        if (from == null && to == null && "cycle".equalsIgnoreCase(mode == null ? "" : mode.trim())) {
+            int idx = -1;
+            for (int i = all.size() - 1; i >= 0; i--) {
+                if (FLOW_RECHARGE.equals(String.valueOf(all.get(i).get("flowType")))) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx >= 0) {
+                sl.mode = "cycle";
+                sl.cycleStart = str(all.get(idx).get("date"));
+                sl.rows = new ArrayList<>(all.subList(idx, all.size()));
+                sl.sliced = idx > 0;
+                accumulateOpening(sl, all, idx);
+                return sl;
+            }
+            // 一笔充值都没有 → 全量（mode 保持 "all"，FE 据此知道「本周期」筛不出东西）
+            sl.rows = new ArrayList<>(all);
+            return sl;
+        }
+
+        if (from == null && to == null) {
+            sl.rows = new ArrayList<>(all);
+            return sl;
+        }
+
+        sl.mode = "range";
+        List<Map<String, Object>> filtered = new ArrayList<>();
+        int firstIdx = -1;
+        for (int i = 0; i < all.size(); i++) {
+            LocalDate d = parseDate((String) all.get(i).get("date"));
+            if (from != null && d != null && d.isBefore(from)) continue;
+            if (to != null && d != null && d.isAfter(to)) continue;
+            if (firstIdx < 0) firstIdx = i;
+            filtered.add(all.get(i));
+        }
+        sl.rows = filtered;
+        sl.sliced = firstIdx > 0;
+        sl.toEnd = !filtered.isEmpty()
+            && String.valueOf(filtered.get(filtered.size() - 1).get("id"))
+            .equals(String.valueOf(all.get(all.size() - 1).get("id")));
+        accumulateOpening(sl, all, firstIdx < 0 ? all.size() : firstIdx);
+        return sl;
+    }
+
+    /** 期初 = 切片首行之前的全部行累计（含被区间过滤掉的行，M10）。 */
+    private void accumulateOpening(LedgerSlice sl, List<Map<String, Object>> all, int firstIdx) {
+        for (int i = 0; i < firstIdx && i < all.size(); i++) {
+            sl.openingHours = scale2(sl.openingHours.add(dec(all.get(i).get("hoursDelta"))));
+            sl.openingAmount = scale2(sl.openingAmount.add(dec(all.get(i).get("amount"))));
+        }
     }
 
     /**
@@ -635,8 +718,16 @@ public class TuitionAccountService {
      * ①单位词全线换轨 —— 表头「课时变动/剩余课时」→「时长变动/剩余」，数值一律带「小时」，
      * 单绑账本再挂副显「（N 节）」（D1 v2.1 双单位）；共享账本每人每节时长不同 → <b>只按小时不折节</b>（D4 规则②）。
      * ②共享账本单独出「学生」列（原来是挤在内容列前的 "名 · 内容" 前缀，家长看不清哪列是人）。
+     *
+     * <p>🔄 <b>PRD-018 批6 D13（导出口径）</b>：<b>默认导出「最近重置周期」</b>——从最后一笔充值起到现在的
+     * 消耗，正是家长要看的「这期钱用到哪儿了」（E8 手工单就是这个形态）。显式给 startDate/endDate
+     * 走区间；切片后首行前渲期初行；账本一笔充值都没有则退化全量。
+     * <p>🔄 <b>批6 D14（内容分条）</b>：内容单元格按「｜」/「N.」拆条分行、「XX：」前缀加粗，
+     * 行高按<b>条数</b>估（挤成一坨的长串以前是一行 40 字裹成三行，现在是三条各一行）。
+     *
+     * @param mode 不传/空 = {@code cycle}（本周期）；传 {@code all} 导全量
      */
-    public Map<String, Object> exportLedgerPng(Long accountId) {
+    public Map<String, Object> exportLedgerPng(Long accountId, String startDate, String endDate, String mode) {
         BizTuitionAccount acc = requireOwnedAccount(accountId);
         List<BizStudentAccountLink> links = linksOf(accountId);
         String title = String.join("+", studentNamesOf(accountId));
@@ -645,32 +736,44 @@ public class TuitionAccountService {
         }
         String subjectLabel = links.size() == 1 ? EduTermUtil.subjectLabel(links.get(0).getSubject()) : null;
 
-        List<Map<String, Object>> rows = buildLedgerRows(acc);
-        String html = buildLedgerHtml(title, subjectLabel, acc, rows);
+        List<Map<String, Object>> all = buildLedgerRows(acc);
+        // 🔴 导出默认吃 cycle（与页面浏览默认全量相反，D13）：null/空 → cycle
+        String m0 = mode == null || mode.isBlank() ? "cycle" : mode.trim();
+        LedgerSlice sl = sliceRows(all, startDate, endDate, m0);
+        List<Map<String, Object>> rows = sl.rows;
+
+        String html = buildLedgerHtml(title, subjectLabel, acc, rows, sl);
         // 高度收边（同 FeedbackSheetService BUG-014 口径）：标题条+meta 行+表头+内边距 ≈ 124px，每行 27px。
         // 🔴 内容列每行字数随列数变：批3 加了「学生」列（共享本）与更宽的双单位列，内容列被挤窄 →
         //    仍按 30 字/行估会低估行数、把长内容裁掉。宁可多算（底部留点白），绝不少算。
+        // 🔴 D14：内容拆条后每条独占一行 —— 行高必须按「逐条各自折行数之和」算，
+        //    按整串长度估会把三条挤成一条的高度，长内容直接被裁在图外。
         boolean sharedBook = links.size() > 1;
         double perLine = sharedBook ? 18.0 : (links.size() == 1 ? 21.0 : 26.0);
         int rowsH = 0;
         for (Map<String, Object> row : rows) {
-            int lines = Math.max(1, (int) Math.ceil(str(row.get("content")).length() / perLine));
-            rowsH += lines * 27;
+            rowsH += rowHeight(contentLines(str(row.get("content")), perLine));
+        }
+        if (sl.sliced) {
+            rowsH += rowHeight(1);    // 期初行
         }
         if (rows.isEmpty()) {
-            rowsH = 34;
+            rowsH += 34;
         }
         int height = 124 + rowsH + 14;
         String file = renderUtil.renderToPng(html, "ledger_" + accountId, 720, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);
+        m.put("mode", sl.mode);
+        m.put("cycleStart", sl.cycleStart);
+        m.put("rows", rows.size());
         return m;
     }
 
     /** Excel 风格流水单 HTML（openhtmltopdf 不支持 flex/grid → 纯 table 布局）。 */
     private String buildLedgerHtml(String stuName, String subjectLabel, BizTuitionAccount acc,
-                                   List<Map<String, Object>> rows) {
+                                   List<Map<String, Object>> rows, LedgerSlice sl) {
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><style>");
         sb.append("*{box-sizing:border-box;margin:0;padding:0}");
@@ -691,6 +794,11 @@ public class TuitionAccountService {
         sb.append("table.grid td .sub{font-size:10.5px;font-weight:normal;color:#7d928d}");
         sb.append("tr.in td{background:#f2fbf5;color:#15803d}");
         sb.append("tr.rev td{background:#fdf2f2;color:#b91c1c}");
+        sb.append("tr.op td{background:#f5f8f7;color:#6d7f7b}");
+        // D14 内容分条（朴素口径：分行 + 前缀加粗，不做色块——这是家长手上的纸质件）
+        sb.append("table.grid td .cl{line-height:1.45;padding:1px 0}");
+        sb.append("table.grid td .cl b{font-family:'cjkhei';color:#0b5d56}");
+        sb.append("table.grid td .cl i{font-style:normal;color:#7d928d;padding-right:2px}");
         sb.append("</style></head><body><div class=\"wrap\">");
 
         sb.append("<div class=\"bar\">课时流水单 · ").append(esc(stuName));
@@ -702,9 +810,11 @@ public class TuitionAccountService {
         //    缓存与逐行累加一旦漂移（历史裸 UPDATE / 手工改库），家长手上的单子会自相矛盾：
         //    最后一行写着 8.5，头部却写 10.5。单一事实源 = 流水本身。
         //    金额同口径取末行 amountAfter（AC9：导出金额 = 逐行派生后求和，不是 余额×时薪 再算一次）。
-        BigDecimal remain = rows.isEmpty() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+        //    🔴 D13 切片后取的是<b>切片末行</b>：区间导出报的是「这段结束时还剩多少」，
+        //    本周期导出的切片一直取到末行，仍旧等于当前余额。切片为空 → 退回期初值。
+        BigDecimal remain = rows.isEmpty() ? sl.openingHours
             : scale2(dec(rows.get(rows.size() - 1).get("hoursAfter")));
-        BigDecimal remainAmount = rows.isEmpty() ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+        BigDecimal remainAmount = rows.isEmpty() ? sl.openingAmount
             : scale2(dec(rows.get(rows.size() - 1).get("amountAfter")));
         // 折节基准：单绑账本才有唯一的每节时长；共享本（绑定数≠1）传 null = 只按小时（D4 规则②）
         List<BizStudentAccountLink> links = linksOf(acc.getId());
@@ -731,8 +841,10 @@ public class TuitionAccountService {
             }
             sb.append("<td>").append(price).append("</td>");
         }
-        sb.append("<td>截至 <b>").append(LocalDate.now()).append("</b></td>");
-        sb.append("<td>当前剩余 <b>").append(plain(remain)).append("</b> 小时 · <b>")
+        // D13：统计区间格 —— 本周期 / 指定区间 / 全量（全量沿用原来的「截至 今天」）
+        sb.append("<td>").append(rangeLabel(sl)).append("</td>");
+        sb.append("<td>").append(sl.toEnd ? "当前剩余" : "期末剩余").append(" <b>")
+            .append(plain(remain)).append("</b> 小时 · <b>")
             .append(plain(remainAmount)).append("</b> 元</td>");
         sb.append("</tr></table>");
 
@@ -748,6 +860,17 @@ public class TuitionAccountService {
             .append("<th style=\"width:").append(perLesson != null ? 106 : 88).append("px\">时长变动</th>")
             .append("<th style=\"width:").append(perLesson != null ? 106 : 88).append("px\">剩余</th>")
             .append("</tr>");
+        // D13 期初行：从中间切起时必须交代「这一段开始前手上还有多少」，
+        //    E8 家长单的头一行就是它（那次是 0：前期课时正好用完才充的新钱）。
+        if (sl.sliced) {
+            sb.append("<tr class=\"op\"><td class=\"c\">期初</td><td class=\"c\">—</td>");
+            if (shared) {
+                sb.append("<td class=\"c\"></td>");
+            }
+            sb.append("<td>上期结余</td><td class=\"r\">—</td>");
+            sb.append("<td class=\"r\">").append(dualCell(num(sl.openingHours), perLesson, false)).append("</td>");
+            sb.append("</tr>");
+        }
         for (Map<String, Object> row : rows) {
             String type = String.valueOf(row.get("flowType"));
             String cls = FLOW_RECHARGE.equals(type) ? " class=\"in\"" : (FLOW_REVERSE.equals(type) ? " class=\"rev\"" : "");
@@ -758,7 +881,7 @@ public class TuitionAccountService {
                 // 手工行（充值/调整）不属于某个学生 → 留白，别硬安一个名字
                 sb.append("<td class=\"c\">").append(esc(str(row.get("studentName")))).append("</td>");
             }
-            sb.append("<td>").append(esc(str(row.get("content")))).append("</td>");
+            sb.append("<td>").append(contentCell(str(row.get("content")))).append("</td>");
             sb.append("<td class=\"r\">").append(dualCell(row.get("hoursDelta"), perLesson, true)).append("</td>");
             sb.append("<td class=\"r\">").append(dualCell(row.get("hoursAfter"), perLesson, false)).append("</td>");
             sb.append("</tr>");
@@ -785,6 +908,163 @@ public class TuitionAccountService {
         BigDecimal lessons = scale2(h.divide(perLesson, 6, RoundingMode.HALF_UP));
         String sub = (signed && lessons.signum() > 0 ? "+" : "") + plain(lessons) + " 节";
         return esc(main) + "<span class=\"sub\">（" + esc(sub) + "）</span>";
+    }
+
+    /** meta 行的统计区间格（D13）：本周期 / 指定区间 / 全量。 */
+    private String rangeLabel(LedgerSlice sl) {
+        if ("cycle".equals(sl.mode)) {
+            return "本期 <b>" + esc(nvl(sl.cycleStart)) + "</b> 起至今";
+        }
+        if ("range".equals(sl.mode)) {
+            String a = sl.rows.isEmpty() ? "" : str(sl.rows.get(0).get("date"));
+            String b = sl.rows.isEmpty() ? "" : str(sl.rows.get(sl.rows.size() - 1).get("date"));
+            // 🔴 用「至」不用「~」：波浪号在 openhtmltopdf 的中文字体里渲成上标小尾巴，家长看着像乱码
+            return "区间 <b>" + esc(a) + "</b> 至 <b>" + esc(b) + "</b>";
+        }
+        return "截至 <b>" + LocalDate.now() + "</b>";
+    }
+
+    // ────────────────── 上课内容分条（D14，与 FE utils/lessonContent.ts 同规则） ──────────────────
+
+    /**
+     * 内容串的一条（D14）。
+     *
+     * @param ord   序号形态的条目号（「1.100 以内的加减」的 "1"）；无则 null
+     * @param label 「XX：」分类标签（「思维题：大数的计算」的 "思维题"）；无则 null
+     * @param text  正文
+     */
+    private record ContentSeg(String ord, String label, String text) {
+    }
+
+    /** 「N.」条目标记：串首 或 前面是空白（含全角空格）才算 —— 防「圆周率 3.14」被当成第 3 条。 */
+    private static final java.util.regex.Pattern NUM_ITEM =
+        java.util.regex.Pattern.compile("(?:^|(?<=[\\s\\u3000]))(\\d{1,2})\\s*[.．、]\\s*");
+
+    /** 分类标签上限字数（「拓展奥数」4 字；超了多半是句子里正好有个冒号，不是标签）。 */
+    private static final int LABEL_MAX = 8;
+
+    /**
+     * 上课内容拆条（<b>D14 规则唯一实现处（BE 侧）</b>，与 FE {@code utils/lessonContent.ts} 一一对应）。
+     *
+     * <p>真实数据两形态：
+     * <pre>
+     *   ① 思维题：大数的计算及灵活运用｜同步：大数的认识和改写｜拓展奥数：定义新运算、错题回顾
+     *   ② 1.100 以内的加减　2.100 以内的退位加减　3.找规律
+     * </pre>
+     * ①按「｜」拆；②按行首起的「N.」拆（🔴 <b>≥2 条且首个序号在串首</b>才拆 —— 「1.100」里的小数点
+     * 若按裸正则切会把「100 以内的加减」腰斩，序号必须紧跟分隔空白才算）。
+     * 每条再认「XX：」前缀为分类标签（长 2–8 字、非纯数字；「9:00 上课」的 "9" 不算）。
+     * 拆不出来 = 单条原样返回，绝不改字。
+     */
+    private List<ContentSeg> parseContentSegs(String raw) {
+        List<ContentSeg> out = new ArrayList<>();
+        if (raw == null || raw.isBlank()) {
+            return out;
+        }
+        String s = raw.trim();
+        if (s.indexOf('｜') >= 0 || s.indexOf('|') >= 0) {
+            for (String p : s.split("[｜|]")) {
+                String t = p.trim();
+                if (!t.isEmpty()) {
+                    out.add(labelOf(null, t));
+                }
+            }
+            return out.isEmpty() ? List.of(labelOf(null, s)) : out;
+        }
+        List<ContentSeg> numbered = numberedSegs(s);
+        if (!numbered.isEmpty()) {
+            return numbered;
+        }
+        out.add(labelOf(null, s));
+        return out;
+    }
+
+    /** 「N.」形态拆条；不成立（少于 2 条 / 首个序号不在串首 / 序号不递增）返空表。 */
+    private List<ContentSeg> numberedSegs(String s) {
+        java.util.regex.Matcher m = NUM_ITEM.matcher(s);
+        List<int[]> marks = new ArrayList<>();     // [markStart, textStart, ord]
+        while (m.find()) {
+            marks.add(new int[]{m.start(), m.end(), Integer.parseInt(m.group(1))});
+        }
+        if (marks.size() < 2 || marks.get(0)[0] != 0) {
+            return List.of();
+        }
+        for (int i = 1; i < marks.size(); i++) {
+            if (marks.get(i)[2] <= marks.get(i - 1)[2]) {
+                return List.of();      // 序号不递增 = 多半是小数/时刻被误命中
+            }
+        }
+        List<ContentSeg> out = new ArrayList<>();
+        for (int i = 0; i < marks.size(); i++) {
+            int end = i + 1 < marks.size() ? marks.get(i + 1)[0] : s.length();
+            String text = s.substring(marks.get(i)[1], end).trim();
+            if (!text.isEmpty()) {
+                out.add(labelOf(String.valueOf(marks.get(i)[2]), text));
+            }
+        }
+        return out.size() < 2 ? List.of() : out;
+    }
+
+    /** 认「XX：」分类标签（长 2–8 字、非纯数字、后面还有正文才算）。 */
+    private ContentSeg labelOf(String ord, String text) {
+        int i = text.indexOf('：');
+        if (i < 0) {
+            i = text.indexOf(':');
+        }
+        if (i >= 2 && i <= LABEL_MAX && i + 1 < text.length()) {
+            String lb = text.substring(0, i).trim();
+            String body = text.substring(i + 1).trim();
+            if (!lb.isEmpty() && !body.isEmpty() && !lb.matches("\\d+")) {
+                return new ContentSeg(ord, lb, body);
+            }
+        }
+        return new ContentSeg(ord, null, text);
+    }
+
+    /** 导出单的内容单元格（D14）：一条一行，序号浅色、分类标签加粗。 */
+    private String contentCell(String raw) {
+        List<ContentSeg> segs = parseContentSegs(raw);
+        if (segs.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (ContentSeg g : segs) {
+            sb.append("<div class=\"cl\">");
+            if (g.ord() != null) {
+                sb.append("<i>").append(esc(g.ord())).append(".</i>");
+            }
+            if (g.label() != null) {
+                sb.append("<b>").append(esc(g.label())).append("</b> ");
+            }
+            sb.append(esc(g.text())).append("</div>");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 表格行高估算（px）：单元格上下内边距 + 边框 ≈ 15，每行文字 ≈ 18（12.5px 字 × line-height 1.45）。
+     *
+     * <p>🔴 批6 修正：原口径「行数 × 27」把<b>单行</b>行高估成 27（实测 ≈ 32），一张单子攒下来
+     * 差十几 px，末行底边被裁在图外（本批目检肉眼可见）。拆成「底座 + 每行」两段后，
+     * 单行 33 ≥ 32、三行 69 ≥ 68，各种条数都压得住。
+     */
+    private int rowHeight(int lines) {
+        return 15 + Math.max(1, lines) * 18;
+    }
+
+    /** 内容单元格折行数（D14）：逐条各自折行再求和 —— 按整串长度估会把多条挤成一条的高度。 */
+    private int contentLines(String raw, double perLine) {
+        List<ContentSeg> segs = parseContentSegs(raw);
+        if (segs.isEmpty()) {
+            return 1;
+        }
+        int lines = 0;
+        for (ContentSeg g : segs) {
+            int len = g.text().length() + (g.label() == null ? 0 : g.label().length() + 1)
+                + (g.ord() == null ? 0 : g.ord().length() + 1);
+            lines += Math.max(1, (int) Math.ceil(len / perLine));
+        }
+        return Math.max(1, lines);
     }
 
     // ─────────────────────────── helpers ───────────────────────────

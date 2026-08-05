@@ -115,23 +115,35 @@ public class TuitionAccountController {
     }
 
     /**
-     * 消耗台账（PRD-018 D2 实时推导）→ {rows,total,pageNum,pageSize,pages,openingBalance,openingAmount,account,shared}。
+     * 消耗台账（PRD-018 D2 实时推导）→ {rows,total,pageNum,pageSize,pages,openingBalance,openingAmount,
+     * mode,cycleStart,account,shared}。
      * 🔴 全量流水按业务日期<b>正序</b>累加出逐行剩余，再切片；pageNum 不传 = 最后一页（最近的行）。
+     * 🔴 {@code mode=cycle}（D13）= 只看最近一个重置周期（最后一笔充值起至今）；
+     * <b>不传 = 全量</b>（页面浏览口径不变），给了 startDate/endDate 则 mode 失效走区间。
      */
     @SaCheckLogin
     @GetMapping("/{id}/ledger")
     public R<Map<String, Object>> ledger(@PathVariable Long id,
                                          @RequestParam(required = false) String startDate,
                                          @RequestParam(required = false) String endDate,
+                                         @RequestParam(required = false) String mode,
                                          @RequestParam(required = false) Integer pageNum,
                                          @RequestParam(required = false) Integer pageSize) {
-        return R.ok(accountService.ledger(id, startDate, endDate, pageNum, pageSize));
+        return R.ok(accountService.ledger(id, startDate, endDate, mode, pageNum, pageSize));
     }
 
-    /** 课时流水单导出 PNG（D16）→ {file,url}（下载复用 /teacher/schedule/artifact）。 */
+    /**
+     * 课时流水单导出 PNG（D16）→ {file,url,mode,cycleStart,rows}（下载复用 /teacher/schedule/artifact）。
+     *
+     * <p>🔴 <b>D13 导出口径</b>：body 可空 —— <b>不传 = 最近重置周期</b>（最后一笔充值起至今，
+     * 家长要看的就是「这期钱用到哪儿了」）。要别的范围就传 {@code {"startDate":"","endDate":""}}；
+     * 要整本账传 {@code {"mode":"all"}}。
+     */
     @SaCheckLogin
     @PostMapping("/{id}/export-ledger-png")
-    public R<Map<String, Object>> exportLedgerPng(@PathVariable Long id) {
-        return R.ok(accountService.exportLedgerPng(id));
+    public R<Map<String, Object>> exportLedgerPng(@PathVariable Long id,
+                                                  @RequestBody(required = false) Map<String, String> body) {
+        Map<String, String> b = body == null ? Map.of() : body;
+        return R.ok(accountService.exportLedgerPng(id, b.get("startDate"), b.get("endDate"), b.get("mode")));
     }
 }
