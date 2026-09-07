@@ -98,6 +98,9 @@ public interface IPaperLibraryService {
      */
     PaperDetailVo updateExamPaper(UpdateExamPaperBo bo);
 
+    /** 超管切换官方普通卷公开状态（status 0/1）。 */
+    void changeVisibility(Long paperId, boolean published);
+
     /**
      * PRD-A-005 收尾（A-试卷删除）— 删除试卷（POST /teacher/exam/paper/delete）。
      *

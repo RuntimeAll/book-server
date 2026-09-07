@@ -1,7 +1,7 @@
 package org.dromara.book.domain.bo;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -30,8 +30,14 @@ public class CreateExamPaperBo implements Serializable {
     private String name;
 
     /** 题目 ID 列表 — 顺序即试卷内题目顺序（试题栏 LS 顺序），至少 1 题 */
-    @NotEmpty(message = "题目列表不能为空")
     private List<Long> questionIds;
+
+    private String requestId;
+
+    @Valid
+    private List<PaperQuestionInputBo> questions;
+
+    private Integer suggestTime;
 
     /** 试卷分类 ID — 可选，默认 null（卷库目录树根级别） */
     private String paperCategoryId;

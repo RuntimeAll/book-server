@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateQuestionBo;
 import org.dromara.book.domain.bo.DiscardDraftsBo;
 import org.dromara.book.domain.bo.QuestionPageBo;
+import org.dromara.book.domain.bo.QuestionBatchBo;
 import org.dromara.book.domain.bo.ReplaceQuestionBo;
 import org.dromara.book.domain.bo.UpdateAttrsBo;
 import org.dromara.book.domain.bo.UpdateBlockBo;
@@ -16,9 +17,11 @@ import org.dromara.book.domain.vo.KpTagStatVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
 import org.dromara.book.domain.vo.PatternVo;
 import org.dromara.book.domain.vo.QuestionDetailVo;
+import org.dromara.book.domain.vo.QuestionBatchVo;
 import org.dromara.book.domain.vo.QuestionItemVo;
 import org.dromara.book.domain.vo.QuestionLineageVo;
 import org.dromara.book.service.IQuestionService;
+import org.dromara.book.service.QuestionBatchService;
 import org.dromara.common.core.domain.R;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.satoken.utils.LoginHelper;
@@ -48,6 +51,14 @@ import java.util.List;
 public class QuestionController {
 
     private final IQuestionService questionService;
+    private final QuestionBatchService questionBatchService;
+
+    /** Bounded structured selection; missing IDs are reported explicitly. */
+    @SaCheckLogin
+    @PostMapping("/batch")
+    public R<QuestionBatchVo> batch(@RequestBody @Valid QuestionBatchBo bo) {
+        return R.ok(questionBatchService.query(bo, LoginHelper.getUserId(), LoginHelper.isSuperAdmin()));
+    }
 
     /**
      * POST /teacher/question/page — 分页拉题。

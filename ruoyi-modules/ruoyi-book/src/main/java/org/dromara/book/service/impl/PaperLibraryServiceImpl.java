@@ -2,6 +2,7 @@ package org.dromara.book.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
@@ -23,8 +24,9 @@ import org.dromara.book.mapper.BizPaperCategoryMapper;
 import org.dromara.book.mapper.BizPaperMapper;
 import org.dromara.book.mapper.BizPaperQuestionMapper;
 import org.dromara.book.mapper.BizPaperSectionMapper;
-import org.dromara.book.service.IPaperDetailService;
 import org.dromara.book.service.IPaperLibraryService;
+import org.dromara.book.service.paper.PaperCompositionService;
+import org.dromara.book.service.paper.SelectionRules;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
 import org.dromara.common.satoken.utils.LoginHelper;
@@ -32,10 +34,8 @@ import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,8 +51,7 @@ import java.util.Set;
  *   <li>3001 根节点 parentId override 为 "1"（misikt 真响应历史遗留 bug，字节级对齐）</li>
  * </ul>
  *
- * <p>🔴 PRD-B-013 减法：共享标记列已 DROP（biz_paper / biz_paper_category），原 public 分支/toVo 内相关
- * 逻辑同步清除；公共卷库归属唯独靠 subject_id 分类前缀（3001/3003/3004）。
+ * <p>公开查询只读取官方普通卷；分类用于检索，不授予读取权限。
  *
  * @author backend-dev
  */
@@ -65,10 +64,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
     private final BizPaperMapper bizPaperMapper;
     private final BizPaperSectionMapper bizPaperSectionMapper;
     private final BizPaperQuestionMapper bizPaperQuestionMapper;
-    private final IPaperDetailService paperDetailService;
-
-    /** Q 卡默认 section title — FE 不展示，仅满足 biz_paper_question.section_id NOT NULL 约束 */
-    private static final String DEFAULT_SECTION_TITLE = "题目";
+    private final PaperCompositionService compositionService;
 
     /** misikt 默认每页 10，pageIndex 兜底 1 */
     private static final int DEFAULT_PAGE_SIZE = 10;
@@ -193,7 +189,7 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         int pageIndex = bo.getPageIndex() == null || bo.getPageIndex() <= 0
             ? DEFAULT_PAGE_INDEX : bo.getPageIndex();
         int pageSize = bo.getPageSize() == null || bo.getPageSize() <= 0
-            ? DEFAULT_PAGE_SIZE : bo.getPageSize();
+            ? DEFAULT_PAGE_SIZE : Math.min(bo.getPageSize(), SelectionRules.MAX_BATCH_SIZE);
 
         // 数据隔离：取当前登录用户 userId（create_by 存数字字符串）
         // PRD-C-212 D5（2026-07-04）：公共卷库(scope!=mine)放开游客只读浏览（security.excludes
@@ -201,14 +197,11 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         Long currentUserId = LoginHelper.getUserId();
 
         QueryWrapper<PaperListItemVo> wrapper = new QueryWrapper<>();
-        wrapper.eq("p.status", "1");
 
-        // scope 分流：'mine' → 只看自己创建的；其余（'public' / 缺省）→ 公共卷库，按分类树归属过滤
-        // 🔴 PRD-B-013: 共享标记列已 DROP；公共卷库语义 = 按 paper_category 分类树（subject_id 前缀）。
-        // （2026-06-02 修：历史「共享开关」字段已在 PRD-B-013 V15 DROP 清掉，绝不依赖。）
+        // mine 按本人归属；public 仅官方卷，分类筛选不能将私人卷变成公共卷。
         if ("mine".equals(bo.getScope())) {
             if (currentUserId == null) {
-                throw new ServiceException("未登录用户不能访问我的卷库");
+                throw new ServiceException("未登录用户不能访问我的卷库", 401);
             }
             // 我的卷库：只看当前登录用户自己创建的，绝不信任前端传的 createBy
             wrapper.eq("p.create_by", String.valueOf(currentUserId));
@@ -216,10 +209,17 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
             if (bo.getPaperKind() != null && !bo.getPaperKind().isBlank()) {
                 wrapper.eq("p.paper_kind", bo.getPaperKind());
             }
+            wrapper.in("p.status", List.of(BizPaper.STATUS_DRAFT, BizPaper.STATUS_PUBLISHED));
         } else {
-            // 公共卷库：不加 create_by 归属过滤，靠下方 subject_id 分类前缀筛。
-            // 🔴 PRD-B-101 G6：备课卷私有，公共口径接口层显式排除（不只前端隐藏）。
+            // 分类只负责检索，不能作为公开授权依据。
+            wrapper.eq("p.create_by", SelectionRules.OFFICIAL_OWNER_ID);
             wrapper.ne("p.paper_kind", "2");
+            if (LoginHelper.isSuperAdmin(currentUserId)) {
+                // 超管需要看到自己的未公开官方卷，才能重新公开。
+                wrapper.in("p.status", List.of(BizPaper.STATUS_DRAFT, BizPaper.STATUS_PUBLISHED));
+            } else {
+                wrapper.eq("p.status", BizPaper.STATUS_PUBLISHED);
+            }
         }
 
         if (bo.getName() != null && !bo.getName().isEmpty()) {
@@ -235,200 +235,74 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
                 wrapper.likeRight("p.subject_id", sid);
             }
         }
-        wrapper.orderByDesc("p.sort");
+        wrapper.orderByDesc("p.create_time", "p.id");
 
         Page<PaperListItemVo> mpPage = new Page<>(pageIndex, pageSize);
         IPage<PaperListItemVo> result = bizPaperMapper.selectPaperListPage(mpPage, wrapper);
+        result.getRecords().forEach(item -> {
+            String ownerId = item.getCreateUser() == null ? null : item.getCreateUser().toString();
+            item.setPublished(BizPaper.STATUS_PUBLISHED.equals(String.valueOf(item.getStatus())));
+            item.setCanManage(SelectionRules.canManagePaper(ownerId, currentUserId));
+            item.setCanChangeVisibility(SelectionRules.canChangeVisibility(ownerId, item.getPaperKind(), currentUserId));
+        });
         return MisiktPageVo.of(result);
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public CreateExamPaperVo createExamPaper(CreateExamPaperBo bo) {
-        Long currentUserId = LoginHelper.getUserId();
-        if (currentUserId == null) {
-            throw new ServiceException("未登录用户不能创建试卷");
-        }
-        // 卷位（paper_slots）已退役：不再接收/校验 lessonId+slotSeq，也不绑卷位，统一普通卷 paper_kind='1'。
-        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(currentUserId), "1");
-        return vo;
+        return compositionService.create(bo, LoginHelper.getUserId());
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public CreateExamPaperVo createExamPaperForTeacher(CreateExamPaperBo bo, Long teacherId) {
-        if (teacherId == null) {
-            throw new ServiceException("归属老师 id 不能为空");
-        }
-        // 卷位（paper_slots）已退役：不再接收/校验 lessonId+slotSeq，也不绑卷位，统一普通卷 paper_kind='1'。
-        CreateExamPaperVo vo = doCreateExamPaper(bo, String.valueOf(teacherId), "1");
-        return vo;
+        return compositionService.create(bo, teacherId);
     }
 
-    /**
-     * 落库核心：写 biz_paper + section + 批量 paper_question。create_by 由调用方决定
-     * （登录态 or 显式 teacherId），是两个入口的唯一差异。paperKind='1'普通/'2'备课卷（PRD-B-101）。
-     */
-    private CreateExamPaperVo doCreateExamPaper(CreateExamPaperBo bo, String ownerIdStr, String paperKind) {
-        if (bo.getQuestionIds() == null || bo.getQuestionIds().isEmpty()) {
-            throw new ServiceException("题目列表不能为空");
-        }
-
-        int qCount = bo.getQuestionIds().size();
-        Date now = new Date();
-        String userIdStr = ownerIdStr;
-
-        // 1. INSERT biz_paper
-        BizPaper paper = new BizPaper();
-        paper.setName(bo.getName());
-        paper.setPaperCategoryId(bo.getPaperCategoryId());
-        paper.setQuestionCount(qCount);
-        paper.setScore(BigDecimal.ZERO);
-        paper.setPaperType(1);
-        paper.setPaperKind(paperKind == null ? "1" : paperKind);
-        paper.setStatus("1");
-        paper.setSort(0);
-        paper.setCreateBy(userIdStr);
-        paper.setCreateTime(now);
-        paper.setUpdateBy(userIdStr);
-        paper.setUpdateTime(now);
-        bizPaperMapper.insert(paper);
-        Long newPaperId = paper.getId();
-
-        // 2. INSERT biz_paper_section（默认 1 个分组，所有题挂下面）
-        BizPaperSection section = new BizPaperSection();
-        section.setPaperId(newPaperId);
-        section.setTitle(DEFAULT_SECTION_TITLE);
-        section.setSort(1);
-        bizPaperSectionMapper.insert(section);
-        Long newSectionId = section.getId();
-
-        // 3. 批量 INSERT biz_paper_question（sort 按试题栏 LS 顺序 1/2/3...）
-        List<BizPaperQuestion> pqList = new ArrayList<>(qCount);
-        for (int i = 0; i < qCount; i++) {
-            BizPaperQuestion pq = new BizPaperQuestion();
-            pq.setPaperId(newPaperId);
-            pq.setSectionId(newSectionId);
-            pq.setQuestionId(bo.getQuestionIds().get(i));
-            pq.setSort(i + 1);
-            pq.setScore(BigDecimal.ZERO);
-            pqList.add(pq);
-        }
-        bizPaperQuestionMapper.insertBatch(pqList);
-
-        log.info("【paper·create】 userId={}, paperName={}, questionCount={}, paperId={}", userIdStr, bo.getName(), qCount, newPaperId);
-        return new CreateExamPaperVo(newPaperId, qCount);
+    @Override
+    public PaperDetailVo updateExamPaper(UpdateExamPaperBo bo) {
+        return compositionService.update(bo, LoginHelper.getUserId());
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public PaperDetailVo updateExamPaper(UpdateExamPaperBo bo) {
+    public void changeVisibility(Long paperId, boolean published) {
         Long currentUserId = LoginHelper.getUserId();
         if (currentUserId == null) {
-            throw new ServiceException("未登录用户不能编辑试卷");
+            throw new ServiceException("未登录不能切换试卷公开状态", 401);
         }
-        if (bo.getPaperId() == null) {
-            throw new ServiceException("试卷ID不能为空");
+        if (paperId == null || paperId <= 0) {
+            throw new ServiceException("试卷ID必须为正整数", 400);
         }
-        if (bo.getQuestions() == null || bo.getQuestions().isEmpty()) {
-            throw new ServiceException("题目列表不能为空");
+        if (!LoginHelper.isSuperAdmin(currentUserId)) {
+            throw new ServiceException("仅超级管理员可切换试卷公开状态", 403);
         }
 
-        Long paperId = bo.getPaperId();
-
-        // biz_paper / biz_paper_question 走手动 wrapper 隔离、无 @DataPermission 注解，
-        // 注解式数据权限拦截器不会注入 AND create_by=登录id；此处 ignore 包裹作防御（无注解时为 no-op），
-        // 规避 PRD-A-002 沉淀的「数据权限拦截致写 0 行静默假成功」坑。
-        //
-        // 🔴 再叠一层 TenantHelper.ignore（PRD-A-005 G4 修复）：BaseMapper 继承方法
-        // selectById / updateById 的 mappedStatementId namespace 落在 BaseMapper（非
-        // BizPaperMapper），故 BizPaperMapper 类级 @InterceptorIgnore(tenantLine) 命中不到
-        // 这两个继承方法 → 多租户拦截器仍对 biz_paper 注入 AND tenant_id=? → 该表无此列报
-        // SQLSyntaxErrorException 致整事务回滚。TenantHelper.ignore 走线程级 ThreadLocal
-        // IgnoreStrategy，在 SQL 执行时刻判断、对继承方法同样生效，补上类级注解盲区。
-        // 与 DataPermissionHelper.ignore 写 IgnoreStrategy 不同字段、可叠加、互不覆盖。
-        // 覆盖事务全链路：selectById 校验存在 + delete + insertBatch + updateById 重算。
-        return TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
-            // 1. 校验 paperId 存在
-            BizPaper existing = bizPaperMapper.selectById(paperId);
-            if (existing == null) {
-                throw new ServiceException("试卷不存在: " + paperId);
+        TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
+            BizPaper paper = bizPaperMapper.lockById(paperId);
+            if (paper == null || (!BizPaper.STATUS_DRAFT.equals(paper.getStatus())
+                && !BizPaper.STATUS_PUBLISHED.equals(paper.getStatus()))) {
+                throw new ServiceException("试卷不存在", 404);
             }
-
-            // 1.1 owner 校验（PRD-A-005 收尾 C-权限锁死）：只能编辑本人创建的卷，公共卷/他人卷一律拒绝。
-            //     绝不信任前端，归属一律以 create_by vs LoginHelper.getUserId() 为准。
-            if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
-                throw new ServiceException("无权编辑非本人创建的试卷");
+            if (!SelectionRules.isOfficialOrdinaryPaper(paper.getCreateBy(), paper.getPaperKind())) {
+                throw new ServiceException("无权切换非官方普通卷的公开状态", 403);
             }
-
-            log.info("【paper·update】 userId={}, paperId={}, oldName={}, newName={}", currentUserId, paperId, existing.getName(), bo.getName());
-
-            Date now = new Date();
-            String userIdStr = String.valueOf(currentUserId);
-
-            // 2. 删该 paperId 旧 biz_paper_question 全部行
-            LambdaQueryWrapper<BizPaperQuestion> delWrapper = new LambdaQueryWrapper<>();
-            delWrapper.eq(BizPaperQuestion::getPaperId, paperId);
-            bizPaperQuestionMapper.delete(delWrapper);
-
-            // 3. 按 questions 批量重插（section_id / question_id / sort / score）
-            List<UpdateExamPaperBo.UpdateExamPaperQuestionBo> items = bo.getQuestions();
-            BigDecimal totalScore = BigDecimal.ZERO;
-            List<BizPaperQuestion> pqList = new ArrayList<>(items.size());
-            for (UpdateExamPaperBo.UpdateExamPaperQuestionBo item : items) {
-                BizPaperQuestion pq = new BizPaperQuestion();
-                pq.setPaperId(paperId);
-                pq.setSectionId(item.getSectionId());
-                pq.setQuestionId(item.getQuestionId());
-                pq.setSort(item.getSort());
-                BigDecimal score = item.getScore() == null ? BigDecimal.ZERO : item.getScore();
-                pq.setScore(score);
-                totalScore = totalScore.add(score);
-                pqList.add(pq);
+            String targetStatus = published ? BizPaper.STATUS_PUBLISHED : BizPaper.STATUS_DRAFT;
+            if (targetStatus.equals(paper.getStatus())) {
+                return null;
             }
-            bizPaperQuestionMapper.insertBatch(pqList);
-
-            // 4. 重算并更新 biz_paper 的 question_count + 总 score（+ name / paperCategoryId / suggestTime 如传）
-            BizPaper update = new BizPaper();
-            update.setId(paperId);
-            update.setQuestionCount(items.size());
-            update.setScore(totalScore);
-            if (bo.getName() != null) {
-                update.setName(bo.getName());
+            LambdaUpdateWrapper<BizPaper> update = new LambdaUpdateWrapper<BizPaper>()
+                .eq(BizPaper::getId, paperId)
+                .eq(BizPaper::getCreateBy, SelectionRules.OFFICIAL_OWNER_ID)
+                .ne(BizPaper::getPaperKind, "2")
+                .in(BizPaper::getStatus, BizPaper.STATUS_DRAFT, BizPaper.STATUS_PUBLISHED)
+                .set(BizPaper::getStatus, targetStatus)
+                .set(BizPaper::getUpdateBy, currentUserId.toString())
+                .set(BizPaper::getUpdateTime, new java.util.Date());
+            if (bizPaperMapper.update(null, update) != 1) {
+                throw new ServiceException("试卷公开状态更新失败");
             }
-            if (bo.getPaperCategoryId() != null) {
-                update.setPaperCategoryId(bo.getPaperCategoryId());
-            }
-            // PRD-A-007 T2：suggestTime 可选，传则写 biz_paper.suggest_time
-            if (bo.getSuggestTime() != null) {
-                update.setSuggestTime(bo.getSuggestTime());
-            }
-            update.setUpdateBy(userIdStr);
-            update.setUpdateTime(now);
-            bizPaperMapper.updateById(update);
-
-            // PRD-A-007 T2：sections 可选 — 逐条更新已有 biz_paper_section 的 title/sort
-            // sectionId 非空才更新（空 = 新建，v1 本期不做）
-            if (bo.getSections() != null && !bo.getSections().isEmpty()) {
-                for (UpdateExamPaperBo.SectionBo sectionBo : bo.getSections()) {
-                    if (sectionBo.getSectionId() == null) {
-                        // 新建大题 v1 不做，跳过
-                        continue;
-                    }
-                    BizPaperSection sectionUpdate = new BizPaperSection();
-                    sectionUpdate.setId(sectionBo.getSectionId());
-                    if (sectionBo.getName() != null) {
-                        sectionUpdate.setTitle(sectionBo.getName());
-                    }
-                    if (sectionBo.getSort() != null) {
-                        sectionUpdate.setSort(sectionBo.getSort());
-                    }
-                    bizPaperSectionMapper.updateById(sectionUpdate);
-                }
-            }
-
-            // 5. 返更新后 PaperDetailVo（复用 detail 查询）
-            return paperDetailService.getPaperDetail(paperId);
+            log.info("【paper·visibility】 userId={}, paperId={}, published={}", currentUserId, paperId, published);
+            return null;
         }));
     }
 
@@ -437,10 +311,10 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
     public void deleteExamPaper(Long paperId) {
         Long currentUserId = LoginHelper.getUserId();
         if (currentUserId == null) {
-            throw new ServiceException("未登录用户不能删除试卷");
+            throw new ServiceException("未登录用户不能删除试卷", 401);
         }
-        if (paperId == null) {
-            throw new ServiceException("试卷ID不能为空");
+        if (paperId == null || paperId <= 0) {
+            throw new ServiceException("试卷ID必须为正整数", 400);
         }
 
         // biz_paper / biz_paper_question / biz_paper_section 三表均无 tenant_id 列，
@@ -448,13 +322,13 @@ public class PaperLibraryServiceImpl implements IPaperLibraryService {
         // 注入 AND tenant_id=? 报 Unknown column 'tenant_id'（PRD-A-005 G4 已踩）。
         // 故全事务体走 TenantHelper.ignore(DataPermissionHelper.ignore(...)) 线程级包裹。
         TenantHelper.ignore(() -> DataPermissionHelper.ignore(() -> {
-            // 1. owner 校验：只能删本人创建的卷，公共卷/他人卷一律拒绝
-            BizPaper existing = bizPaperMapper.selectById(paperId);
+            // Official papers are managed by the super administrator; private papers by their owner.
+            BizPaper existing = bizPaperMapper.lockById(paperId);
             if (existing == null) {
-                throw new ServiceException("试卷不存在: " + paperId);
+                throw new ServiceException("试卷不存在: " + paperId, 404);
             }
-            if (!String.valueOf(currentUserId).equals(existing.getCreateBy())) {
-                throw new ServiceException("无权删除非本人创建的试卷");
+            if (!SelectionRules.canManagePaper(existing.getCreateBy(), currentUserId)) {
+                throw new ServiceException("无权删除非本人创建的试卷", 403);
             }
 
             log.info("【paper·delete】 userId={}, paperId={}, paperName={}", currentUserId, paperId, existing.getName());

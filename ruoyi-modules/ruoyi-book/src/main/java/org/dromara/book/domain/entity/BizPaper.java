@@ -31,6 +31,15 @@ import java.util.Date;
 @TableName("biz_paper")
 public class BizPaper implements Serializable {
 
+    /** 试卷状态：草稿（未公开）。 */
+    public static final String STATUS_DRAFT = "0";
+
+    /** 试卷状态：已发布；仅官方普通卷对其他用户公开。 */
+    public static final String STATUS_PUBLISHED = "1";
+
+    /** 试卷状态：软删。 */
+    public static final String STATUS_DELETED = "2";
+
     @Serial
     private static final long serialVersionUID = 1L;
 

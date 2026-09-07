@@ -1,9 +1,13 @@
 package org.dromara.book.service.impl;
 
 import lombok.RequiredArgsConstructor;
+import org.dromara.book.domain.entity.BizPaper;
 import org.dromara.book.domain.vo.PaperListItemVo;
 import org.dromara.book.mapper.BizPaperBasketMapper;
+import org.dromara.book.mapper.BizPaperMapper;
+import org.dromara.common.core.exception.ServiceException;
 import org.dromara.book.service.IPaperBasketService;
+import org.dromara.book.service.paper.SelectionRules;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -29,13 +33,16 @@ import java.util.List;
 public class PaperBasketServiceImpl implements IPaperBasketService {
 
     private final BizPaperBasketMapper bizPaperBasketMapper;
+    private final BizPaperMapper paperMapper;
 
     @Override
     public void addBasket(Long userId, Long paperId) {
         if (userId == null || paperId == null) {
             return;
         }
-        // INSERT IGNORE — 命中复合主键则忽略；命中也返 R.ok()（misikt 真实行为：重复加不报错）
+        if (paperMapper.selectPaperDetailHeader(paperId, userId.toString()) == null) {
+            throw new ServiceException("试卷不存在或无权访问", 403);
+        }
         bizPaperBasketMapper.insertIgnore(userId, paperId);
     }
 
@@ -56,6 +63,12 @@ public class PaperBasketServiceImpl implements IPaperBasketService {
         if (records == null || records.isEmpty()) {
             return Collections.emptyList();
         }
+        records.forEach(item -> {
+            String ownerId = item.getCreateUser() == null ? null : item.getCreateUser().toString();
+            item.setPublished(BizPaper.STATUS_PUBLISHED.equals(String.valueOf(item.getStatus())));
+            item.setCanManage(SelectionRules.canManagePaper(ownerId, userId));
+            item.setCanChangeVisibility(SelectionRules.canChangeVisibility(ownerId, item.getPaperKind(), userId));
+        });
         return records;
     }
 

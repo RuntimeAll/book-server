@@ -1,6 +1,8 @@
 package org.dromara.book.domain.vo;
 
 import lombok.Data;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 
 import java.io.Serial;
 import java.io.Serializable;
@@ -31,6 +33,7 @@ public class QuestionItemVo implements Serializable {
     @Serial
     private static final long serialVersionUID = 1L;
 
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long id;
 
     /**

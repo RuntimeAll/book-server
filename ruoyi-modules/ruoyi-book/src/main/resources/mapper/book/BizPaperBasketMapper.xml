@@ -36,6 +36,7 @@
         <result property="createUser" column="create_user_int"/>
         <result property="subjectId" column="subject_id"/>
         <result property="paperType" column="paper_type"/>
+        <result property="paperKind" column="paper_kind"/>
         <result property="status" column="status_int"/>
         <result property="sort" column="sort"/>
     </resultMap>
@@ -69,9 +70,12 @@
       统计当前用户筐卷数（角标 — basketNum 端点）。
     -->
     <select id="countByUser" resultType="long">
+        <bind name="officialOwnerId" value="@org.dromara.book.service.paper.SelectionRules@OFFICIAL_OWNER_ID"/>
         SELECT COUNT(*)
-        FROM biz_paper_basket
-        WHERE user_id = #{userId}
+        FROM biz_paper_basket b JOIN biz_paper p ON p.id = b.paper_id
+        WHERE b.user_id = #{userId}
+          AND (p.status = '1' OR (p.status = '0' AND p.create_by = #{userId}))
+          AND (p.create_by = #{userId} OR (p.create_by = #{officialOwnerId} AND p.paper_kind &lt;&gt; '2'))
     </select>
 
     <!--
@@ -79,23 +83,26 @@
       字段口径完全对齐 BizPaperMapper.xml 的 PaperListItemMap（CAST 转 Integer 对齐 misikt 真响应）。
     -->
     <select id="selectBasketPapersByUser" resultMap="BasketPaperListItemMap">
+        <bind name="officialOwnerId" value="@org.dromara.book.service.paper.SelectionRules@OFFICIAL_OWNER_ID"/>
         SELECT
             p.id,
             p.name,
             p.question_count,
-            CAST(p.score AS SIGNED) AS score_int,
+            p.score AS score_int,
             p.suggest_time,
             p.create_time,
             CAST(p.create_by AS SIGNED) AS create_user_int,
             p.subject_id,
             p.paper_type,
+            p.paper_kind,
             CAST(p.status AS SIGNED) AS status_int,
             p.sort
         FROM biz_paper_basket b
         INNER JOIN biz_paper p ON p.id = b.paper_id
         WHERE b.user_id = #{userId}
-          AND p.status = '1'
-        ORDER BY b.add_time DESC
+          AND (p.status = '1' OR (p.status = '0' AND p.create_by = #{userId}))
+          AND (p.create_by = #{userId} OR (p.create_by = #{officialOwnerId} AND p.paper_kind &lt;&gt; '2'))
+        ORDER BY b.add_time DESC, b.paper_id DESC
     </select>
 
 </mapper>

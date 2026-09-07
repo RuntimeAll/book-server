@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.CreateExamPaperBo;
 import org.dromara.book.domain.bo.PaperLazyTreeBo;
 import org.dromara.book.domain.bo.PaperPageBo;
+import org.dromara.book.domain.bo.PaperIdBo;
+import org.dromara.book.domain.bo.PaperVisibilityBo;
 import org.dromara.book.domain.bo.UpdateExamPaperBo;
 import org.dromara.book.domain.vo.CreateExamPaperVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
@@ -145,6 +147,24 @@ public class PaperLibraryController {
     }
 
     /**
+     * POST /teacher/exam/paper/visibility — 超管切换官方普通卷公开状态。
+     *
+     * <p>body：{@code {"paperId":"2798", "published":false}}；服务端只允许内置超管操作
+     * 官方普通卷，普通教师即使知道 paperId 也不能调用。
+     */
+    @SaCheckLogin
+    @PostMapping("/visibility")
+    public void visibility(@Valid @RequestBody PaperVisibilityBo body) {
+        Long paperId;
+        try {
+            paperId = Long.valueOf(body.getPaperId());
+        } catch (NumberFormatException exception) {
+            throw new org.dromara.common.core.exception.ServiceException("试卷ID超出有效范围", 400);
+        }
+        paperLibraryService.changeVisibility(paperId, body.getPublished());
+    }
+
+    /**
      * POST /teacher/exam/paper/delete — PRD-A-005 收尾（A-试卷删除）。
      *
      * <p>请求 body：{@code {"paperId": 2798}}
@@ -157,11 +177,13 @@ public class PaperLibraryController {
      */
     @SaCheckLogin
     @PostMapping("/delete")
-    public Object delete(@RequestBody Map<String, Object> body) {
-        if (body == null || body.get("paperId") == null) {
-            throw new org.dromara.common.core.exception.ServiceException("试卷ID不能为空");
+    public Object delete(@Valid @RequestBody PaperIdBo body) {
+        Long paperId;
+        try {
+            paperId = Long.valueOf(body.getPaperId());
+        } catch (NumberFormatException exception) {
+            throw new org.dromara.common.core.exception.ServiceException("试卷ID超出有效范围", 400);
         }
-        Long paperId = Long.valueOf(body.get("paperId").toString());
         paperLibraryService.deleteExamPaper(paperId);
         return null;
     }

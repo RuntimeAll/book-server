@@ -1,5 +1,12 @@
 # book-server / sql
 
+## 现行部署补充（2026-09-07）
+
+PRD-028 使用人工核验后执行的增量 DDL，不新增 Flyway 迁移。部署前先检查
+[PRD-028 部署前置说明](prd-028/README.md) 和 [schema.sql](prd-028/schema.sql)，
+先完成目标库缺失的结构变更，再部署匹配的前后端版本；不迁移或删除历史数据。
+下方 Flyway 预留段及旧区说明为历史记录，不作为本轮操作指令。
+
 加新不改老；详见 `.claude/skills/sql-migration/SKILL.md`
 
 > 🔴 **迁移的真实执行位置 = `ruoyi-admin/src/main/resources/db/migration/`**（flyway `locations`，BE 启动 `validate-on-migrate` 自动 apply），**不是本 `sql/` 目录**。本目录现仅放 RuoYi 系统初始化 SQL + `dev-fix/` 一次性对账脚本。新增业务迁移请直接放 `db/migration/`。

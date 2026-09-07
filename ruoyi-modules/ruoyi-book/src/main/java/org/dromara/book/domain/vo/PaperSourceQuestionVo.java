@@ -1,5 +1,8 @@
 package org.dromara.book.domain.vo;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
+
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -39,4 +42,13 @@ public class PaperSourceQuestionVo extends QuestionDetailVo {
      * 题在卷内分值（biz_paper_question.score DECIMAL(5,2)，NULLABLE）
      */
     private BigDecimal pqScore;
+
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long paperQuestionId;
+
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long sourceBookId;
+
+    @JsonSerialize(using = ToStringSerializer.class)
+    private Long sourceItemId;
 }

@@ -1,5 +1,8 @@
 package org.dromara.book.domain.vo;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
+
 import lombok.Data;
 
 import java.io.Serial;
@@ -48,6 +51,7 @@ public class PaperDetailVo implements Serializable {
     /**
      * 试卷 id（biz_paper.id）
      */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long paperId;
 
     /**
@@ -60,8 +64,10 @@ public class PaperDetailVo implements Serializable {
      */
     private String subjectId;
 
+    private String paperCategoryId;
+
     /**
-     * 卷总分（biz_paper.score DECIMAL(6,2)）
+     * 卷总分（biz_paper.score DECIMAL(8,2)）
      */
     private BigDecimal score;
 
@@ -87,10 +93,12 @@ public class PaperDetailVo implements Serializable {
 
     /**
      * 创建人 user_id（biz_paper.create_by VARCHAR(64) 存数字字符串）。
-     * <p>PRD-A-005 收尾新增：FE 用它判 owner —— == 当前登录 userId → 本人卷（可编辑/删除）；
-     * 否则即公共卷（detail 越权 SQL 已保证只返本人或公共卷）→ 编辑/删除按钮锁死。
+     * Current-caller management permission is exposed separately as canManage.
      */
     private String createBy;
+
+    /** Current caller may edit and delete this paper; write endpoints enforce the same policy. */
+    private boolean canManage;
 
     /**
      * AI 命题分析（biz_paper.remark TEXT）—— 录入 agent 读透全卷后产出的教师视角定性总评（markdown）。

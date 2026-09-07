@@ -4,10 +4,10 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 
 import java.io.Serial;
 import java.io.Serializable;
-import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -58,25 +58,16 @@ public class UpdateExamPaperBo implements Serializable {
      * 试卷内单题项（biz_paper_question 一行）。
      */
     @Data
-    public static class UpdateExamPaperQuestionBo implements Serializable {
+    @EqualsAndHashCode(callSuper = true)
+    public static class UpdateExamPaperQuestionBo extends PaperQuestionInputBo implements Serializable {
 
         @Serial
         private static final long serialVersionUID = 1L;
 
-        /** 题目 id（biz_paper_question.question_id） — 必填 */
-        @NotNull(message = "题目ID不能为空")
-        private Long questionId;
+        private Long paperQuestionId;
 
         /** 大题分组 id（biz_paper_question.section_id） — 必填，题挂在该 section 下 */
-        @NotNull(message = "大题分组ID不能为空")
         private Long sectionId;
-
-        /** 卷内排序（biz_paper_question.sort） — 必填 */
-        @NotNull(message = "题目排序不能为空")
-        private Integer sort;
-
-        /** 分值（biz_paper_question.score） — 可选，缺省按 0 处理 */
-        private BigDecimal score;
     }
 
     /**

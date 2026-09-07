@@ -13,12 +13,15 @@ import org.dromara.book.domain.vo.ExportRecordVo;
 import org.dromara.book.domain.vo.ExportRetryVo;
 import org.dromara.book.domain.vo.ExportSubmitVo;
 import org.dromara.book.domain.vo.MisiktPageVo;
+import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.mapper.BizExportRecordMapper;
+import org.dromara.book.mapper.BizPaperMapper;
 import org.dromara.book.service.ExportPdfWorker;
 import org.dromara.book.service.IExportRecordService;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.oss.factory.OssFactory;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -52,6 +55,7 @@ public class ExportRecordServiceImpl implements IExportRecordService {
     private static final int ROLLING_N = 20;
 
     private final BizExportRecordMapper exportRecordMapper;
+    private final BizPaperMapper paperMapper;
     private final ExportPdfWorker exportPdfWorker;
     private final ObjectMapper objectMapper;
 
@@ -86,10 +90,13 @@ public class ExportRecordServiceImpl implements IExportRecordService {
             throw new ServiceException("导出配置序列化失败");
         }
 
+        Long paperId = parsePaperId(bo.getPaperId());
+        ensureReadablePaper(userId, paperId, bo.getPaperId());
+
         Date now = new Date();
         BizExportRecord record = new BizExportRecord();
         record.setUserId(userId);
-        record.setPaperId(parseLong(bo.getPaperId()));
+        record.setPaperId(paperId);
         record.setFileName(trim255(bo.getFileName()));
         record.setOptions(optionsJson);
         record.setStatus(BizExportRecord.STATUS_QUEUED);
@@ -162,6 +169,7 @@ public class ExportRecordServiceImpl implements IExportRecordService {
         if (old == null || !userId.equals(old.getUserId())) {
             return null;
         }
+        ensureReadablePaper(userId, old.getPaperId(), old.getPaperId() == null ? null : old.getPaperId().toString());
         // 并发 1：重试也受约束
         long running = exportRecordMapper.selectCount(new LambdaQueryWrapper<BizExportRecord>()
             .eq(BizExportRecord::getUserId, userId)
@@ -273,14 +281,28 @@ public class ExportRecordServiceImpl implements IExportRecordService {
         }
     }
 
-    private Long parseLong(String s) {
+    private Long parsePaperId(String s) {
         if (s == null || s.isBlank()) {
             return null;
         }
         try {
             return Long.valueOf(s.trim());
         } catch (NumberFormatException e) {
-            return null;
+            throw new ServiceException("paperId格式无效", 400);
+        }
+    }
+
+    private void ensureReadablePaper(Long userId, Long paperId, String rawPaperId) {
+        if (rawPaperId != null && !rawPaperId.isBlank() && paperId == null) {
+            throw new ServiceException("paperId格式无效", 400);
+        }
+        if (paperId == null) {
+            return;
+        }
+        PaperDetailVo header = TenantHelper.ignore(() -> paperMapper.selectPaperDetailHeader(paperId,
+            userId.toString()));
+        if (header == null) {
+            throw new ServiceException("试卷不存在或无权导出", 403);
         }
     }
 

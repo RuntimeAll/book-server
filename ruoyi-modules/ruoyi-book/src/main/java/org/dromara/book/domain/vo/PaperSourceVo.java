@@ -1,10 +1,14 @@
 package org.dromara.book.domain.vo;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
+
 import lombok.Data;
 
 import java.io.Serial;
 import java.io.Serializable;
 import java.util.List;
+import java.math.BigDecimal;
 
 /**
  * GET /teacher/paper/source/{id} 响应 VO（PRD §3.1 B-10 — 原卷预览）。
@@ -31,6 +35,7 @@ public class PaperSourceVo implements Serializable {
     /**
      * 试卷 id（biz_paper.id）
      */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long paperId;
 
     /**
@@ -42,6 +47,10 @@ public class PaperSourceVo implements Serializable {
      * 考试年份（biz_paper.exam_year，nullable）
      */
     private String examYear;
+
+    private BigDecimal score;
+
+    private Integer suggestTime;
 
     /**
      * 卷下所有已发布题（按 biz_paper_question.sort 升序）

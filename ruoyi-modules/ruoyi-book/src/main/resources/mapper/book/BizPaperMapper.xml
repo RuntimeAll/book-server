@@ -1,136 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
-    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<!--
-  试卷主表 Mapper XML（biz_paper）。
-
-  V1 落点：
-    - B-10 GET /teacher/paper/source/{id} → 原卷预览（卷头 + 卷下所有题）
-    - selectPaperHeaderById  → 卷头（paperId/paperName/examYear）
-    - selectQuestionsByPaperId → 卷下所有已发布题（JOIN biz_paper_question + biz_question，
-      按 pq.sort 升序，复用 BizQuestionMapper 的字段命名口径）
-
-  关键映射点（与 BizQuestionMapper.xml 保持一致）：
-    stem_img_url     → stemImg
-    answer_img_url   → answerImg
-    explain_img_url  → explainImg
-    file_bin_url     → fileBin
-    UNIX_TIMESTAMP(t)*1000 → createTime / updateTime BIGINT ms
-
-  新增字段：
-    pq.sort  → sort
-    pq.score → pqScore（biz_paper_question 真分值，DECIMAL）
-
-  注：本 mapper 的 PaperSourceQuestionMap 自包含定义（不跨 namespace extends），
-  避免 MyBatis mapper 文件加载顺序导致 incomplete ResultMap 解析失败。
-
-  🔴 PRD-B-013 减法：删除 biz_question 8 列 + biz_paper 3 列（详见 PRD-B-013 §scope.A）映射与 SELECT 列。
--->
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="org.dromara.book.mapper.BizPaperMapper">
-
-    <!-- 卷头 ResultMap -->
-    <resultMap id="PaperSourceHeaderMap" type="org.dromara.book.domain.vo.PaperSourceVo">
-        <id property="paperId" column="paper_id"/>
-        <result property="paperName" column="paper_name"/>
-        <result property="examYear" column="exam_year"/>
-    </resultMap>
-
-    <!--
-      卷下题元素 ResultMap（自包含定义，列字段与 BizQuestionMapper.xml 的 QuestionDetailMap 对齐 +
-      新增 sort / pqScore 两个 biz_paper_question 字段）
-    -->
-    <resultMap id="PaperSourceQuestionMap" type="org.dromara.book.domain.vo.PaperSourceQuestionVo">
-        <id property="id" column="id"/>
-        <!-- 父类 QuestionItemVo 字段 -->
-        <result property="questionType" column="question_type"/>
-        <result property="difficult" column="difficult"/>
-        <result property="subjectId" column="subject_id"/>
-        <result property="stemText" column="stem_text"/>
-        <result property="stemImg" column="stem_img_url"/>
-        <result property="score" column="score_val"/>
-        <result property="examYear" column="exam_year"/>
-        <result property="examPaperId" column="exam_paper_id"/>
-        <result property="examPaperName" column="exam_paper_name"/>
-        <result property="status" column="status"/>
-        <result property="createUser" column="create_user"/>
-        <result property="createBy" column="create_by"/>
-        <result property="createTime" column="create_time_ms"/>
-        <result property="updateTime" column="update_time_ms"/>
-        <result property="updateBy" column="update_by"/>
-        <!-- QuestionDetailVo 详情字段（PRD-B-013 已删 4 字段映射） -->
-        <result property="answerImg" column="answer_img_url"/>
-        <result property="explainImg" column="explain_img_url"/>
-        <result property="fileBin" column="file_bin_url"/>
-        <!-- 本 VO 新增字段 -->
-        <result property="sort" column="pq_sort"/>
-        <result property="pqScore" column="pq_score"/>
-    </resultMap>
-
-    <!--
-      卷头查询 — 仅返已发布卷（status='1'）。
-      不存在或 status≠'1' 由 MyBatis 自然返 null。
-    -->
-    <select id="selectPaperHeaderById"
-            parameterType="java.lang.Long"
-            resultMap="PaperSourceHeaderMap">
-        SELECT
-            p.id        AS paper_id,
-            p.name      AS paper_name,
-            p.exam_year AS exam_year
-        FROM biz_paper p
-        WHERE p.id = #{paperId}
-          AND p.status = '1'
-    </select>
-
-    <!--
-      卷下题列表 — JOIN biz_paper_question + biz_question。
-      过滤 q.status='1' 已发布题；按 pq.sort 升序。
-      字段口径与 BizQuestionMapper.xml 完全一致（含 score_val 占位 0）。
-    -->
-    <select id="selectQuestionsByPaperId"
-            parameterType="java.lang.Long"
-            resultMap="PaperSourceQuestionMap">
-        SELECT
-            q.id,
-            q.question_type,
-            q.difficult,
-            q.subject_id,
-            <!-- 2026-06-16 卷库回落对齐题库: misikt 有富文本(databin批)出富文本, 无则 NULL→前端落原图(不暴露搜索用 stem_text); 非 misikt 外置优先兜底老字段。别名仍 stem_text 不动 resultMap -->
-            CASE WHEN q.import_source = 'misikt' THEN tc_s.content
-                 ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text,
-            q.stem_img_url,
-            q.answer_img_url,
-            q.explain_img_url,
-            q.file_bin_url,
-            0 AS score_val,
-            q.exam_year,
-            q.exam_paper_id,
-            q.exam_paper_name,
-            q.status,
-            q.create_user,
-            q.create_by,
-            UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
-            UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
-            q.update_by,
-            pq.sort  AS pq_sort,
-            pq.score AS pq_score
-        FROM biz_paper_question pq
-        JOIN biz_question q ON q.id = pq.question_id
-        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
-        WHERE pq.paper_id = #{paperId}
-          AND q.status = '1'
-        ORDER BY pq.sort ASC
-    </select>
-
-    <!-- ============================================================
-         E 卡段② — 试卷详情（POST /teacher/exam/paper/detail）
-         ============================================================ -->
-
-    <!-- 试卷详情卷头 ResultMap（PaperDetailVo） -->
     <resultMap id="PaperDetailHeaderMap" type="org.dromara.book.domain.vo.PaperDetailVo">
         <id property="paperId" column="paper_id"/>
         <result property="paperName" column="paper_name"/>
         <result property="subjectId" column="subject_id"/>
+        <result property="paperCategoryId" column="paper_category_id"/>
         <result property="score" column="score"/>
         <result property="suggestTime" column="suggest_time"/>
         <result property="questionCount" column="question_count"/>
@@ -140,196 +15,52 @@
         <result property="remark" column="remark"/>
     </resultMap>
 
-    <!-- 试卷大题分组 ResultMap（PaperSectionVo） -->
     <resultMap id="PaperSectionMap" type="org.dromara.book.domain.vo.PaperSectionVo">
         <id property="sectionId" column="id"/>
         <result property="title" column="title"/>
         <result property="sort" column="sort"/>
     </resultMap>
 
-    <!--
-      试卷下所有题 + sectionId ResultMap（QuestionWithSectionId）
-      复用 PaperSourceQuestionMap 字段映射，外加 section_id 列映射到 sectionId
-    -->
-    <resultMap id="PaperDetailQuestionMap" type="org.dromara.book.mapper.BizPaperMapper$QuestionWithSectionId">
-        <id property="id" column="id"/>
-        <result property="questionType" column="question_type"/>
-        <result property="difficult" column="difficult"/>
-        <result property="subjectId" column="subject_id"/>
-        <result property="stemText" column="stem_text"/>
-        <result property="stemImg" column="stem_img_url"/>
-        <result property="score" column="score_val"/>
-        <result property="examYear" column="exam_year"/>
-        <result property="examPaperId" column="exam_paper_id"/>
-        <result property="examPaperName" column="exam_paper_name"/>
-        <result property="status" column="status"/>
-        <result property="createUser" column="create_user"/>
-        <result property="createBy" column="create_by"/>
-        <result property="createTime" column="create_time_ms"/>
-        <result property="updateTime" column="update_time_ms"/>
-        <result property="updateBy" column="update_by"/>
-        <!-- QuestionDetailVo 详情字段（PRD-B-013 已删 4 字段映射） -->
-        <result property="answerImg" column="answer_img_url"/>
-        <result property="explainImg" column="explain_img_url"/>
-        <result property="fileBin" column="file_bin_url"/>
-        <result property="sort" column="pq_sort"/>
-        <result property="pqScore" column="pq_score"/>
-        <!-- 源页星标真态：LEFT JOIN biz_question_favorite 算（当前用户已收藏=1） -->
-        <result property="isFavorite" column="is_favorite"/>
-        <!-- E 卡段② 专属：section_id 用于 Service 端按 section 分组 -->
-        <result property="sectionId" column="pq_section_id"/>
-    </resultMap>
-
-    <!--
-      E 卡段② 第 1 步 — 试卷详情卷头查询。
-      过滤 status='1'，不存在 / 草稿 / 软删 → null。
-
-      🔴 2026-06-03 修：detail（只读查看 / 组卷工作台拉题）去掉所有权越权块。
-      此前（PRD-A-005 收尾）给 detail 叠了 `create_by=#{currentUserId} OR subject_id LIKE 3001/3003/3004`
-      越权判定，结果误伤两类正常场景：
-        ① 组卷工作台对试卷篮内每张卷调本接口拉题，篮里 subject_id=5000*/null（非公共树前缀）
-           且非本人的卷被判 null → "N 张卷加载失败，已跳过"、试卷篮清不掉（用户实测 588 张 5000* 卷受影响）；
-        ② 查看他人 / 其他学科公共卷内容（只读）被无谓拦截。
-      正确边界：查看试卷内容是只读动作（misikt 行为 = 任何登录老师都能查看任意卷去组卷），
-      所有权锁死只在写接口（updateExamPaper / deleteExamPaper 已做 create_by owner 校验）。
-      故 detail 仅留 status='1'，不做归属过滤。currentUserId 参数保留（mapper 签名不变，SQL 不再引用，无副作用）。
-    -->
-    <!--
-      ⚠️ 多 @Param 方法（paperId:Long + currentUserId:String）禁声明 parameterType。
-      声明 parameterType="java.lang.Long" 会让 MyBatis 把所有内联 #{} 都按 Long 解析 javaType，
-      于是 #{currentUserId}（String）被 LongTypeHandler 强转 (Long) → ClassCastException。
-      不声明 parameterType → 走 ParamMap 原生按运行时值类型设参，paperId→Long / currentUserId→String 各归各位。
-    -->
-    <select id="selectPaperDetailHeader"
-            resultMap="PaperDetailHeaderMap">
-        SELECT
-            p.id            AS paper_id,
-            p.name          AS paper_name,
-            p.subject_id    AS subject_id,
-            p.score         AS score,
-            p.suggest_time  AS suggest_time,
-            p.question_count AS question_count,
-            p.exam_year     AS exam_year,
-            p.paper_type    AS paper_type,
-            p.create_by     AS create_by,
-            p.remark        AS remark
+    <select id="selectPaperDetailHeader" resultMap="PaperDetailHeaderMap">
+        <bind name="officialOwnerId" value="@org.dromara.book.service.paper.SelectionRules@OFFICIAL_OWNER_ID"/>
+        SELECT p.id AS paper_id, p.name AS paper_name, p.subject_id, p.paper_category_id,
+               p.score, p.suggest_time, p.question_count, p.exam_year, p.paper_type, p.create_by, p.remark
         FROM biz_paper p
         WHERE p.id = #{paperId}
-          AND p.status = '1'
-</select>
-
-    <!--
-      E 卡段② 第 2 步 — 试卷大题分组查询。
-      ORDER BY sort ASC（⚠️ section.sort 可能跳号 1/3/4，不连续，必须显式 ORDER BY）。
-    -->
-    <select id="selectSectionsByPaperId"
-            parameterType="java.lang.Long"
-            resultMap="PaperSectionMap">
-        SELECT
-            s.id    AS id,
-            s.title AS title,
-            s.sort  AS sort
-        FROM biz_paper_section s
-        WHERE s.paper_id = #{paperId}
-        ORDER BY s.sort ASC
+          AND (
+              (p.status = '1'
+               AND (p.create_by = #{currentUserId}
+                    OR (p.create_by = #{officialOwnerId} AND p.paper_kind &lt;&gt; '2')))
+              OR (p.status = '0' AND p.create_by = #{currentUserId})
+          )
     </select>
 
-    <!--
-      E 卡段② 第 3 步 — 试卷下所有题 + sectionId（含 freeTags / knowledges 走 Service 端二次回填）。
-      跟 selectQuestionsByPaperId 唯一区别：多 SELECT pq.section_id AS pq_section_id（用于 Service 端按 section 分组）。
-      字段口径完全对齐 BizQuestionMapper 与 PaperSourceQuestionMap。
-    -->
-    <!--
-      ⚠️ 多 @Param（paperId:Long + currentUserId:String）禁声明 parameterType（同 selectPaperDetailHeader 坑）：
-      声明 parameterType="java.lang.Long" 会让所有内联 #{} 按 Long 解析 javaType → #{currentUserId}(String) 被强转炸。
-      不声明 → 走 ParamMap 按运行时值类型设参，各归各位。
-    -->
-    <select id="selectQuestionsByPaperIdWithSection"
-            resultMap="PaperDetailQuestionMap">
-        SELECT
-            q.id,
-            q.question_type,
-            q.difficult,
-            q.subject_id,
-            <!-- 2026-06-16 卷库回落对齐题库: misikt 有富文本(databin批)出富文本, 无则 NULL→前端落原图(不暴露搜索用 stem_text); 非 misikt 外置优先兜底老字段。别名仍 stem_text 不动 resultMap -->
-            CASE WHEN q.import_source = 'misikt' THEN tc_s.content
-                 ELSE COALESCE(tc_s.content, q.stem_text) END AS stem_text,
-            q.stem_img_url,
-            q.answer_img_url,
-            q.explain_img_url,
-            q.file_bin_url,
-            0 AS score_val,
-            q.exam_year,
-            q.exam_paper_id,
-            q.exam_paper_name,
-            q.status,
-            q.create_user,
-            q.create_by,
-            UNIX_TIMESTAMP(q.create_time) * 1000 AS create_time_ms,
-            UNIX_TIMESTAMP(q.update_time) * 1000 AS update_time_ms,
-            q.update_by,
-            pq.sort       AS pq_sort,
-            pq.score      AS pq_score,
-            pq.section_id AS pq_section_id,
-            (CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END) AS is_favorite
-        FROM biz_paper_question pq
-        JOIN biz_question q ON q.id = pq.question_id
-        LEFT JOIN biz_text_content tc_s ON tc_s.id = q.stem_text_content_id
-        LEFT JOIN biz_question_favorite f
-          ON f.question_id = q.id
-         AND f.user_id = #{currentUserId}
-        WHERE pq.paper_id = #{paperId}
-          AND q.status = '1'
-        ORDER BY pq.sort ASC
+    <select id="selectSectionsByPaperId" resultMap="PaperSectionMap">
+        SELECT id, title, sort FROM biz_paper_section
+        WHERE paper_id = #{paperId} ORDER BY sort ASC, id ASC
     </select>
 
-    <!--
-      D 卡卷库视觉级还原 — 试卷分页列表 ResultMap。
-      字段类型口径严格按 misikt 真响应（A6-paper-page.json）：
-        score   DECIMAL(6,2)  → Integer（CAST AS SIGNED 去小数）
-        status  CHAR(1) '1'   → Integer 1
-        create_by VARCHAR(64) → Integer (CAST AS SIGNED)
-        create_time DATETIME  → Date（@JsonFormat YYYY-MM-DD 序列化）
-        finish_time           → 不存在该列，VO 恒 null
-
-      🔴 PRD-B-013 减法：删除 biz_paper 3 列映射（详见 PRD-B-013 §scope.A）。
-    -->
     <resultMap id="PaperListItemMap" type="org.dromara.book.domain.vo.PaperListItemVo">
         <id property="id" column="id"/>
         <result property="name" column="name"/>
         <result property="questionCount" column="question_count"/>
-        <result property="score" column="score_int"/>
+        <result property="score" column="score"/>
         <result property="suggestTime" column="suggest_time"/>
         <result property="createTime" column="create_time"/>
-        <!-- finishTime 不映射，VO 默认 null（DB 无此列） -->
-        <result property="createUser" column="create_user_int"/>
+        <result property="createUser" column="create_user"/>
         <result property="subjectId" column="subject_id"/>
+        <result property="paperCategoryId" column="paper_category_id"/>
         <result property="paperType" column="paper_type"/>
-        <result property="status" column="status_int"/>
+        <result property="paperKind" column="paper_kind"/>
+        <result property="status" column="status"/>
         <result property="sort" column="sort"/>
     </resultMap>
 
-    <!--
-      D 卡卷库视觉级还原 — 试卷分页查询（POST /teacher/exam/paper/page）。
-      走 MyBatis-Plus 分页插件 + Wrapper（${ew.customSqlSegment} 注入 WHERE+ORDER BY）。
-      score / status / create_by 强制 CAST 成 Integer 对齐 misikt 真响应口径。
-    -->
-    <select id="selectPaperListPage"
-            resultMap="PaperListItemMap">
-        SELECT
-            p.id,
-            p.name,
-            p.question_count,
-            CAST(p.score AS SIGNED) AS score_int,
-            p.suggest_time,
-            p.create_time,
-            CAST(p.create_by AS SIGNED) AS create_user_int,
-            p.subject_id,
-            p.paper_type,
-            CAST(p.status AS SIGNED) AS status_int,
-            p.sort
+    <select id="selectPaperListPage" resultMap="PaperListItemMap">
+        SELECT p.id, p.name, p.question_count, p.score, p.suggest_time, p.create_time,
+               CAST(p.create_by AS SIGNED) AS create_user, p.subject_id, p.paper_category_id,
+               p.paper_type, p.paper_kind, CAST(p.status AS SIGNED) AS status, p.sort
         FROM biz_paper p
         ${ew.customSqlSegment}
     </select>
-
 </mapper>

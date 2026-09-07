@@ -8,10 +8,12 @@ import org.dromara.book.domain.bo.ExportOptions;
 import org.dromara.book.domain.entity.BizExportRecord;
 import org.dromara.book.domain.entity.BizQuestion;
 import org.dromara.book.mapper.BizExportRecordMapper;
+import org.dromara.book.mapper.BizPaperMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.common.oss.core.OssClient;
 import org.dromara.common.oss.entity.UploadResult;
 import org.dromara.common.oss.factory.OssFactory;
+import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
@@ -48,6 +50,7 @@ public class ExportPdfWorker {
     private static final long TASK_TIMEOUT_MS = 5 * 60 * 1000L;
 
     private final BizExportRecordMapper exportRecordMapper;
+    private final BizPaperMapper paperMapper;
     private final BizQuestionMapper questionMapper;
     private final PdfComposer pdfComposer;
     private final ObjectMapper objectMapper;
@@ -89,6 +92,10 @@ public class ExportPdfWorker {
         BizExportRecord record = exportRecordMapper.selectById(recordId);
         if (record == null) {
             log.warn("[export-worker] record 不存在 recordId={}", recordId);
+            return;
+        }
+        if (record.getPaperId() != null && !isReadablePaper(record)) {
+            markFailed(recordId, "来源试卷不存在或已无权访问");
             return;
         }
         long startMs = System.currentTimeMillis();
@@ -186,6 +193,11 @@ public class ExportPdfWorker {
         upd.setErrorMsg(msg != null && msg.length() > 500 ? msg.substring(0, 500) : msg);
         upd.setUpdateTime(new Date());
         exportRecordMapper.updateById(upd);
+    }
+
+    private boolean isReadablePaper(BizExportRecord record) {
+        return TenantHelper.ignore(() -> paperMapper.selectPaperDetailHeader(record.getPaperId(),
+            record.getUserId() == null ? null : record.getUserId().toString()) != null);
     }
 
     private String safeMsg(Throwable e) {

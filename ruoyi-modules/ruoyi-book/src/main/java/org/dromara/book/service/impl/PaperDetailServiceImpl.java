@@ -1,179 +1,88 @@
 package org.dromara.book.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
-import org.dromara.book.domain.entity.BizQuestionBlock;
-import org.dromara.book.domain.vo.FreeTagVo;
+import org.dromara.book.domain.entity.BizPaperQuestion;
 import org.dromara.book.domain.vo.PaperDetailVo;
 import org.dromara.book.domain.vo.PaperSectionVo;
 import org.dromara.book.domain.vo.PaperSourceQuestionVo;
-import org.dromara.book.domain.vo.QuestionKnowledgeVo;
+import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.mapper.BizPaperMapper;
-import org.dromara.book.mapper.BizQuestionBlockMapper;
-import org.dromara.book.mapper.BizQuestionFreeTagMapper;
-import org.dromara.book.mapper.BizQuestionKnowledgeMapper;
+import org.dromara.book.mapper.BizPaperQuestionMapper;
 import org.dromara.book.service.IPaperDetailService;
+import org.dromara.book.service.IQuestionService;
+import org.dromara.book.service.paper.QuestionSnapshotCodec;
+import org.dromara.book.service.paper.SelectionRules;
 import org.dromara.common.satoken.utils.LoginHelper;
+import org.dromara.common.tenant.helper.TenantHelper;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
-/**
- * 试卷详情 Service 实现（E 卡段② — POST /teacher/exam/paper/detail）。
- *
- * <p>三步查询 + 内存分组：
- * <ol>
- *   <li>{@link BizPaperMapper#selectPaperDetailHeader} — 卷头（不存在 / status≠'1' → 返 null）</li>
- *   <li>{@link BizPaperMapper#selectSectionsByPaperId} — sections（按 sort ASC）</li>
- *   <li>{@link BizPaperMapper#selectQuestionsByPaperIdWithSection} — 所有题（含 sectionId，按 pq.sort ASC）</li>
- *   <li>批量回填 freeTags + questionKnowledges（U 轨）</li>
- *   <li>按 section_id 把题分组到对应 PaperSectionVo</li>
- * </ol>
- *
- * <p>设计要点：
- * <ul>
- *   <li>questionKnowledges 走 source='U' —— 跟 page/select 端点行为一致（详情独立页不返 S 轨标准库标注）</li>
- *   <li>QuestionWithSectionId → PaperSourceQuestionVo 走 BeanUtils.copyProperties —— sectionId 不进响应 JSON</li>
- *   <li>section.questions 顺序自然为 pq.sort ASC（mapper 已 ORDER BY，分组时 LinkedHashMap 保序无关，
- *       Service 二次按 sectionId 分桶后即拿到该 section 下题的真实出现顺序 = pq.sort ASC）</li>
- *   <li>段① §3 真数据：paper 2798 应返 sections.length=3，sectionId=3678/3679/3680，
- *       题数 10/6/8，总 24 题 120 分</li>
- * </ul>
- *
- * @author backend-dev (E 卡段②)
- */
 @Service
 @RequiredArgsConstructor
 public class PaperDetailServiceImpl implements IPaperDetailService {
-
-    private final BizPaperMapper bizPaperMapper;
-    private final BizQuestionKnowledgeMapper bizQuestionKnowledgeMapper;
-    private final BizQuestionFreeTagMapper bizQuestionFreeTagMapper;
-    private final BizQuestionBlockMapper bizQuestionBlockMapper;
+    private final BizPaperMapper paperMapper;
+    private final BizPaperQuestionMapper paperQuestionMapper;
+    private final IQuestionService questionService;
+    private final QuestionSnapshotCodec snapshotCodec;
 
     @Override
+    @Transactional(readOnly = true)
     public PaperDetailVo getPaperDetail(Long paperId) {
         if (paperId == null) {
             return null;
         }
+        return TenantHelper.ignore(() -> readDetail(paperId));
+    }
 
-        // step 1 — 卷头（不存在 / status≠'1' / 越权(非本人且非公共卷) → null）
-        String currentUserId = String.valueOf(LoginHelper.getUserId());
-        PaperDetailVo header = bizPaperMapper.selectPaperDetailHeader(paperId, currentUserId);
+    private PaperDetailVo readDetail(Long paperId) {
+        Long userId = LoginHelper.getUserId();
+        PaperDetailVo header = paperMapper.selectPaperDetailHeader(paperId, userId == null ? null : userId.toString());
         if (header == null) {
             return null;
         }
-
-        // step 2 — sections（按 sort ASC，可能跳号 1/3/4）
-        List<PaperSectionVo> sections = bizPaperMapper.selectSectionsByPaperId(paperId);
-        if (sections == null || sections.isEmpty()) {
-            header.setSections(Collections.emptyList());
-            return header;
-        }
-
-        // step 3 — 所有题（含 sectionId，按 pq.sort ASC）
-        List<BizPaperMapper.QuestionWithSectionId> rawQuestions =
-            bizPaperMapper.selectQuestionsByPaperIdWithSection(paperId, currentUserId);
-
-        // step 4 — 批量回填 freeTags + questionKnowledges + blockJson
-        if (rawQuestions != null && !rawQuestions.isEmpty()) {
-            List<Long> qids = rawQuestions.stream()
-                .map(PaperSourceQuestionVo::getId)
-                .collect(Collectors.toList());
-            Map<Long, List<FreeTagVo>> ftMap = loadFreeTagsByQuestionIds(qids);
-            Map<Long, List<QuestionKnowledgeVo>> kgMap = loadKnowledgesByQuestionIds(qids, "U");
-            // PRD-A-015：批量回填结构化网格块 JSON（与 listByIds 同源），卷库查看态走
-            //   QuestionBlockRender 结构化渲染（选项/图片/公式与题库·详情·PDF 四端一致）；
-            //   null=未结构化老题，FE 回落旧富文本/图。biz_question_block 一题一份，PK=question_id。
-            Map<Long, BizQuestionBlock> blockMap = new HashMap<>(qids.size() * 2);
-            for (BizQuestionBlock b : bizQuestionBlockMapper.selectBatchIds(qids)) {
-                blockMap.put(b.getQuestionId(), b);
-            }
-            for (BizPaperMapper.QuestionWithSectionId q : rawQuestions) {
-                q.setFreeTags(ftMap.getOrDefault(q.getId(), Collections.emptyList()));
-                q.setQuestionKnowledges(kgMap.getOrDefault(q.getId(), Collections.emptyList()));
-                BizQuestionBlock block = blockMap.get(q.getId());
-                if (block != null) {
-                    q.setBlockJson(block.getBlockJson());
-                    q.setAnswerBlockJson(block.getAnswerBlockJson());
-                    q.setAnalyzeBlockJson(block.getAnalyzeBlockJson());
-                }
+        header.setCanManage(SelectionRules.canManagePaper(header.getCreateBy(), userId));
+        List<PaperSectionVo> sections = paperMapper.selectSectionsByPaperId(paperId);
+        List<BizPaperQuestion> rows = paperQuestionMapper.selectList(new LambdaQueryWrapper<BizPaperQuestion>()
+            .eq(BizPaperQuestion::getPaperId, paperId)
+            .orderByAsc(BizPaperQuestion::getSort).orderByAsc(BizPaperQuestion::getId));
+        List<Long> legacyIds = rows.stream().filter(row -> row.getSnapshotJson() == null)
+            .map(BizPaperQuestion::getQuestionId).distinct().toList();
+        Map<Long, QuestionDetailVo> originals = new HashMap<>();
+        // Existing rows are read, never migrated; newly saved instances never fall back to source questions.
+        for (int start = 0; start < legacyIds.size(); start += SelectionRules.MAX_BATCH_SIZE) {
+            List<Long> batch = legacyIds.subList(start, Math.min(start + SelectionRules.MAX_BATCH_SIZE, legacyIds.size()));
+            for (QuestionDetailVo question : questionService.listByIds(batch)) {
+                originals.put(question.getId(), question);
             }
         }
-
-        // step 5 — 按 section_id 分桶；剥离 sectionId 字段（避免序列化到响应）
-        Map<Long, List<PaperSourceQuestionVo>> bySection = new HashMap<>(sections.size() * 2);
-        if (rawQuestions != null) {
-            for (BizPaperMapper.QuestionWithSectionId raw : rawQuestions) {
-                Long sid = raw.getSectionId();
-                if (sid == null) {
-                    continue;        // 防御 —— biz_paper_question.section_id NOT NULL，正常不会进
-                }
-                PaperSourceQuestionVo pure = new PaperSourceQuestionVo();
-                BeanUtils.copyProperties(raw, pure);  // sectionId 是 raw 子类字段，pure 没有该属性 —— 自然丢弃
-                bySection.computeIfAbsent(sid, k -> new ArrayList<>()).add(pure);
+        Map<Long, List<PaperSourceQuestionVo>> bySection = new HashMap<>();
+        for (BizPaperQuestion row : rows) {
+            QuestionDetailVo snapshot = row.getSnapshotJson() == null ? originals.get(row.getQuestionId())
+                : snapshotCodec.decode(row.getSnapshotJson());
+            if (snapshot == null) {
+                continue;
             }
+            PaperSourceQuestionVo question = new PaperSourceQuestionVo();
+            BeanUtils.copyProperties(snapshot, question);
+            question.setId(row.getQuestionId());
+            question.setPaperQuestionId(row.getId());
+            question.setSourceBookId(row.getSourceBookId());
+            question.setSourceItemId(row.getSourceItemId());
+            question.setSort(row.getSort());
+            question.setPqScore(row.getScore());
+            bySection.computeIfAbsent(row.getSectionId(), unused -> new ArrayList<>()).add(question);
         }
-
-        // step 6 — sections 注入 questions（不存在的 section 给空 list）
-        for (PaperSectionVo sec : sections) {
-            sec.setQuestions(bySection.getOrDefault(sec.getSectionId(), Collections.emptyList()));
+        for (PaperSectionVo section : sections) {
+            section.setQuestions(bySection.getOrDefault(section.getSectionId(), List.of()));
         }
-
         header.setSections(sections);
         return header;
-    }
-
-    // ---------------- 复用 helpers（与 QuestionServiceImpl / PaperSourceServiceImpl 同源） ----------------
-
-    /**
-     * 批量按 question_id + source 拉 knowledges 并按 questionId 分组。
-     *
-     * <p>跟 {@code QuestionServiceImpl#loadKnowledgesByQuestionIds} 同源。
-     */
-    private Map<Long, List<QuestionKnowledgeVo>> loadKnowledgesByQuestionIds(Collection<Long> questionIds,
-                                                                              String source) {
-        if (questionIds == null || questionIds.isEmpty()) {
-            return Collections.emptyMap();
-        }
-        List<QuestionKnowledgeVo> all =
-            bizQuestionKnowledgeMapper.selectByQuestionIdsAndSource(questionIds, source);
-        if (all == null || all.isEmpty()) {
-            return Collections.emptyMap();
-        }
-        return all.stream().collect(Collectors.groupingBy(
-            QuestionKnowledgeVo::getQuestionId,
-            LinkedHashMap::new,
-            Collectors.toList()));
-    }
-
-    /**
-     * 批量按 question_id 拉 freeTags 并按 questionId 分组（与 PaperSourceServiceImpl 同源）。
-     */
-    private Map<Long, List<FreeTagVo>> loadFreeTagsByQuestionIds(Collection<Long> questionIds) {
-        if (questionIds == null || questionIds.isEmpty()) {
-            return Collections.emptyMap();
-        }
-        List<BizQuestionFreeTagMapper.FreeTagWithQid> all =
-            bizQuestionFreeTagMapper.selectGroupedByQuestionIds(questionIds);
-        if (all == null || all.isEmpty()) {
-            return Collections.emptyMap();
-        }
-        Map<Long, List<FreeTagVo>> grouped = new HashMap<>();
-        for (BizQuestionFreeTagMapper.FreeTagWithQid row : all) {
-            FreeTagVo pure = new FreeTagVo();
-            pure.setId(row.getId());
-            pure.setName(row.getName());
-            pure.setPosition(row.getPosition());
-            grouped.computeIfAbsent(row.getQuestionId(), k -> new ArrayList<>()).add(pure);
-        }
-        return grouped;
     }
 }

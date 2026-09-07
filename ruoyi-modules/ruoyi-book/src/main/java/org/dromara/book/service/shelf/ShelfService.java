@@ -1,10 +1,13 @@
 package org.dromara.book.service.shelf;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.ShelfBookBo;
 import org.dromara.book.domain.bo.ShelfImportBo;
 import org.dromara.book.domain.bo.ShelfItemBo;
+import org.dromara.book.domain.bo.ShelfItemPageBo;
 import org.dromara.book.domain.bo.ShelfNodeBo;
 import org.dromara.book.domain.entity.BizCoursePlanLesson;
 import org.dromara.book.domain.entity.BizQuestion;
@@ -12,6 +15,8 @@ import org.dromara.book.domain.entity.BizShelfBook;
 import org.dromara.book.domain.entity.BizShelfItem;
 import org.dromara.book.domain.entity.BizShelfNode;
 import org.dromara.book.domain.entity.BizSubject;
+import org.dromara.book.domain.vo.ShelfReadVo;
+import org.dromara.book.domain.vo.QuestionDetailVo;
 import org.dromara.book.mapper.BizCoursePlanLessonMapper;
 import org.dromara.book.mapper.BizQuestionMapper;
 import org.dromara.book.mapper.BizShelfBookMapper;
@@ -19,6 +24,7 @@ import org.dromara.book.mapper.BizShelfItemMapper;
 import org.dromara.book.mapper.BizShelfNodeMapper;
 import org.dromara.book.mapper.BizSubjectMapper;
 import org.dromara.book.service.punch.PunchService;
+import org.dromara.book.service.paper.QuestionSnapshotCodec;
 import org.dromara.common.core.exception.ServiceException;
 import org.dromara.common.json.utils.JsonUtils;
 import org.dromara.common.mybatis.helper.DataPermissionHelper;
@@ -54,6 +60,7 @@ public class ShelfService {
     private final BizQuestionMapper questionMapper;
     private final BizSubjectMapper subjectMapper;
     private final BizCoursePlanLessonMapper lessonMapper;
+    private final QuestionSnapshotCodec questionSnapshotCodec;
 
     /**
      * PDF 直录待解析书类型（与电子课本 textbook 区分：只挂原件+封面，没有节点树/题项，
@@ -73,6 +80,9 @@ public class ShelfService {
 
     /** 生产配方 JSON 体积上限（style_meta_json.recipe）——这里只存指针，正文留在脚本里。 */
     private static final int RECIPE_JSON_MAX = 8000;
+
+    /** The outline is a bounded navigation tree, never a content-list endpoint. */
+    private static final int OUTLINE_NODE_LIMIT = 10000;
 
     // ───────────────── 书 CRUD + 列表 ─────────────────
 
@@ -132,9 +142,27 @@ public class ShelfService {
             //    G-TEST 归档书曾照常列出）；要看归档显式传 status='1'。
             .eq(BizShelfBook::getStatus, (status != null && !status.isBlank()) ? status : "0")
             .orderByDesc(BizShelfBook::getId);
+        List<BizShelfBook> books = bookMapper.selectList(w);
+        List<Long> bookIds = books.stream().map(BizShelfBook::getId).toList();
+        Map<Long, ShelfReadVo.Counts> nodeCounts = new LinkedHashMap<>();
+        Map<Long, ShelfReadVo.Counts> itemCounts = new LinkedHashMap<>();
+        if (!bookIds.isEmpty()) {
+            for (ShelfReadVo.Counts count : nodeMapper.selectBookCounts(bookIds)) {
+                nodeCounts.put(count.getId(), count);
+            }
+            for (ShelfReadVo.Counts count : itemMapper.selectBookCounts(bookIds)) {
+                itemCounts.put(count.getId(), count);
+            }
+        }
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (BizShelfBook b : bookMapper.selectList(w)) {
-            rows.add(bookBrief(b, true));
+        for (BizShelfBook b : books) {
+            Map<String, Object> row = bookBrief(b, false);
+            ShelfReadVo.Counts nodes = nodeCounts.get(b.getId());
+            ShelfReadVo.Counts items = itemCounts.get(b.getId());
+            row.put("nodeCount", nodes == null ? 0L : nodes.getNodeCount());
+            row.put("itemCount", items == null ? 0L : items.getItemCount());
+            row.put("questionCount", items == null ? 0L : items.getQuestionCount());
+            rows.add(row);
         }
         enrichSubjectDims(rows);
         Map<String, Object> r = new LinkedHashMap<>();
@@ -177,6 +205,195 @@ public class ShelfService {
 
     public Map<String, Object> getBook(Long id) {
         return bookBrief(requireReadableBook(id), true);
+    }
+
+    /** No item IDs, override JSON, metadata blobs or question bodies are sent in the outline. */
+    public ShelfReadVo.Outline getOutline(Long id) {
+        BizShelfBook book = requireReadableBook(id);
+        List<BizShelfNode> nodes = nodeMapper.selectPage(new Page<BizShelfNode>(1, OUTLINE_NODE_LIMIT + 1, false),
+            new LambdaQueryWrapper<BizShelfNode>()
+                .select(BizShelfNode::getId, BizShelfNode::getBookId, BizShelfNode::getParentId,
+                    BizShelfNode::getSeq, BizShelfNode::getNodeType, BizShelfNode::getName)
+                .eq(BizShelfNode::getBookId, id)
+                .orderByAsc(BizShelfNode::getSeq).orderByAsc(BizShelfNode::getId)).getRecords();
+        if (nodes.size() > OUTLINE_NODE_LIMIT) {
+            throw new ServiceException("目录节点过多，无法读取", 400);
+        }
+        Map<Long, ShelfReadVo.Counts> counts = new LinkedHashMap<>();
+        for (ShelfReadVo.Counts count : itemMapper.selectNodeCounts(id)) {
+            counts.put(count.getId(), count);
+        }
+        Map<String, ShelfReadVo.Node> byId = new LinkedHashMap<>();
+        for (BizShelfNode node : nodes) {
+            ShelfReadVo.Node vo = new ShelfReadVo.Node();
+            vo.setId(String.valueOf(node.getId()));
+            vo.setBookId(String.valueOf(id));
+            vo.setParentId(node.getParentId() == null ? null : String.valueOf(node.getParentId()));
+            vo.setSeq(node.getSeq());
+            vo.setNodeType(node.getNodeType());
+            vo.setName(node.getName());
+            ShelfReadVo.Counts count = counts.get(node.getId());
+            if (count != null) {
+                vo.setItemCount(count.getItemCount());
+                vo.setQuestionCount(count.getQuestionCount());
+            }
+            byId.put(vo.getId(), vo);
+        }
+        ShelfReadVo.Outline result = new ShelfReadVo.Outline();
+        result.setId(String.valueOf(id));
+        result.setTitle(book.getTitle());
+        result.setBookType(book.getBookType());
+        result.setSubjectId(book.getSubjectId());
+        result.setOwnerId(book.getOwnerId() == null ? null : String.valueOf(book.getOwnerId()));
+        result.setGrade(book.getGrade());
+        result.setEdition(book.getEdition());
+        result.setIsPublic(Integer.valueOf(1).equals(book.getIsPublic()));
+        for (ShelfReadVo.Node node : byId.values()) {
+            if (node.getParentId() == null) {
+                result.getTree().add(node);
+            } else {
+                ShelfReadVo.Node parent = byId.get(node.getParentId());
+                if (parent == null) {
+                    throw new ServiceException("目录存在失效父节点", 409);
+                }
+                parent.getChildren().add(node);
+            }
+        }
+        // Iterative post-order avoids recursion limits and detects detached cycles.
+        List<ShelfReadVo.Node> traversal = new ArrayList<>(result.getTree());
+        for (int i = 0; i < traversal.size(); i++) {
+            traversal.addAll(traversal.get(i).getChildren());
+        }
+        if (traversal.size() != nodes.size()) {
+            throw new ServiceException("目录存在循环引用", 409);
+        }
+        for (int i = traversal.size() - 1; i >= 0; i--) {
+            ShelfReadVo.Node node = traversal.get(i);
+            if (node.getParentId() != null) {
+                ShelfReadVo.Node parent = byId.get(node.getParentId());
+                parent.setQuestionCount(parent.getQuestionCount() + node.getQuestionCount());
+            }
+        }
+        return result;
+    }
+
+    public ShelfReadVo.ItemPage getNodeItems(Long bookId, Long nodeId, ShelfItemPageBo request) {
+        if (request == null || request.getPageNum() == null || request.getPageNum() < 1
+            || request.getPageSize() == null || request.getPageSize() < 1 || request.getPageSize() > 100) {
+            throw new ServiceException("分页参数非法（pageNum >= 1，pageSize 1-100）", 400);
+        }
+        requireReadableBook(bookId);
+        BizShelfNode node = nodeMapper.selectById(nodeId);
+        if (node == null || !bookId.equals(node.getBookId())) {
+            throw new ServiceException("该书中不存在此节点", 404);
+        }
+        long total = itemMapper.selectCount(new LambdaQueryWrapper<BizShelfItem>()
+            .eq(BizShelfItem::getBookId, bookId).eq(BizShelfItem::getNodeId, nodeId));
+        // The global paging plugin has overflow=true. Disable its count pass so a page beyond the
+        // end stays empty instead of silently wrapping to page one during chapter batch selection.
+        Page<BizShelfItem> page = new Page<>(request.getPageNum(), request.getPageSize(), false);
+        if ((long) (request.getPageNum() - 1) * request.getPageSize() < total) {
+            page = itemMapper.selectPage(page, new LambdaQueryWrapper<BizShelfItem>()
+                .select(BizShelfItem::getId, BizShelfItem::getBookId, BizShelfItem::getNodeId,
+                    BizShelfItem::getSeq, BizShelfItem::getKind, BizShelfItem::getQuestionId,
+                    BizShelfItem::getOverrideJson, BizShelfItem::getExplainJson, BizShelfItem::getContentJson,
+                    BizShelfItem::getSourcePage, BizShelfItem::getUsedCount)
+                .eq(BizShelfItem::getBookId, bookId).eq(BizShelfItem::getNodeId, nodeId)
+                .orderByAsc(BizShelfItem::getSeq).orderByAsc(BizShelfItem::getId));
+        }
+        page.setTotal(total);
+        List<Long> questionIds = page.getRecords().stream()
+            .filter(item -> "question".equals(item.getKind()) && item.getQuestionId() != null)
+            .map(BizShelfItem::getQuestionId).distinct().toList();
+        Map<String, ShelfReadVo.Question> questions = new LinkedHashMap<>();
+        if (!questionIds.isEmpty()) {
+            for (ShelfReadVo.Question question : itemMapper.selectReadingQuestions(questionIds)) {
+                questions.put(question.getId(), question);
+            }
+        }
+        List<ShelfReadVo.Item> rows = new ArrayList<>();
+        for (BizShelfItem item : page.getRecords()) {
+            ShelfReadVo.Item row = new ShelfReadVo.Item();
+            row.setId(String.valueOf(item.getId()));
+            row.setBookId(String.valueOf(bookId));
+            row.setNodeId(String.valueOf(nodeId));
+            row.setSeq(item.getSeq());
+            row.setKind(item.getKind());
+            row.setQuestionId(item.getQuestionId() == null ? null : String.valueOf(item.getQuestionId()));
+            row.setOverride(readContentJson(item.getOverrideJson()));
+            row.setExplain(readContentJson(item.getExplainJson()));
+            row.setContent(readContentJson(item.getContentJson()));
+            row.setSourcePage(item.getSourcePage());
+            row.setUsedCount(item.getUsedCount());
+            ShelfReadVo.Question original = questions.get(row.getQuestionId());
+            if (original != null) {
+                row.setOriginalStemText(original.getStemTextContent() != null
+                    ? original.getStemTextContent() : original.getStemText());
+                row.setQuestion(resolveReadingQuestion(original, item.getOverrideJson()));
+            }
+            row.setQuestionMissing("question".equals(item.getKind()) && row.getQuestion() == null);
+            rows.add(row);
+        }
+        ShelfReadVo.ItemPage result = new ShelfReadVo.ItemPage();
+        ShelfReadVo.NodeDetail detail = new ShelfReadVo.NodeDetail();
+        detail.setId(String.valueOf(nodeId));
+        detail.setBookId(String.valueOf(bookId));
+        detail.setParentId(node.getParentId() == null ? null : String.valueOf(node.getParentId()));
+        detail.setSeq(node.getSeq());
+        detail.setNodeType(node.getNodeType());
+        detail.setName(node.getName());
+        detail.setKpId(node.getKpId() == null ? null : String.valueOf(node.getKpId()));
+        detail.setMeta(readContentJson(node.getMetaJson()));
+        result.setNode(detail);
+        result.setRows(rows);
+        result.setTotal(page.getTotal());
+        result.setPageNum(request.getPageNum());
+        result.setPageSize(request.getPageSize());
+        result.setHasMore((long) request.getPageNum() * request.getPageSize() < page.getTotal());
+        return result;
+    }
+
+    private JsonNode readContentJson(String json) {
+        return json == null || json.isBlank() ? null : JsonUtils.parseObject(json, JsonNode.class);
+    }
+
+    /** Reuse the same instance semantics as baskets and paper snapshots, without fetching full question details. */
+    private ShelfReadVo.Question resolveReadingQuestion(ShelfReadVo.Question source, String overrideJson) {
+        if (overrideJson == null || overrideJson.isBlank()) {
+            return source;
+        }
+        QuestionDetailVo detail = new QuestionDetailVo();
+        detail.setId(Long.valueOf(source.getId()));
+        detail.setQuestionType(source.getQuestionType());
+        detail.setDifficult(source.getDifficult());
+        detail.setSubjectId(source.getSubjectId());
+        detail.setStemText(source.getStemText());
+        detail.setStemTextContent(source.getStemTextContent());
+        detail.setStemImg(source.getStemImg());
+        detail.setBlockJson(source.getBlockJson());
+        detail.setAnswerTextContent(source.getAnswerTextContent());
+        detail.setAnalyzeTextContent(source.getAnalyzeTextContent());
+        detail.setAnswerImg(source.getAnswerImg());
+        detail.setExplainImg(source.getExplainImg());
+        detail.setAnswerBlockJson(source.getAnswerBlockJson());
+        detail.setAnalyzeBlockJson(source.getAnalyzeBlockJson());
+        QuestionDetailVo resolved = questionSnapshotCodec.resolve(detail, overrideJson);
+        ShelfReadVo.Question result = new ShelfReadVo.Question();
+        result.setId(String.valueOf(resolved.getId()));
+        result.setQuestionType(resolved.getQuestionType());
+        result.setDifficult(resolved.getDifficult());
+        result.setSubjectId(resolved.getSubjectId());
+        result.setStemText(resolved.getStemText());
+        result.setStemTextContent(resolved.getStemTextContent());
+        result.setStemImg(resolved.getStemImg());
+        result.setBlockJson(resolved.getBlockJson());
+        result.setAnswerTextContent(resolved.getAnswerTextContent());
+        result.setAnalyzeTextContent(resolved.getAnalyzeTextContent());
+        result.setAnswerImg(resolved.getAnswerImg());
+        result.setExplainImg(resolved.getExplainImg());
+        result.setAnswerBlockJson(resolved.getAnswerBlockJson());
+        result.setAnalyzeBlockJson(resolved.getAnalyzeBlockJson());
+        return result;
     }
 
     /** 整树查询：书 + 目录节点树（含内容项），一次返回可渲染（PRD scope ①书结构查询）。 */
@@ -853,7 +1070,7 @@ public class ShelfService {
         if (b == null) throw new ServiceException("书不存在", 404);
         if (b.getIsPublic() != null && b.getIsPublic() == 1) return b;
         Long uid = LoginHelper.getUserId();
-        if (uid != null && b.getOwnerId() != null && !uid.equals(b.getOwnerId()) && !LoginHelper.isSuperAdmin()) {
+        if ((uid == null || !uid.equals(b.getOwnerId())) && !LoginHelper.isSuperAdmin()) {
             throw new ServiceException("无权访问该书", 403);
         }
         return b;

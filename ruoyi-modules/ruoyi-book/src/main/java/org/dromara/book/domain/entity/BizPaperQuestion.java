@@ -49,4 +49,10 @@ public class BizPaperQuestion implements Serializable {
 
     @TableField("score")
     private BigDecimal score;
+
+    private Long sourceBookId;
+
+    private Long sourceItemId;
+
+    private String snapshotJson;
 }

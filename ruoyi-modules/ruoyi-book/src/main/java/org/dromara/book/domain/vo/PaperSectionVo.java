@@ -1,5 +1,8 @@
 package org.dromara.book.domain.vo;
 
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
+
 import lombok.Data;
 
 import java.io.Serial;
@@ -31,6 +34,7 @@ public class PaperSectionVo implements Serializable {
     /**
      * 大题 id（biz_paper_section.id）
      */
+    @JsonSerialize(using = ToStringSerializer.class)
     private Long sectionId;
 
     /**

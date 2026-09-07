@@ -1,11 +1,14 @@
 package org.dromara.book.controller;
 
 import cn.dev33.satoken.annotation.SaCheckLogin;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.dromara.book.domain.bo.ShelfBookBo;
 import org.dromara.book.domain.bo.ShelfImportBo;
 import org.dromara.book.domain.bo.ShelfItemBo;
+import org.dromara.book.domain.bo.ShelfItemPageBo;
 import org.dromara.book.domain.bo.ShelfNodeBo;
+import org.dromara.book.domain.vo.ShelfReadVo;
 import org.dromara.book.service.shelf.BookExportService;
 import org.dromara.book.service.shelf.ShelfPdfImportService;
 import org.dromara.book.service.shelf.ShelfService;
@@ -80,6 +83,19 @@ public class ShelfController {
     @GetMapping("/book/{id}/structure")
     public R<Map<String, Object>> structure(@PathVariable Long id) {
         return R.ok(shelfService.getStructure(id));
+    }
+
+    @SaCheckLogin
+    @GetMapping("/book/{id}/outline")
+    public R<ShelfReadVo.Outline> outline(@PathVariable Long id) {
+        return R.ok(shelfService.getOutline(id));
+    }
+
+    @SaCheckLogin
+    @GetMapping("/book/{id}/node/{nodeId}/items")
+    public R<ShelfReadVo.ItemPage> nodeItems(@PathVariable Long id, @PathVariable Long nodeId,
+                                           @Valid ShelfItemPageBo page) {
+        return R.ok(shelfService.getNodeItems(id, nodeId, page));
     }
 
     /**
