@@ -39,6 +39,6 @@ public class CreateExamPaperBo implements Serializable {
 
     private Integer suggestTime;
 
-    /** 试卷分类 ID — 可选，默认 null（卷库目录树根级别） */
+    /** 试卷分类 ID：可选；未指定时按来源教材的学科、学段、年级、册匹配唯一分类。 */
     private String paperCategoryId;
 }

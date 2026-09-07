@@ -20,6 +20,13 @@ No historical rows are migrated, backfilled or deleted. New paper instances
 store snapshots; old rows continue using the legacy read path. Publication
 reuses existing paper status values and requires no additional schema changes.
 
+New papers without an explicit category now inherit a unique grade/volume category
+from the selected source books' curriculum, falling back to the question curriculum
+when no book curriculum is specified. Matching uses structured taxonomy dimensions
+and parent relations, not ID prefixes or title parsing. Mixed, incomplete or
+unmatched curricula remain unclassified rather than being assigned a guessed grade.
+Existing paper rows are not backfilled. This correction requires no extra DDL.
+
 ## Rollback
 
 Roll frontend and backend code back as a matching pair. Keep the additive tables,
@@ -33,6 +40,10 @@ Before this commit: 78 focused Java tests, 25 frontend isolated tests and 8
 publication/category page/API scenarios passed. Backend install and frontend
 production build passed. This is not a claim that every repository test or every
 product module was tested. No production deployment or production DDL was run.
+
+Grade-inheritance follow-up: 87 focused Java tests and 6 real page/API scenarios
+passed, including create, retry, edit/readback, grade-filtered discovery, leaf-node
+ancestry and mixed grades. The backend install passed; no frontend code changed.
 
 Java focused test command:
 

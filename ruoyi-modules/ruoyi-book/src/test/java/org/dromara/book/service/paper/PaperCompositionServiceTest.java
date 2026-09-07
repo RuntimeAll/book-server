@@ -60,17 +60,36 @@ class PaperCompositionServiceTest {
     private final BizPaperSectionMapper sections = mock(BizPaperSectionMapper.class);
     private final BizPaperQuestionMapper paperQuestions = mock(BizPaperQuestionMapper.class);
     private final BizPaperCategoryMapper categories = mock(BizPaperCategoryMapper.class);
+    private final PaperCategoryResolver categoryResolver = mock(PaperCategoryResolver.class);
     private final PaperCreateRequestMapper requests = mock(PaperCreateRequestMapper.class);
     private final QuestionBasketEntryMapper basket = mock(QuestionBasketEntryMapper.class);
     private final QuestionSelectionResolver resolver = mock(QuestionSelectionResolver.class);
     private final IPaperDetailService details = mock(IPaperDetailService.class);
     private final QuestionSnapshotCodec codec = new QuestionSnapshotCodec(new ObjectMapper());
     private final PaperCompositionService service = new PaperCompositionService(papers, sections, paperQuestions,
-        categories, requests, basket, resolver, codec, details, new ObjectMapper());
+        categories, categoryResolver, requests, basket, resolver, codec, details, new ObjectMapper());
 
     @BeforeAll
     static void initializeMetadata() {
         PaperTestMetadata.initialize();
+    }
+
+    @Test
+    void infersMissingCategoryOnceAndPersistsBothLibraryFields() {
+        CreateExamPaperBo bo = create();
+        when(resolver.resolve(anyList(), eq(9L), eq(false))).thenReturn(List.of(selection("frozen")));
+        when(categoryResolver.infer(anyCollection())).thenReturn("3001009");
+        setupInserts();
+        setupRequest();
+        try (MockedStatic<LoginHelper> login = mockStatic(LoginHelper.class)) {
+            var created = service.create(bo, 9L);
+            assertEquals(created.getPaperId(), service.create(bo, 9L).getPaperId());
+        }
+        ArgumentCaptor<BizPaper> paper = ArgumentCaptor.forClass(BizPaper.class);
+        verify(papers).insert(paper.capture());
+        assertEquals("3001009", paper.getValue().getSubjectId());
+        assertEquals("3001009", paper.getValue().getPaperCategoryId());
+        verify(categoryResolver).infer(anyCollection());
     }
 
     @Test
@@ -89,6 +108,7 @@ class PaperCompositionServiceTest {
             verify(papers, times(1)).insert(paper.capture());
             assertEquals("3001004", paper.getValue().getSubjectId());
             assertEquals("3001004", paper.getValue().getPaperCategoryId());
+            verifyNoInteractions(categoryResolver);
             assertEquals(new BigDecimal("2.25"), paper.getValue().getScore());
             assertEquals(75, paper.getValue().getSuggestTime());
             assertEquals("9", paper.getValue().getCreateBy());

@@ -51,6 +51,7 @@ public class PaperCompositionService {
     private final BizPaperSectionMapper sectionMapper;
     private final BizPaperQuestionMapper paperQuestionMapper;
     private final BizPaperCategoryMapper categoryMapper;
+    private final PaperCategoryResolver categoryResolver;
     private final PaperCreateRequestMapper requestMapper;
     private final QuestionBasketEntryMapper basketMapper;
     private final QuestionSelectionResolver selectionResolver;
@@ -88,6 +89,9 @@ public class PaperCompositionService {
                 }
             }
             Map<String, BasketEntryVo> selections = resolveNewRows(rows, ownerId);
+            if (category == null) {
+                category = categoryResolver.infer(selections.values());
+            }
             Date now = new Date();
             BizPaper paper = new BizPaper();
             paper.setName(bo.getName());
