@@ -20,12 +20,19 @@ No historical rows are migrated, backfilled or deleted. New paper instances
 store snapshots; old rows continue using the legacy read path. Publication
 reuses existing paper status values and requires no additional schema changes.
 
-New papers without an explicit category now inherit a unique grade/volume category
+New papers without an explicit category inherit a unique grade/volume category
 from the selected source books' curriculum, falling back to the question curriculum
 when no book curriculum is specified. Matching uses structured taxonomy dimensions
-and parent relations, not ID prefixes or title parsing. Mixed, incomplete or
-unmatched curricula remain unclassified rather than being assigned a guessed grade.
-Existing paper rows are not backfilled. This correction requires no extra DDL.
+and parent relations, not ID prefixes or title parsing. Mixed or incomplete curricula
+remain unclassified rather than being assigned a guessed grade. A complete curriculum
+whose public category is missing or duplicated is rejected instead of silently creating
+an unclassified paper.
+
+Before deployment, run `public-paper-category-reconcile.sql` after the verified backup.
+It additively reconciles public grade/volume and paper-type reference nodes from active
+bookshelf curricula and system dictionaries. The generated IDs use a reserved,
+dimension-based numeric namespace; titles come from dictionaries. Existing paper rows
+are not backfilled, updated or deleted. The correction requires no table DDL.
 
 ## Rollback
 

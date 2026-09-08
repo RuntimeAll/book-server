@@ -7,6 +7,7 @@ import org.dromara.book.domain.vo.BasketEntryVo;
 import org.dromara.book.mapper.BizPaperCategoryMapper;
 import org.dromara.book.mapper.PaperClassificationMapper;
 import org.dromara.book.mapper.PaperClassificationMapper.SubjectDimensions;
+import org.dromara.common.core.exception.ServiceException;
 import org.springframework.stereotype.Service;
 
 import java.util.Collection;
@@ -20,6 +21,8 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class PaperCategoryResolver {
+    private static final String PUBLIC_PAPER_ROOT_ID = "3001";
+
     private final PaperClassificationMapper classificationMapper;
     private final BizPaperCategoryMapper categoryMapper;
 
@@ -64,17 +67,21 @@ public class PaperCategoryResolver {
         }
         LambdaQueryWrapper<BizPaperCategory> query = new LambdaQueryWrapper<BizPaperCategory>()
             .eq(BizPaperCategory::getNodeKind, "grade")
+            .eq(BizPaperCategory::getParentId, PUBLIC_PAPER_ROOT_ID)
             .eq(BizPaperCategory::getSubject, curriculum.subject())
             .eq(BizPaperCategory::getStage, curriculum.stage())
-            .eq(BizPaperCategory::getGrade, curriculum.grade())
-            .notLikeRight(BizPaperCategory::getParentId, "-");
+            .eq(BizPaperCategory::getGrade, curriculum.grade());
         if (curriculum.volume() == null) {
             query.isNull(BizPaperCategory::getVolume);
         } else {
             query.eq(BizPaperCategory::getVolume, curriculum.volume());
         }
         List<BizPaperCategory> categories = categoryMapper.selectList(query);
-        return categories.size() == 1 ? categories.get(0).getId() : null;
+        if (categories.size() != 1) {
+            String reason = categories.isEmpty() ? "缺失" : "重复";
+            throw new ServiceException("卷库公共年级分类" + reason + "，请先完成分类主数据对账", 409);
+        }
+        return categories.get(0).getId();
     }
 
     private record Curriculum(Integer subject, Integer stage, Integer grade, Integer volume) {

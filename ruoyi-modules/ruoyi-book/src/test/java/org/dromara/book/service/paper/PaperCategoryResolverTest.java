@@ -10,6 +10,7 @@ import org.dromara.book.mapper.BizPaperCategoryMapper;
 import org.dromara.book.mapper.PaperClassificationMapper;
 import org.dromara.book.mapper.PaperClassificationMapper.BookSubject;
 import org.dromara.book.mapper.PaperClassificationMapper.SubjectDimensions;
+import org.dromara.common.core.exception.ServiceException;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -49,6 +51,7 @@ class PaperCategoryResolverTest {
             assertTrue(sql.contains("volume ="));
             assertTrue(sql.contains("grade ="));
             assertTrue(query.getParamNameValuePairs().containsValue(4));
+            assertTrue(query.getParamNameValuePairs().containsValue("3001"));
             return List.of(category("grade-four-up"));
         });
         assertEquals("grade-four-up", resolver.infer(List.of(entry("chapter-a"), entry("chapter-b"))));
@@ -99,11 +102,13 @@ class PaperCategoryResolverTest {
     }
 
     @Test
-    void doesNotChooseMissingOrAmbiguousCategories() {
+    void rejectsMissingOrAmbiguousPublicCategories() {
         when(source.selectSubjectDimensions(anyList())).thenReturn(List.of(dimension("a", 4, 1)));
         when(categories.selectList(any())).thenReturn(List.of(), List.of(category("a"), category("b")));
-        assertNull(resolver.infer(List.of(entry("a"))));
-        assertNull(resolver.infer(List.of(entry("a"))));
+        ServiceException missing = assertThrows(ServiceException.class, () -> resolver.infer(List.of(entry("a"))));
+        assertTrue(missing.getMessage().contains("缺失"));
+        ServiceException ambiguous = assertThrows(ServiceException.class, () -> resolver.infer(List.of(entry("a"))));
+        assertTrue(ambiguous.getMessage().contains("重复"));
     }
 
     @Test
