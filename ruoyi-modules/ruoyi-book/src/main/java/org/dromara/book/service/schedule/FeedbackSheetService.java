@@ -31,8 +31,8 @@ import java.util.Set;
  * {@code eq(create_by, LoginHelper.getUserId())} 过滤，防水平越权。
  *
  * <p>PNG = 复用 {@link ScheduleRenderUtil#renderToPng}（HTML→openhtmltopdf→pdfbox 光栅化，
- * 纯 Java 进程内，BUG-010 去浏览器管线）；单张样式对齐实料截图 P8：黄标题横条 + 分色表头 +
- * 日期/上课时间/五列反馈内容，长图和批量导出继续使用原五列表格。
+ * 纯 Java 进程内，BUG-010 去浏览器管线）；单张、批次长图和计划长图统一使用黄标题横条 +
+ * 日期/上课时间/五列反馈内容。
  * 🔴 卷面无任何内部词（层/★/素材/薄弱…），家长直读。
  *
  * @author backend-dev
@@ -41,8 +41,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class FeedbackSheetService {
 
-    private static final int FEEDBACK_SINGLE_PNG_WIDTH = 900;
-    private static final int FEEDBACK_MULTI_PNG_WIDTH = 640;
+    private static final int FEEDBACK_PNG_WIDTH = 900;
 
     private final BizFeedbackSheetMapper sheetMapper;
     private final BizStudentMapper studentMapper;
@@ -155,7 +154,7 @@ public class FeedbackSheetService {
         //   改按**实际内容**估高：标题条+表头+内边距 ≈ 88px；每行按最长列（学习内容≈13字/行、
         //   不足点≈11字/行）估换行数 * 24px + 6px 行距，长文本自动多算一行不裁切、短行不留白。
         int height = 88 + estimateContentH(rows);
-        String file = renderUtil.renderToPng(html, "feedback_" + id, FEEDBACK_SINGLE_PNG_WIDTH, height);
+        String file = renderUtil.renderToPng(html, "feedback_" + id, FEEDBACK_PNG_WIDTH, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);
@@ -164,7 +163,7 @@ public class FeedbackSheetService {
 
     /**
      * 批次全量导出（PRD-010）：该学生一个批次 1~N 节全部反馈单，按课次序拼一张长 PNG
-     * （用户实发形态：每节一条黄标题横条 + 五列表，垂直堆叠，一次性发家长）。
+     * （用户实发形态：每节一条黄标题横条 + 日期/上课时间/五列反馈内容，垂直堆叠，一次性发家长）。
      *
      * @param targetId 学生 id（必填）
      * @param batchKey 批次键；空 = 该生**最新批次**（max create_time 的非空 batch_key，D4 无状态列约定）
@@ -197,15 +196,17 @@ public class FeedbackSheetService {
         if (sheets.isEmpty()) {
             throw new ServiceException("批次「" + batchKey + "」下没有反馈单", 400);
         }
+        Map<Long, BizScheduleSession> sessions = sessionsById(sheets);
         StringBuilder body = new StringBuilder();
         int height = 14; // 顶部留白（.wrap padding-top）
         for (BizFeedbackSheet e : sheets) {
             List<Map<String, Object>> rows = parseRows(e.getRowsJson());
-            body.append(sectionHtml(e.getTitle(), rows));
+            LessonMeta meta = lessonMeta(e, sessions);
+            body.append(sectionHtmlWithMeta(e.getTitle(), meta.lessonDate(), meta.lessonTime(), rows));
             height += 88 + estimateContentH(rows) + 16; // 每段自身高 + 段间距
         }
-        String html = wrapDoc(body.toString(), FEEDBACK_MULTI_PNG_WIDTH);
-        String file = renderUtil.renderToPng(html, "feedback_batch_" + targetId, FEEDBACK_MULTI_PNG_WIDTH, height);
+        String html = wrapDoc(body.toString(), FEEDBACK_PNG_WIDTH);
+        String file = renderUtil.renderToPng(html, "feedback_batch_" + targetId, FEEDBACK_PNG_WIDTH, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);
@@ -217,7 +218,7 @@ public class FeedbackSheetService {
     /**
      * 按课程计划导出（PRD-015 D7/D13，AC7）：该计划下反馈单按 <b>{@code (lesson_date, id)}</b> 升序出图。
      *
-     * <p>🔴 版式 = 现有导出模板<b>零样式改动</b>（同一 wrapDoc + 同一五列表），只改黄条标题拼法：
+     * <p>🔴 单张与长图统一使用日期/上课时间/五列反馈表格；黄条标题为
      * 「{序号} · {上课日期}」，title 有值则作备注追加其后（D7）。全图不出现"第几次/第 N 节"。
      *
      * <p>🔄 <b>PRD-018 G9③</b>：排序与黄条序号都改成读取时按业务日期实时排（{@link #displaySeq}），
@@ -245,24 +246,19 @@ public class FeedbackSheetService {
             // single = 最新一单（升序列表的末位 = lesson_date 最晚；同日时取 id 大的）
             sheets = List.of(sheets.get(sheets.size() - 1));
         }
-        Map<Long, BizScheduleSession> sessions = longMode ? Map.of() : sessionsById(sheets);
+        Map<Long, BizScheduleSession> sessions = sessionsById(sheets);
         StringBuilder body = new StringBuilder();
         int height = 14;    // 顶部留白（.wrap padding-top），与批次导出同口径
         for (BizFeedbackSheet e : sheets) {
             List<Map<String, Object>> rows = parseRows(e.getRowsJson());
-            if (longMode) {
-                body.append(sectionHtml(seqOf.get(e.getId()), e.getLessonDate(), e.getTitle(), rows));
-            } else {
-                LessonMeta meta = lessonMeta(e, sessions);
-                body.append(sectionHtmlWithMeta(seqOf.get(e.getId()), meta.lessonDate(), meta.lessonTime(),
-                    e.getTitle(), rows));
-            }
+            LessonMeta meta = lessonMeta(e, sessions);
+            body.append(sectionHtmlWithMeta(seqOf.get(e.getId()), meta.lessonDate(), meta.lessonTime(),
+                e.getTitle(), rows));
             height += 88 + estimateContentH(rows) + 16;
         }
-        int width = longMode ? FEEDBACK_MULTI_PNG_WIDTH : FEEDBACK_SINGLE_PNG_WIDTH;
-        String html = wrapDoc(body.toString(), width);
+        String html = wrapDoc(body.toString(), FEEDBACK_PNG_WIDTH);
         String file = renderUtil.renderToPng(html, "feedback_plan_" + planId + "_" + (longMode ? "long" : "single"),
-            width, height);
+            FEEDBACK_PNG_WIDTH, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);
@@ -291,7 +287,7 @@ public class FeedbackSheetService {
      */
     private String buildHtml(String title, LocalDate lessonDate, String lessonTime,
                              List<Map<String, Object>> rows) {
-        return wrapDoc(sectionHtmlWithMeta(title, lessonDate, lessonTime, rows), FEEDBACK_SINGLE_PNG_WIDTH);
+        return wrapDoc(sectionHtmlWithMeta(title, lessonDate, lessonTime, rows), FEEDBACK_PNG_WIDTH);
     }
 
     /** 文档外壳（样式 + wrap 容器）。画布宽度由单张/长图模式明确传入。 */
@@ -322,18 +318,10 @@ public class FeedbackSheetService {
         return sb.toString();
     }
 
-    /**
-     * 单节课的段落（PRD-015 D7 标题版）：黄条 = 「{序号} · {上课日期}」，title 有值作备注追加其后。
-     * 🔴 长图沿用原五列表格，日期仍在黄条标题中。
-     */
-    private String sectionHtml(Integer seq, LocalDate lessonDate, String title, List<Map<String, Object>> rows) {
-        return sectionHtml(sectionTitle(seq, lessonDate, title), null, "", false, rows);
-    }
-
-    /** 单张模式：标题语义不变，并把日期、上课时间放入独立表格列。 */
+    /** 单节课标题语义不变，并把日期、上课时间放入独立表格列。 */
     private String sectionHtmlWithMeta(Integer seq, LocalDate lessonDate, String lessonTime, String title,
                                        List<Map<String, Object>> rows) {
-        return sectionHtml(sectionTitle(seq, lessonDate, title), lessonDate, lessonTime, true, rows);
+        return sectionHtmlWithMeta(sectionTitle(seq, lessonDate, title), lessonDate, lessonTime, rows);
     }
 
     private String sectionTitle(Integer seq, LocalDate lessonDate, String title) {
@@ -344,36 +332,21 @@ public class FeedbackSheetService {
         return parts.isEmpty() ? null : String.join(" · ", parts);
     }
 
-    /** 长图模式继续使用原五列表格。 */
-    private String sectionHtml(String title, List<Map<String, Object>> rows) {
-        return sectionHtml(title, null, "", false, rows);
-    }
-
-    /** 单张模式使用日期/上课时间 + 五列反馈内容。 */
+    /** 单张、批次长图和计划长图共用日期/上课时间 + 五列反馈内容。 */
     private String sectionHtmlWithMeta(String title, LocalDate lessonDate, String lessonTime,
                                        List<Map<String, Object>> rows) {
-        return sectionHtml(title, lessonDate, lessonTime, true, rows);
-    }
-
-    private String sectionHtml(String title, LocalDate lessonDate, String lessonTime, boolean includeLessonMeta,
-                               List<Map<String, Object>> rows) {
         StringBuilder sb = new StringBuilder();
         sb.append("<div class=\"sec\">");
         sb.append("<div class=\"bar\">").append(esc(title == null ? "上课反馈" : title)).append("</div>");
         sb.append("<table>");
-        sb.append("<tr>");
-        if (includeLessonMeta) {
-            sb.append("<th class=\"h0\" style=\"width:90px\">日期</th>")
-                .append("<th class=\"h0\" style=\"width:100px\">上课时间</th>");
-        }
-        sb.append("<th class=\"h1\" style=\"width:44px\">序号</th>")
-            .append("<th class=\"h2\" style=\"width:")
-            .append(includeLessonMeta ? 100 : 96).append("px\">所属模块</th>")
+        sb.append("<tr>")
+            .append("<th class=\"h0\" style=\"width:90px\">日期</th>")
+            .append("<th class=\"h0\" style=\"width:100px\">上课时间</th>")
+            .append("<th class=\"h1\" style=\"width:44px\">序号</th>")
+            .append("<th class=\"h2\" style=\"width:100px\">所属模块</th>")
             .append("<th class=\"h3\">学习内容</th>")
-            .append("<th class=\"h4\" style=\"width:")
-            .append(includeLessonMeta ? 100 : 96).append("px\">掌握情况</th>")
-            .append("<th class=\"h5\" style=\"width:")
-            .append(includeLessonMeta ? 160 : 132).append("px\">不足点</th>")
+            .append("<th class=\"h4\" style=\"width:100px\">掌握情况</th>")
+            .append("<th class=\"h5\" style=\"width:160px\">不足点</th>")
             .append("</tr>");
         int i = 0;
         for (Map<String, Object> row : rows) {
@@ -381,7 +354,7 @@ public class FeedbackSheetService {
             String seq = str(row.get("seq"));
             if (seq.isBlank()) seq = String.valueOf(i);
             sb.append("<tr").append(i % 2 == 0 ? " class=\"alt\"" : "").append(">");
-            if (includeLessonMeta && i == 1) {
+            if (i == 1) {
                 int rowSpan = Math.max(1, rows.size());
                 sb.append("<td class=\"c meta\" rowspan=\"").append(rowSpan).append("\">")
                     .append(esc(lessonDate == null ? "" : lessonDate.toString())).append("</td>");
@@ -396,12 +369,10 @@ public class FeedbackSheetService {
             sb.append("</tr>");
         }
         if (rows.isEmpty()) {
-            sb.append("<tr>");
-            if (includeLessonMeta) {
-                sb.append("<td class=\"c meta\">")
-                    .append(esc(lessonDate == null ? "" : lessonDate.toString())).append("</td>")
-                    .append("<td class=\"c meta\">").append(esc(lessonTime)).append("</td>");
-            }
+            sb.append("<tr>")
+                .append("<td class=\"c meta\">")
+                .append(esc(lessonDate == null ? "" : lessonDate.toString())).append("</td>")
+                .append("<td class=\"c meta\">").append(esc(lessonTime)).append("</td>");
             sb.append("<td class=\"c\" colspan=\"5\" style=\"color:#999;padding:14px\">（暂无内容）</td></tr>");
         }
         sb.append("</table></div>");

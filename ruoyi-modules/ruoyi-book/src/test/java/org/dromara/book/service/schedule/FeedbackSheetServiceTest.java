@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -39,7 +38,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @Tag("dev")
@@ -141,12 +139,38 @@ class FeedbackSheetServiceTest {
     }
 
     @Test
-    void planLongPngKeepsTheExistingFiveColumnLayout() {
+    void batchLongPngIncludesLessonDateAndBoundSessionTimeColumns() {
         BizFeedbackSheet sheet = sheet(12L, 20L, LocalDate.of(2026, 9, 8));
-        sheet.setPlanId(30L);
+        BizScheduleSession session = session(20L, "19:00", "20:30");
 
         when(sheets.selectList(any())).thenReturn(List.of(sheet));
-        when(renderer.renderToPng(anyString(), eq("feedback_plan_30_long"), eq(640), anyInt()))
+        when(sessions.selectByIds(anyCollection())).thenReturn(List.of(session));
+        when(renderer.renderToPng(anyString(), eq("feedback_batch_44"), eq(900), anyInt()))
+            .thenReturn("feedback_batch_44.png");
+
+        try (MockedStatic<LoginHelper> login = mockStatic(LoginHelper.class)) {
+            login.when(LoginHelper::getUserId).thenReturn(9L);
+            service.exportBatchPng(44L, "暑假数学");
+        }
+
+        ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
+        verify(renderer).renderToPng(html.capture(), eq("feedback_batch_44"), eq(900), anyInt());
+        String value = html.getValue();
+        assertTrue(value.contains(">日期</th>"));
+        assertTrue(value.contains(">上课时间</th>"));
+        assertTrue(value.contains(">2026-09-08</td>"));
+        assertTrue(value.contains(">19:00-20:30</td>"));
+    }
+
+    @Test
+    void planLongPngIncludesLessonDateAndBoundSessionTimeColumns() {
+        BizFeedbackSheet sheet = sheet(12L, 20L, LocalDate.of(2026, 9, 8));
+        sheet.setPlanId(30L);
+        BizScheduleSession session = session(20L, "13:30", "15:00");
+
+        when(sheets.selectList(any())).thenReturn(List.of(sheet));
+        when(sessions.selectByIds(anyCollection())).thenReturn(List.of(session));
+        when(renderer.renderToPng(anyString(), eq("feedback_plan_30_long"), eq(900), anyInt()))
             .thenReturn("feedback_plan_30_long.png");
 
         try (MockedStatic<LoginHelper> login = mockStatic(LoginHelper.class)) {
@@ -155,9 +179,11 @@ class FeedbackSheetServiceTest {
         }
 
         ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
-        verify(renderer).renderToPng(html.capture(), eq("feedback_plan_30_long"), eq(640), anyInt());
-        assertFalse(html.getValue().contains(">上课时间</th>"));
-        verifyNoInteractions(sessions);
+        verify(renderer).renderToPng(html.capture(), eq("feedback_plan_30_long"), eq(900), anyInt());
+        String value = html.getValue();
+        assertTrue(value.contains(">日期</th>"));
+        assertTrue(value.contains(">2026-09-08</td>"));
+        assertTrue(value.contains(">13:30-15:00</td>"));
     }
 
     @Test
