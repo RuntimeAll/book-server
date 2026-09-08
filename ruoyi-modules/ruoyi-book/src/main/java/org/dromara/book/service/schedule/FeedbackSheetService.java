@@ -19,8 +19,10 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 课后反馈单 Service（PRD-004 最小版）：单表 CRUD + PNG 导出。
@@ -29,7 +31,8 @@ import java.util.Map;
  * {@code eq(create_by, LoginHelper.getUserId())} 过滤，防水平越权。
  *
  * <p>PNG = 复用 {@link ScheduleRenderUtil#renderToPng}（HTML→openhtmltopdf→pdfbox 光栅化，
- * 纯 Java 进程内，BUG-010 去浏览器管线）；样式对齐实料截图 P8：黄标题横条 + 分色表头 + 五列表格。
+ * 纯 Java 进程内，BUG-010 去浏览器管线）；单张样式对齐实料截图 P8：黄标题横条 + 分色表头 +
+ * 日期/上课时间/五列反馈内容，长图和批量导出继续使用原五列表格。
  * 🔴 卷面无任何内部词（层/★/素材/薄弱…），家长直读。
  *
  * @author backend-dev
@@ -37,6 +40,9 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class FeedbackSheetService {
+
+    private static final int FEEDBACK_SINGLE_PNG_WIDTH = 900;
+    private static final int FEEDBACK_MULTI_PNG_WIDTH = 640;
 
     private final BizFeedbackSheetMapper sheetMapper;
     private final BizStudentMapper studentMapper;
@@ -143,12 +149,13 @@ public class FeedbackSheetService {
     public Map<String, Object> exportPng(Long id) {
         BizFeedbackSheet e = requireOwned(id);
         List<Map<String, Object>> rows = parseRows(e.getRowsJson());
-        String html = buildHtml(e.getTitle(), rows);
+        LessonMeta meta = lessonMeta(e, sessionsById(List.of(e)));
+        String html = buildHtml(e.getTitle(), meta.lessonDate(), meta.lessonTime(), rows);
         // 🔴 BUG-014 收边（PRD-004 修复轮）：旧式 130+rows*40 高估致底部 ~36% 白条。
         //   改按**实际内容**估高：标题条+表头+内边距 ≈ 88px；每行按最长列（学习内容≈13字/行、
         //   不足点≈11字/行）估换行数 * 24px + 6px 行距，长文本自动多算一行不裁切、短行不留白。
         int height = 88 + estimateContentH(rows);
-        String file = renderUtil.renderToPng(html, "feedback_" + id, 640, height);
+        String file = renderUtil.renderToPng(html, "feedback_" + id, FEEDBACK_SINGLE_PNG_WIDTH, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);
@@ -197,8 +204,8 @@ public class FeedbackSheetService {
             body.append(sectionHtml(e.getTitle(), rows));
             height += 88 + estimateContentH(rows) + 16; // 每段自身高 + 段间距
         }
-        String html = wrapDoc(body.toString());
-        String file = renderUtil.renderToPng(html, "feedback_batch_" + targetId, 640, height);
+        String html = wrapDoc(body.toString(), FEEDBACK_MULTI_PNG_WIDTH);
+        String file = renderUtil.renderToPng(html, "feedback_batch_" + targetId, FEEDBACK_MULTI_PNG_WIDTH, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);
@@ -238,16 +245,24 @@ public class FeedbackSheetService {
             // single = 最新一单（升序列表的末位 = lesson_date 最晚；同日时取 id 大的）
             sheets = List.of(sheets.get(sheets.size() - 1));
         }
+        Map<Long, BizScheduleSession> sessions = longMode ? Map.of() : sessionsById(sheets);
         StringBuilder body = new StringBuilder();
         int height = 14;    // 顶部留白（.wrap padding-top），与批次导出同口径
         for (BizFeedbackSheet e : sheets) {
             List<Map<String, Object>> rows = parseRows(e.getRowsJson());
-            body.append(sectionHtml(seqOf.get(e.getId()), e.getLessonDate(), e.getTitle(), rows));
+            if (longMode) {
+                body.append(sectionHtml(seqOf.get(e.getId()), e.getLessonDate(), e.getTitle(), rows));
+            } else {
+                LessonMeta meta = lessonMeta(e, sessions);
+                body.append(sectionHtmlWithMeta(seqOf.get(e.getId()), meta.lessonDate(), meta.lessonTime(),
+                    e.getTitle(), rows));
+            }
             height += 88 + estimateContentH(rows) + 16;
         }
-        String html = wrapDoc(body.toString());
+        int width = longMode ? FEEDBACK_MULTI_PNG_WIDTH : FEEDBACK_SINGLE_PNG_WIDTH;
+        String html = wrapDoc(body.toString(), width);
         String file = renderUtil.renderToPng(html, "feedback_plan_" + planId + "_" + (longMode ? "long" : "single"),
-            640, height);
+            width, height);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("file", file);
         m.put("url", "/teacher/schedule/artifact?path=" + file);
@@ -270,21 +285,22 @@ public class FeedbackSheetService {
     // ─────────────────────────── 家长版 PNG HTML（P8） ───────────────────────────
 
     /**
-     * 反馈单 PNG HTML（对照设计稿 P8 / 实料截图）：黄标题横条 + 分色表头（蓝/蓝/蓝/绿/橙）
-     * + 五列表格。⚠️ openhtmltopdf 不支持 flex/grid/CSS 变量 → 纯 table 布局；
+     * 反馈单 PNG HTML（对照设计稿 P8 / 实料截图）：黄标题横条 + 分色表头，表格增加日期、
+     * 上课时间两列并保留五列反馈内容。⚠️ openhtmltopdf 不支持 flex/grid/CSS 变量 → 纯 table 布局；
      * 字体族用 renderUtil 注册的 'cjkhei'（标题）/ 'cjk'（正文）。🔴 无内部词。
      */
-    @SuppressWarnings("unchecked")
-    private String buildHtml(String title, List<Map<String, Object>> rows) {
-        return wrapDoc(sectionHtml(title, rows));
+    private String buildHtml(String title, LocalDate lessonDate, String lessonTime,
+                             List<Map<String, Object>> rows) {
+        return wrapDoc(sectionHtmlWithMeta(title, lessonDate, lessonTime, rows), FEEDBACK_SINGLE_PNG_WIDTH);
     }
 
-    /** 文档外壳（样式 + wrap 容器）。单张/批次导出共用，样式与 PRD-004 定版零漂移。 */
-    private String wrapDoc(String bodySections) {
+    /** 文档外壳（样式 + wrap 容器）。画布宽度由单张/长图模式明确传入。 */
+    private String wrapDoc(String bodySections, int width) {
         StringBuilder sb = new StringBuilder();
         sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"/><style>");
         sb.append("*{box-sizing:border-box;margin:0;padding:0}");
-        sb.append("body{font-family:'cjk','cjkhei';color:#333;background:#fff;width:640px;font-size:12.5px}");
+        sb.append("body{font-family:'cjk','cjkhei';color:#333;background:#fff;width:")
+            .append(width).append("px;font-size:12.5px}");
         sb.append(".wrap{padding:14px 16px 16px}");
         sb.append(".sec{margin-bottom:16px}");
         sb.append(".bar{background:#ffd94d;color:#3a3000;text-align:center;font-family:'cjkhei';")
@@ -292,12 +308,13 @@ public class FeedbackSheetService {
         sb.append("table{border-collapse:collapse;width:100%;table-layout:fixed}");
         sb.append("th{color:#fff;font-family:'cjkhei';font-weight:bold;font-size:12px;padding:7px 8px;")
             .append("text-align:center;border:1px solid #fff}");
-        sb.append("th.h1,th.h2,th.h3{background:#5b8ff9}");
+        sb.append("th.h0,th.h1,th.h2,th.h3{background:#5b8ff9}");
         sb.append("th.h4{background:#61c28e}");
         sb.append("th.h5{background:#f2933e}");
         sb.append("td{border:1px solid #e8e8e8;padding:6px 8px;font-size:12px;color:#333;")
             .append("vertical-align:middle;word-wrap:break-word}");
         sb.append("td.c{text-align:center}");
+        sb.append("td.meta{white-space:nowrap;padding-left:4px;padding-right:4px}");
         sb.append("tr.alt td{background:#fafbfc}");
         sb.append("</style></head><body><div class=\"wrap\">");
         sb.append(bodySections);
@@ -307,28 +324,56 @@ public class FeedbackSheetService {
 
     /**
      * 单节课的段落（PRD-015 D7 标题版）：黄条 = 「{序号} · {上课日期}」，title 有值作备注追加其后。
-     * 🔴 只换标题字符串，表格/样式与 PRD-004 定版零漂移（复用下面的 {@link #sectionHtml(String, List)}）。
+     * 🔴 长图沿用原五列表格，日期仍在黄条标题中。
      */
     private String sectionHtml(Integer seq, LocalDate lessonDate, String title, List<Map<String, Object>> rows) {
+        return sectionHtml(sectionTitle(seq, lessonDate, title), null, "", false, rows);
+    }
+
+    /** 单张模式：标题语义不变，并把日期、上课时间放入独立表格列。 */
+    private String sectionHtmlWithMeta(Integer seq, LocalDate lessonDate, String lessonTime, String title,
+                                       List<Map<String, Object>> rows) {
+        return sectionHtml(sectionTitle(seq, lessonDate, title), lessonDate, lessonTime, true, rows);
+    }
+
+    private String sectionTitle(Integer seq, LocalDate lessonDate, String title) {
         List<String> parts = new ArrayList<>();
         if (seq != null) parts.add(String.valueOf(seq));
         if (lessonDate != null) parts.add(lessonDate.toString());
         if (title != null && !title.isBlank()) parts.add(title.trim());
-        return sectionHtml(parts.isEmpty() ? null : String.join(" · ", parts), rows);
+        return parts.isEmpty() ? null : String.join(" · ", parts);
     }
 
-    /** 单节课的段落（黄标题条 + 五列表）。批次导出=N 段垂直堆叠。 */
+    /** 长图模式继续使用原五列表格。 */
     private String sectionHtml(String title, List<Map<String, Object>> rows) {
+        return sectionHtml(title, null, "", false, rows);
+    }
+
+    /** 单张模式使用日期/上课时间 + 五列反馈内容。 */
+    private String sectionHtmlWithMeta(String title, LocalDate lessonDate, String lessonTime,
+                                       List<Map<String, Object>> rows) {
+        return sectionHtml(title, lessonDate, lessonTime, true, rows);
+    }
+
+    private String sectionHtml(String title, LocalDate lessonDate, String lessonTime, boolean includeLessonMeta,
+                               List<Map<String, Object>> rows) {
         StringBuilder sb = new StringBuilder();
         sb.append("<div class=\"sec\">");
         sb.append("<div class=\"bar\">").append(esc(title == null ? "上课反馈" : title)).append("</div>");
         sb.append("<table>");
-        sb.append("<tr>")
-            .append("<th class=\"h1\" style=\"width:44px\">序号</th>")
-            .append("<th class=\"h2\" style=\"width:96px\">所属模块</th>")
+        sb.append("<tr>");
+        if (includeLessonMeta) {
+            sb.append("<th class=\"h0\" style=\"width:90px\">日期</th>")
+                .append("<th class=\"h0\" style=\"width:100px\">上课时间</th>");
+        }
+        sb.append("<th class=\"h1\" style=\"width:44px\">序号</th>")
+            .append("<th class=\"h2\" style=\"width:")
+            .append(includeLessonMeta ? 100 : 96).append("px\">所属模块</th>")
             .append("<th class=\"h3\">学习内容</th>")
-            .append("<th class=\"h4\" style=\"width:96px\">掌握情况</th>")
-            .append("<th class=\"h5\" style=\"width:132px\">不足点</th>")
+            .append("<th class=\"h4\" style=\"width:")
+            .append(includeLessonMeta ? 100 : 96).append("px\">掌握情况</th>")
+            .append("<th class=\"h5\" style=\"width:")
+            .append(includeLessonMeta ? 160 : 132).append("px\">不足点</th>")
             .append("</tr>");
         int i = 0;
         for (Map<String, Object> row : rows) {
@@ -336,6 +381,13 @@ public class FeedbackSheetService {
             String seq = str(row.get("seq"));
             if (seq.isBlank()) seq = String.valueOf(i);
             sb.append("<tr").append(i % 2 == 0 ? " class=\"alt\"" : "").append(">");
+            if (includeLessonMeta && i == 1) {
+                int rowSpan = Math.max(1, rows.size());
+                sb.append("<td class=\"c meta\" rowspan=\"").append(rowSpan).append("\">")
+                    .append(esc(lessonDate == null ? "" : lessonDate.toString())).append("</td>");
+                sb.append("<td class=\"c meta\" rowspan=\"").append(rowSpan).append("\">")
+                    .append(esc(lessonTime)).append("</td>");
+            }
             sb.append("<td class=\"c\">").append(esc(seq)).append("</td>");
             sb.append("<td class=\"c\">").append(esc(str(row.get("module")))).append("</td>");
             sb.append("<td>").append(esc(str(row.get("content")))).append("</td>");
@@ -344,13 +396,75 @@ public class FeedbackSheetService {
             sb.append("</tr>");
         }
         if (rows.isEmpty()) {
-            sb.append("<tr><td class=\"c\" colspan=\"5\" style=\"color:#999;padding:14px\">（暂无内容）</td></tr>");
+            sb.append("<tr>");
+            if (includeLessonMeta) {
+                sb.append("<td class=\"c meta\">")
+                    .append(esc(lessonDate == null ? "" : lessonDate.toString())).append("</td>")
+                    .append("<td class=\"c meta\">").append(esc(lessonTime)).append("</td>");
+            }
+            sb.append("<td class=\"c\" colspan=\"5\" style=\"color:#999;padding:14px\">（暂无内容）</td></tr>");
         }
         sb.append("</table></div>");
         return sb.toString();
     }
 
     // ─────────────────────────── helpers ───────────────────────────
+
+    /** 取得单张反馈所需的绑定场次，并过滤其它老师的数据。 */
+    private Map<Long, BizScheduleSession> sessionsById(List<BizFeedbackSheet> sheets) {
+        Set<Long> sessionIds = new LinkedHashSet<>();
+        for (BizFeedbackSheet sheet : sheets) {
+            if (sheet.getSessionId() != null) {
+                sessionIds.add(sheet.getSessionId());
+            }
+        }
+        if (sessionIds.isEmpty()) {
+            return Map.of();
+        }
+        Long uid = LoginHelper.getUserId();
+        Map<Long, BizScheduleSession> sessions = new LinkedHashMap<>();
+        for (BizScheduleSession session : sessionMapper.selectByIds(sessionIds)) {
+            if (session == null || session.getId() == null) {
+                continue;
+            }
+            if (uid != null && session.getCreateBy() != null && !uid.equals(session.getCreateBy())) {
+                continue;
+            }
+            sessions.put(session.getId(), session);
+        }
+        return sessions;
+    }
+
+    private LessonMeta lessonMeta(BizFeedbackSheet sheet, Map<Long, BizScheduleSession> sessions) {
+        BizScheduleSession session = sheet.getSessionId() == null ? null : sessions.get(sheet.getSessionId());
+        LocalDate lessonDate = sheet.getLessonDate();
+        if (lessonDate == null && session != null) {
+            lessonDate = session.getSessionDate();
+        }
+        return new LessonMeta(lessonDate, formatLessonTime(session));
+    }
+
+    private String formatLessonTime(BizScheduleSession session) {
+        if (session == null) {
+            return "";
+        }
+        String start = formatClock(session.getStartTime());
+        String end = formatClock(session.getEndTime());
+        if (start.isBlank()) return end;
+        if (end.isBlank()) return start;
+        return start + "-" + end;
+    }
+
+    private String formatClock(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String time = value.trim();
+        return time.matches("\\d{2}:\\d{2}(:\\d{2})?") ? time.substring(0, 5) : time;
+    }
+
+    private record LessonMeta(LocalDate lessonDate, String lessonTime) {
+    }
 
     private BizFeedbackSheet requireOwned(Long id) {
         BizFeedbackSheet e = sheetMapper.selectById(id);
